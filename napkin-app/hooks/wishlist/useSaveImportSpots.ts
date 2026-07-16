@@ -16,6 +16,8 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
+import { clientBuildMetadata } from '@/lib/clientBuild';
+import type { CompletenessDestinationIntent } from '@/lib/importProtocol';
 import { queryKeys } from '@/lib/queryKeys';
 import type { ResolvedCandidate } from './useResolveUrl';
 
@@ -70,6 +72,11 @@ export interface SaveImportSpotsInput {
      * A revoked token → all spots return SHARE_REVOKED.
      */
     handoff_token?: string;
+    /** Presence opts this request into the complete v2 queue/routing contract. */
+    protocol_generation?: 'v2';
+    protocol_version?: 2;
+    expected_destinations?: number;
+    destination_intent?: CompletenessDestinationIntent[];
     // NOTE: top-level table_id removed (TICKET-063 fix-pass-1 item 12).
     // The mutationFn never sent it to the edge function — it was a dead field
     // that keyed off an unimplemented CTA and created a latent feed-cache landmine.
@@ -81,7 +88,7 @@ export interface SpotSaveResult {
     client_nonce: string;
     /** 'ghost' = list-only save (pin_wishlist=false): restaurant upserted +
      * restaurant_id returned for list routing, deliberately NOT wishlisted. */
-    status: 'saved' | 'already_pinned' | 'ghost' | 'failed';
+    status: 'saved' | 'already_pinned' | 'queued' | 'ghost' | 'failed';
     wishlist_id?: string | null;
     restaurant_id?: string | null;
     error?: string;
@@ -95,6 +102,7 @@ export interface SaveImportSpotsResult {
         failed: number;
         /** Only non-zero on pin_wishlist=false (list-only) saves. */
         ghost?: number;
+        queued?: number;
     };
     /** Server batch id (minted on import_nonce) — deep-link target for
      * /imports/[jobId] review/fix. Optional: older deploys omit it. */
@@ -108,9 +116,28 @@ export function useSaveImportSpots(userId: string | null | undefined) {
 
     return useMutation({
         mutationFn: async (input: SaveImportSpotsInput): Promise<SaveImportSpotsResult> => {
+            const isV2 = input.protocol_generation === 'v2';
+            if (
+                isV2 &&
+                (
+                    input.protocol_version !== 2 ||
+                    !Number.isSafeInteger(input.expected_destinations) ||
+                    (input.expected_destinations ?? 0) <= 0 ||
+                    !Array.isArray(input.destination_intent) ||
+                    input.destination_intent.length === 0 ||
+                    input.spots.some(
+                        (spot) =>
+                            typeof spot.candidate.resolution_id !== 'string' ||
+                            spot.candidate.resolution_id.length === 0,
+                    )
+                )
+            ) {
+                throw new Error('Incomplete v2 import request');
+            }
             const spots = input.spots.map((s) => ({
                 candidate_id: s.candidate.candidate_id ?? s.client_nonce,
                 client_nonce: s.client_nonce,
+                ...(isV2 ? { resolution_id: s.candidate.resolution_id ?? null } : {}),
                 restaurant_id: s.candidate.restaurant_id ?? null,
                 external_id: s.candidate.restaurant_id
                     ? null
@@ -130,6 +157,15 @@ export function useSaveImportSpots(userId: string | null | undefined) {
                     spots,
                     note: input.note,
                     source: input.source,
+                    ...clientBuildMetadata(),
+                    ...(isV2
+                        ? {
+                              protocol_generation: 'v2',
+                              protocol_version: 2,
+                              expected_destinations: input.expected_destinations,
+                              destination_intent: input.destination_intent,
+                          }
+                        : {}),
                     // TICKET-072: pass through when present; server gates revoke + constructs source
                     ...(input.handoff_token ? { handoff_token: input.handoff_token } : {}),
                 },
@@ -145,8 +181,9 @@ export function useSaveImportSpots(userId: string | null | undefined) {
 
             const now = new Date().toISOString();
 
-            // Optimistically prepend pending rows for each ticked spot
-            queryClient.setQueryData(wishlistKey, (old: any) => {
+            // V2 routing is server-owned and may complete after this request; do
+            // not synthesize a final wishlist row for an accepted queue item.
+            if (input.protocol_generation !== 'v2') queryClient.setQueryData(wishlistKey, (old: any) => {
                 if (!old) return old;
                 const newRows = input.spots
                     .filter((s) => !s.candidate.already_wishlisted)

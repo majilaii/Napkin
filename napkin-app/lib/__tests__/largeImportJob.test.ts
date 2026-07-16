@@ -24,9 +24,11 @@ import {
     buildResolvedSpots,
     buildGhostSpots,
     toChunkOutcomes,
+    awaitCompletenessLedger,
     shouldEmitCompletion,
     classifyDrainError,
     partitionDigest,
+    reconcileLargeJobCompleteness,
     isExceptionItem,
     isPinnedItem,
     type LargeImportJob,
@@ -229,6 +231,7 @@ describe('deriveCounts', () => {
         expect(deriveCounts(items)).toEqual({
             total: 5,
             pending: 1,
+            queued: 0,
             imported: 2,
             ghosted: 1,
             failed: 1,
@@ -239,6 +242,12 @@ describe('deriveCounts', () => {
         const items: LargeImportJobItem[] = mkItems(3).map((i) => ({ ...i, status: 'saved' }));
         expect(deriveCounts(items).needsLook).toBe(0);
         expect(deriveCounts(items).imported).toBe(3);
+    });
+    it('keeps accepted deferred items out of both imported and needs-look', () => {
+        const counts = deriveCounts([
+            { name: 'later', address: null, client_nonce: 'q', status: 'queued' },
+        ]);
+        expect(counts).toMatchObject({ queued: 1, imported: 0, needsLook: 0 });
     });
 });
 
@@ -314,6 +323,14 @@ describe('partitionDigest', () => {
         ]);
         expect(exceptions).toHaveLength(0);
         expect(imported).toHaveLength(0);
+    });
+    it('renders queued items in the completing section only', () => {
+        const sections = partitionDigest([
+            { name: 'later', address: null, client_nonce: 'q', status: 'queued' },
+        ]);
+        expect(sections.completing.map((item) => item.name)).toEqual(['later']);
+        expect(sections.exceptions).toHaveLength(0);
+        expect(sections.imported).toHaveLength(0);
     });
 });
 
@@ -454,6 +471,36 @@ describe('buildResolvedSpots / ghostSpot / buildGhostSpots', () => {
             chunk,
         );
         expect(spots).toEqual([]);
+    });
+    it('v2 ledgers type-rejected items so the frozen destination count can seal', () => {
+        const chunk = mkItems(2);
+        const rejected = chunk.map((_, i) =>
+            mkResolveResult(i, {
+                external_id: null,
+                place: { type_rejected: true },
+                type_rejected: true,
+                resolution_id: `resolution-${i}`,
+            }),
+        );
+        const spots = buildResolvedSpots(rejected, chunk, true);
+
+        expect(spots).toHaveLength(2);
+        expect(spots).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    client_nonce: 'nonce-0',
+                    external_id: null,
+                    restaurant_id: null,
+                    resolution_id: 'resolution-0',
+                }),
+                expect.objectContaining({
+                    client_nonce: 'nonce-1',
+                    external_id: null,
+                    restaurant_id: null,
+                    resolution_id: 'resolution-1',
+                }),
+            ]),
+        );
     });
     it('ghostSpot pins table fields null and carries the address in place', () => {
         const g = ghostSpot(mkItems(1)[0]);
@@ -617,6 +664,285 @@ describe('deriveCounts × unrouted (P1c — header/toast include them)', () => {
         expect(c.imported).toBe(1);
         expect(c.needsLook).toBe(2); // unrouted + ghost — matches the digest sections
         expect(c.ghosted).toBe(1);
+    });
+});
+
+describe('v2 completeness reconciliation', () => {
+    it('keeps inline terminal responses non-actionable until route ids are hydrated', () => {
+        const outcomes: ChunkItemOutcome[] = [{
+            client_nonce: 'nonce-0',
+            ghost: false,
+            saveStatus: 'saved',
+            restaurant_id: 'restaurant-0',
+        }];
+        expect(awaitCompletenessLedger(outcomes)).toEqual([{
+            ...outcomes[0],
+            saveStatus: 'queued',
+        }]);
+    });
+
+    it('hydrates server-created wishlist/list ids and transitions queued to saved', () => {
+        const job = mkJob({
+            phase: 'done',
+            items: [{ ...mkItems(1)[0], status: 'queued' }],
+            serverJobId: 'job-server',
+        });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                id: 'queue-item-0',
+                item_nonce: 'nonce-0',
+                state: 'resolved',
+                restaurant_id: 'restaurant-canonical',
+                last_error: null,
+                destinations: [
+                    {
+                        destination_kind: 'wishlist',
+                        outcome: 'fulfilled',
+                        result: {
+                            status: 'already_pinned',
+                            wishlist_id: 'wishlist-live',
+                            restaurant_id: 'restaurant-canonical',
+                        },
+                    },
+                    {
+                        destination_kind: 'new_list',
+                        outcome: 'fulfilled',
+                        result: {
+                            list_id: 'list-server-created',
+                            entry_id: 'entry-live',
+                            restaurant_id: 'restaurant-canonical',
+                        },
+                    },
+                ],
+            }],
+        });
+
+        expect(next.destListId).toBe('list-server-created');
+        expect(next.items[0]).toMatchObject({
+            status: 'already',
+            restaurant_id: 'restaurant-canonical',
+            wishlist_id: 'wishlist-live',
+            completenessItemId: 'queue-item-0',
+            listRouted: true,
+            needsLook: false,
+        });
+        expect(deriveCounts(next.items).queued).toBe(0);
+    });
+
+    it('transitions exhausted items to the correction surface without fabricating routes', () => {
+        const job = mkJob({ items: [{ ...mkItems(1)[0], status: 'queued' }] });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                id: 'queue-item-exhausted',
+                item_nonce: 'nonce-0',
+                state: 'exhausted',
+                restaurant_id: 'private-ghost',
+                last_error: 'no_result',
+                destinations: [{
+                    destination_kind: 'wishlist',
+                    outcome: 'pending',
+                    result: null,
+                }],
+            }],
+        });
+
+        expect(next.items[0]).toMatchObject({
+            status: 'failed',
+            restaurant_id: 'private-ghost',
+            completenessItemId: 'queue-item-exhausted',
+            needsLook: true,
+        });
+        expect(next.items[0].wishlist_id).toBeUndefined();
+    });
+
+    it.each([
+        {
+            label: 'an expected route is still pending',
+            wishlist: {
+                destination_kind: 'wishlist' as const,
+                outcome: 'fulfilled' as const,
+                result: { status: 'saved', wishlist_id: 'wishlist-live' },
+            },
+            list: {
+                destination_kind: 'new_list' as const,
+                outcome: 'pending' as const,
+                result: null,
+            },
+        },
+        {
+            label: 'a fulfilled route ledger has not exposed its live id',
+            wishlist: {
+                destination_kind: 'wishlist' as const,
+                outcome: 'fulfilled' as const,
+                result: { status: 'saved' },
+            },
+            list: {
+                destination_kind: 'new_list' as const,
+                outcome: 'fulfilled' as const,
+                result: { list_id: 'list-live' },
+            },
+        },
+    ])('keeps a terminal server item queued when $label', ({ wishlist, list }) => {
+        const job = mkJob({ items: [{ ...mkItems(1)[0], status: 'queued' }] });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                id: 'queue-item-0',
+                item_nonce: 'nonce-0',
+                state: 'resolved',
+                restaurant_id: 'restaurant-live',
+                last_error: null,
+                destinations: [wishlist, list],
+            }],
+        });
+
+        expect(next.items[0]).toMatchObject({
+            status: 'queued',
+            completenessItemId: 'queue-item-0',
+            needsLook: false,
+        });
+    });
+
+    it('turns a terminal rejected route into an actionable needs-look row', () => {
+        const job = mkJob({ items: [{ ...mkItems(1)[0], status: 'queued' }] });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                id: 'queue-item-0',
+                item_nonce: 'nonce-0',
+                state: 'resolved',
+                restaurant_id: 'restaurant-live',
+                last_error: null,
+                destinations: [
+                    {
+                        destination_kind: 'wishlist',
+                        outcome: 'fulfilled',
+                        result: { status: 'saved', wishlist_id: 'wishlist-live' },
+                    },
+                    {
+                        destination_kind: 'new_list',
+                        outcome: 'rejected',
+                        result: null,
+                    },
+                ],
+            }],
+        });
+
+        expect(next.items[0]).toMatchObject({
+            status: 'saved',
+            completenessItemId: 'queue-item-0',
+            wishlist_id: 'wishlist-live',
+            listRouted: false,
+            needsLook: true,
+        });
+    });
+
+    it.each(['pending', 'leased', 'deferred'])(
+        're-arms an exhausted local row only after the owner retry reaches server state %s',
+        (state) => {
+            const failed: LargeImportJobItem = {
+                ...mkItems(1)[0],
+                status: 'failed',
+                restaurant_id: 'private-ghost',
+                needsLook: true,
+            };
+            const next = reconcileLargeJobCompleteness(mkJob({ items: [failed] }), {
+                job_id: 'job-server',
+                sealed: true,
+                done_emitted: true,
+                items: [{
+                    item_nonce: 'nonce-0',
+                    state,
+                    restaurant_id: 'private-ghost',
+                    last_error: null,
+                    destinations: [],
+                }],
+            });
+
+            expect(next.items[0]).toMatchObject({
+                status: 'queued',
+                restaurant_id: 'private-ghost',
+                needsLook: false,
+            });
+        },
+    );
+
+    it('does not overwrite a user-corrected terminal row with the immutable original route', () => {
+        const corrected: LargeImportJobItem = {
+            ...mkItems(1)[0],
+            status: 'saved',
+            resolution_id: 'resolution-corrected',
+            restaurant_id: 'restaurant-corrected',
+            wishlist_id: 'wishlist-corrected',
+            restaurant_name: 'Corrected match',
+            needsLook: false,
+        };
+        const job = mkJob({ items: [corrected] });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                item_nonce: 'nonce-0',
+                state: 'resolved',
+                restaurant_id: 'restaurant-original',
+                last_error: null,
+                destinations: [{
+                    destination_kind: 'wishlist',
+                    outcome: 'fulfilled',
+                    result: {
+                        status: 'saved',
+                        wishlist_id: 'wishlist-original',
+                        restaurant_id: 'restaurant-original',
+                    },
+                }],
+            }],
+        });
+
+        expect(next.items[0]).toEqual(corrected);
+    });
+
+    it('does not restore a server wishlist id after the user unpins a terminal row', () => {
+        const unpinned: LargeImportJobItem = {
+            ...mkItems(1)[0],
+            status: 'saved',
+            restaurant_id: 'restaurant-0',
+            wishlist_id: null,
+            listRouted: true,
+        };
+        const job = mkJob({ items: [unpinned] });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                item_nonce: 'nonce-0',
+                state: 'verified',
+                restaurant_id: 'restaurant-0',
+                last_error: null,
+                destinations: [{
+                    destination_kind: 'wishlist',
+                    outcome: 'fulfilled',
+                    result: {
+                        status: 'saved',
+                        wishlist_id: 'wishlist-original',
+                        restaurant_id: 'restaurant-0',
+                    },
+                }],
+            }],
+        });
+
+        expect(next.items[0]).toEqual(unpinned);
     });
 });
 

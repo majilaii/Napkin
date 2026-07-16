@@ -22,12 +22,27 @@
 import { safeRandomUUID } from './uuid';
 import { normalizeLargeJob, type LargeImportJob } from './largeImportJob';
 import {
+    expectedImportDestinations,
+    importDestinationTargets,
+    normalizeImportDestinationNonces,
+    reconcileImportDestinationNonces,
+    type ImportDestinationNonceState,
+    type ImportDestinationSelection,
+    type ImportProtocolGeneration,
+} from './importProtocol';
+import {
     listImportManifests,
     writeImportManifest,
     removeImportManifest,
 } from '@/modules/media-extract';
 
 export type { LargeImportJob, LargeImportJobItem } from './largeImportJob';
+export type {
+    CompletenessDestinationIntent,
+    ImportDestinationNonceState,
+    ImportDestinationTarget,
+    ImportProtocolGeneration,
+} from './importProtocol';
 
 const MAX_ATTEMPTS = 3;
 
@@ -54,6 +69,8 @@ export type ImportStage =
 export interface PersistedImportSpot {
     candidate_id: string;
     client_nonce: string;
+    /** Server-minted, caller-bound provenance for the evaluated candidate. */
+    resolution_id?: string | null;
     restaurant_id: string | null;
     external_id: string | null;
     restaurant_name: string | null;
@@ -96,6 +113,15 @@ export interface ImportManifest {
     /** Present for kind 'url'. */
     url?: string;
     importNonce: string;
+    /**
+     * Fixed when the manifest is created. Missing means legacy so a pre-v2
+     * manifest resumed after an app update never changes routing protocols.
+     */
+    protocolGeneration?: ImportProtocolGeneration;
+    /** Stable per-destination and per-new-list-title nonces for v2 replays. */
+    destinationNonces?: ImportDestinationNonceState;
+    /** Exact item x destination record count declared on every v2 fan-out call. */
+    expectedDestinations?: number;
     createdAt: number;
     attempts: number;
     /** Account that created the import (from the snapshot). The drain skips a
@@ -186,6 +212,67 @@ function normalizeDestinations(d: unknown): ImportDestinations {
     };
 }
 
+export function importManifestProtocol(
+    manifest: Pick<ImportManifest, 'protocolGeneration'>,
+): ImportProtocolGeneration {
+    return manifest.protocolGeneration === 'v2' ? 'v2' : 'legacy';
+}
+
+function destinationSelectionForManifest(manifest: ImportManifest): ImportDestinationSelection {
+    if (manifest.largeJob) {
+        return {
+            wishlist: manifest.largeJob.pinAll,
+            tableIds: [],
+            listIds: [],
+            newListTitles: manifest.largeJob.destListTitle
+                ? [manifest.largeJob.destListTitle]
+                : [],
+        };
+    }
+    const tableIds = [...new Set(manifest.destinations.tableIds)];
+    return {
+        // A Table share is always a share OF a wishlist save.
+        wishlist: tableIds.length > 0 || effectivePinWishlist(manifest),
+        tableIds,
+        listIds: [...new Set(manifest.destinations.listIds)],
+        newListTitles: manifest.destinations.newListTitles,
+    };
+}
+
+/**
+ * Freeze the complete v2 routing declaration before the first save request.
+ * Pure/exported for contract tests; callers persist the returned manifest.
+ */
+export function prepareV2ImportRouting(
+    manifest: ImportManifest,
+    uuid: () => string = safeRandomUUID,
+): ImportManifest {
+    if (importManifestProtocol(manifest) !== 'v2') return manifest;
+    const itemCount = manifest.largeJob
+        ? manifest.largeJob.items.length
+        : (manifest.spots?.length ?? 0);
+    const selection = destinationSelectionForManifest(manifest);
+    const destinationNonces = reconcileImportDestinationNonces(
+        selection,
+        manifest.destinationNonces,
+        uuid,
+    );
+    const targets = importDestinationTargets(selection, destinationNonces);
+    return {
+        ...manifest,
+        destinationNonces,
+        expectedDestinations: expectedImportDestinations(itemCount, targets.length),
+    };
+}
+
+/** Persist/fetch the frozen v2 declaration immediately before a drain save. */
+export function ensureImportV2Routing(jobId: string): ImportManifest | null {
+    const manifest = readAll().find((candidate) => candidate.jobId === jobId);
+    if (!manifest) return null;
+    const prepared = prepareV2ImportRouting(manifest);
+    return writeManifest(prepared) ? prepared : null;
+}
+
 function readAll(): ImportManifest[] {
     try {
         const raw = listImportManifests();
@@ -211,6 +298,19 @@ function readAll(): ImportManifest[] {
                     videoPath,
                     url,
                     importNonce: typeof p.importNonce === 'string' ? p.importNonce : safeRandomUUID(),
+                    protocolGeneration:
+                        p.protocolGeneration === 'v2'
+                            ? 'v2'
+                            : p.protocolGeneration === 'legacy'
+                              ? 'legacy'
+                              : undefined,
+                    destinationNonces: normalizeImportDestinationNonces(p.destinationNonces),
+                    expectedDestinations:
+                        typeof p.expectedDestinations === 'number' &&
+                        Number.isSafeInteger(p.expectedDestinations) &&
+                        p.expectedDestinations >= 0
+                            ? p.expectedDestinations
+                            : undefined,
                     createdAt: typeof p.createdAt === 'number' ? p.createdAt : 0,
                     attempts: typeof p.attempts === 'number' ? p.attempts : 0,
                     userId: typeof p.userId === 'string' ? p.userId : null,
@@ -278,23 +378,45 @@ export function onImportEnqueued(fn: EnqueueListener): () => void {
 // ── enqueue (serialized; fallback path — the extension normally enqueues) ──────
 let enqueueChain: Promise<unknown> = Promise.resolve();
 
-export function enqueueVideoImport(videoPath: string): Promise<ImportManifest> {
-    const run = enqueueChain.then(() => doEnqueue(videoPath));
+export function enqueueVideoImport(
+    videoPath: string,
+    userId?: string | null,
+): Promise<ImportManifest> {
+    const run = enqueueChain.then(() => doEnqueue(videoPath, userId));
     enqueueChain = run.catch(() => undefined);
     return run;
 }
 
-async function doEnqueue(videoPath: string): Promise<ImportManifest> {
-    const existing = readAll().find((m) => m.videoPath === videoPath);
-    if (existing) return existing; // idempotent on videoPath
+async function doEnqueue(
+    videoPath: string,
+    userId?: string | null,
+): Promise<ImportManifest> {
+    const existing = readAll().find((m) =>
+        m.videoPath === videoPath &&
+        (userId
+            ? m.userId == null || m.userId === userId
+            : m.userId == null)
+    );
+    if (existing) {
+        // A signed-out capture is intentionally ownerless until the first user.
+        // Once signed in, claim it atomically before returning the idempotent row.
+        if (userId && existing.userId == null) {
+            const claimed = claimImportOwner(existing.jobId, userId);
+            if (!claimed) throw new Error('Failed to claim import manifest');
+            return claimed;
+        }
+        return existing;
+    }
 
     const manifest: ImportManifest = {
         jobId: safeRandomUUID(),
         kind: 'video',
         videoPath,
         importNonce: safeRandomUUID(),
+        protocolGeneration: 'v2',
         createdAt: Date.now(),
         attempts: 0,
+        userId: userId ?? null,
         status: 'pending',
         // Review-first policy: fallback/deep-link video imports must never bypass
         // the same confirmation gate as the native share extension.
@@ -334,6 +456,33 @@ export function getImport(jobId: string): ImportManifest | null {
     return readAll().find((m) => m.jobId === jobId) ?? null;
 }
 
+/** Strict owner-scoped read for route screens and server reconciliation. */
+export function getImportForUser(
+    jobId: string,
+    userId: string | null | undefined,
+): ImportManifest | null {
+    if (!userId) return null;
+    return readAll().find((m) => m.jobId === jobId && m.userId === userId) ?? null;
+}
+
+/**
+ * Bind an ownerless share-extension manifest to the first signed-in account.
+ * Existing ownership is immutable: another account gets null and cannot read or
+ * mutate the manifest through an owner-scoped route. A failed durable write does
+ * not report a successful claim.
+ */
+export function claimImportOwner(
+    jobId: string,
+    userId: string | null | undefined,
+): ImportManifest | null {
+    if (!userId) return null;
+    const manifest = readAll().find((m) => m.jobId === jobId);
+    if (!manifest || (manifest.userId != null && manifest.userId !== userId)) return null;
+    if (manifest.userId === userId) return manifest;
+    const claimed = { ...manifest, userId };
+    return writeManifest(claimed) ? claimed : null;
+}
+
 /** Flip auto↔review (the review screen flips to 'auto' on confirm, then pokes). */
 export function setImportMode(jobId: string, mode: 'auto' | 'review'): void {
     const m = readAll().find((x) => x.jobId === jobId);
@@ -355,10 +504,16 @@ export function retryImport(jobId: string): void {
  */
 export function listActiveManifests(userId?: string | null): ImportManifest[] {
     if (!userId) return [];
-    return readAll()
-        .filter((m) => m.status === 'pending' || m.status === 'failed')
-        .filter((m) => !(m.userId && m.userId !== userId))
-        .sort((a, b) => b.createdAt - a.createdAt); // newest first
+    const owned: ImportManifest[] = [];
+    for (const manifest of readAll()) {
+        if (manifest.status !== 'pending' && manifest.status !== 'failed') continue;
+        if (manifest.userId === userId) owned.push(manifest);
+        else if (manifest.userId == null) {
+            const claimed = claimImportOwner(manifest.jobId, userId);
+            if (claimed) owned.push(claimed);
+        }
+    }
+    return owned.sort((a, b) => b.createdAt - a.createdAt); // newest first
 }
 
 /** Kick the drain without enqueueing (e.g. after a review confirm). */
@@ -408,6 +563,11 @@ export function setImportDestinations(
                 : {}),
         },
         ...(edits.pinWishlist !== undefined ? { pinWishlist: edits.pinWishlist } : {}),
+        // Destination editing happens only before the review is released. Rebuild
+        // the exact cardinality/nonces from the final selection at confirmation.
+        ...(importManifestProtocol(m) === 'v2'
+            ? { destinationNonces: undefined, expectedDestinations: undefined }
+            : {}),
     });
 }
 
@@ -429,7 +589,7 @@ export function confirmImportReview(
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return false;
     const tableIds = [...new Set(confirmation.tableIds)];
-    return writeManifest({
+    const confirmed: ImportManifest = {
         ...m,
         mode: 'auto',
         spots: confirmation.spots,
@@ -441,7 +601,8 @@ export function confirmImportReview(
             tableId: tableIds[0] ?? null,
         },
         pinWishlist: tableIds.length > 0 ? true : confirmation.pinWishlist,
-    });
+    };
+    return writeManifest(prepareV2ImportRouting(confirmed));
 }
 
 /**
@@ -481,7 +642,16 @@ export function setLargeJob(
 ): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
-    writeManifest({ ...m, largeJob, ...(opts?.status ? { status: opts.status } : {}) });
+    const next: ImportManifest = {
+        ...m,
+        largeJob,
+        ...(opts?.status ? { status: opts.status } : {}),
+    };
+    writeManifest(
+        importManifestProtocol(next) === 'v2' && largeJob.phase === 'running'
+            ? prepareV2ImportRouting(next)
+            : next,
+    );
 }
 
 /**

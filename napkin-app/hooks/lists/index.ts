@@ -34,3 +34,6 @@ export type {
     ToggleListSaveInput,
     ToggleListSaveResult,
 } from './useToggleListSave';
+
+export { useRepairListGhost } from './useRepairListGhost';
+export type { RepairListGhostInput, RepairListGhostResult } from './useRepairListGhost';

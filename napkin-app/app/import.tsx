@@ -64,7 +64,7 @@ export default function ImportScreen() {
         // drains on sign-in (single buffer; no pendingImport double-fire). ──
         if (rawVideoParam) {
             const signedIn = !!session;
-            enqueueVideoImport(rawVideoParam)
+            enqueueVideoImport(rawVideoParam, session?.user.id ?? null)
                 .then(() => {
                     // Only claim "importing…" once the manifest is actually queued.
                     if (signedIn) toast.show("importing — we'll let you know when it's ready to review");

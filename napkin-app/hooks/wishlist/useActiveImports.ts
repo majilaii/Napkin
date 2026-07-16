@@ -17,6 +17,7 @@ import { AppState } from 'react-native';
 import { useAuth } from '@/providers/AuthProvider';
 import { listActiveManifests, onImportEnqueued, type ImportManifest } from '@/lib/importQueue';
 import { deriveCounts } from '@/lib/largeImportJob';
+import { reconcileV2LargeImportManifest } from '@/lib/completenessReconciliation';
 
 // TICKET-152: 'kickoff' = an enumerated large Maps list awaiting the kickoff
 // sheet (destination + pin-all). A large job in phase 'running' reports 'saving'
@@ -34,6 +35,7 @@ export interface ActiveLargeImport {
     listCount: number;
     title: string | null;
     imported: number;
+    queued?: number;
     needsLook: number;
 }
 
@@ -77,6 +79,7 @@ export function useActiveImports(): ActiveImport[] {
                         listCount: lj.listCount,
                         title: lj.title,
                         imported: c.imported,
+                        queued: c.queued,
                         needsLook: c.needsLook,
                     };
                 }
@@ -92,8 +95,23 @@ export function useActiveImports(): ActiveImport[] {
         );
     }, [userId]);
 
+    const reconcileServerJobs = useCallback(async () => {
+        if (!userId) return;
+        const manifests = listActiveManifests(userId).filter(
+            (manifest) =>
+                manifest.protocolGeneration === 'v2' &&
+                manifest.largeJob?.phase === 'done' &&
+                typeof manifest.largeJob.serverJobId === 'string',
+        );
+        await Promise.allSettled(
+            manifests.map((manifest) => reconcileV2LargeImportManifest(manifest.jobId, userId)),
+        );
+        refresh();
+    }, [refresh, userId]);
+
     useEffect(() => {
         refresh();
+        void reconcileServerJobs();
         const sub = AppState.addEventListener('change', (s) => {
             if (s === 'active') refresh();
         });
@@ -101,12 +119,14 @@ export function useActiveImports(): ActiveImport[] {
         // While anything is still resolving ('reading'/'saving'), poll briefly so
         // the phase advances even without a poke (OCR completes mid-screen).
         const tick = setInterval(refresh, 2500);
+        const serverTick = setInterval(() => void reconcileServerJobs(), 10_000);
         return () => {
             sub.remove();
             unsub();
             clearInterval(tick);
+            clearInterval(serverTick);
         };
-    }, [refresh]);
+    }, [reconcileServerJobs, refresh]);
 
     return items;
 }

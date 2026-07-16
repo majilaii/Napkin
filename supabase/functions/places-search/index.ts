@@ -2,12 +2,24 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
-import { upsertRestaurant } from '../_shared/restaurant.ts';
-import { parsePayload, clamp, mapRegularOpeningHours, type SearchPayload } from './utils.ts';
+import {
+    parsePayload,
+    clamp,
+    expectedSearchOwnerDecision,
+    mapRegularOpeningHours,
+    type SearchPayload,
+} from './utils.ts';
+import {
+    CompletenessPaidPathError,
+    CompletenessProvider,
+} from '../_shared/completenessProvider.ts';
+import {
+    addressComponent,
+    type GoogleTextCandidate,
+    type PlaceAttestationProjection,
+} from '../_shared/completeness.ts';
 
 const GOOGLE_PLACES_API_KEY = Deno.env.get('GOOGLE_PLACES_API_KEY');
-const GOOGLE_PLACES_BASE_URL = 'https://places.googleapis.com/v1/places:searchText';
-const GOOGLE_PLACE_DETAILS_BASE_URL = 'https://places.googleapis.com/v1/places';
 
 // ── Internal-call support (TICKET-060 B2) ─────────────────────────────────────
 // resolve-url's handleAsyncExtract calls places-search with the service-role key
@@ -28,31 +40,6 @@ function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
     }
     return diff === 0;
 }
-
-// Field mask shared between text-search and place-details responses.
-// For details, drop the "places." prefix (single-place response).
-const PLACE_FIELDS = [
-    'id',
-    'displayName',
-    'formattedAddress',
-    'addressComponents',
-    'location',
-    'types',
-    'primaryType',
-    'rating',
-    'userRatingCount',
-    'priceLevel',
-    'websiteUri',
-    'googleMapsUri',
-    // TICKET-081: phone + structured hours for the restaurant-page metadata row.
-    'nationalPhoneNumber',
-    'regularOpeningHours',
-    'photos',
-    // TICKET-057: authorAttributions is nested under each photo object in Places v1.
-    // This field provides the structured attribution data (displayName, uri) that we
-    // synthesize into photoAttributionHtml for Google ToS compliance.
-    'photos.authorAttributions',
-];
 
 /**
  * Minimal HTML escaper for synthesizing attribution anchor tags.
@@ -164,6 +151,73 @@ function sanitizePlace(place: any) {
     };
 }
 
+function projectionToPlace(projection: PlaceAttestationProjection) {
+    return {
+        id: projection.place_id,
+        name: projection.display_name,
+        formattedAddress: projection.formatted_address,
+        city: addressComponent(projection.address_components, [
+            'locality', 'postal_town', 'administrative_area_level_2',
+        ]),
+        country: addressComponent(projection.address_components, ['country']),
+        latitude: projection.lat,
+        longitude: projection.lng,
+        categories: [],
+        cuisine: null,
+        googleRating: null,
+        googleRatingCount: null,
+        priceLevel: null,
+        photoReference: projection.photo_reference,
+        photoAttributionHtml: projection.photo_attribution_html,
+        website: null,
+        link: null,
+        phone: null,
+        google_maps_uri: null,
+        hours: null,
+    };
+}
+
+function textCandidateToPlace(candidate: GoogleTextCandidate) {
+    const raw = candidate.raw as any;
+    return {
+        ...sanitizePlace(raw),
+        id: candidate.externalId,
+        name: candidate.name,
+        formattedAddress: candidate.formattedAddress,
+        city: candidate.city,
+    };
+}
+
+async function mintResolution(
+    supabase: any,
+    userId: string,
+    importNonce: string | null,
+    matchedExternalId: string,
+    evidence: unknown,
+): Promise<string> {
+    const { data, error } = await supabase
+        .from('import_resolutions')
+        .insert({
+            user_id: userId,
+            import_nonce: importNonce,
+            candidate_evidence: evidence,
+            decision: 'matched',
+            matched_external_id: matchedExternalId,
+            scores: null,
+        })
+        .select('resolution_id')
+        .single();
+    if (error || !data?.resolution_id) throw error ?? new Error('resolution insert returned no id');
+    return data.resolution_id as string;
+}
+
+function response(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+}
+
 serve(async req => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
@@ -181,6 +235,7 @@ serve(async req => {
         const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
         const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const payload: SearchPayload = await parsePayload(req);
 
         // ── Internal-call path (TICKET-060 B2) ────────────────────────────
         // resolve-url's handleAsyncExtract calls places-search using the service-role
@@ -193,6 +248,8 @@ serve(async req => {
         const isInternalCall =
             INTERNAL_CALL_SECRET.length > 0 &&
             timingSafeEqualBytes(enc.encode(callerSecret), enc.encode(INTERNAL_CALL_SECRET));
+
+        let ownerId: string;
 
         if (!isInternalCall) {
             // ── Auth gate (user-facing path) ───────────────────────────────
@@ -211,6 +268,25 @@ serve(async req => {
                     JSON.stringify({ error: 'Unauthorized' }),
                     { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
                 );
+            }
+            ownerId = user.id;
+
+            const expectedOwner = expectedSearchOwnerDecision(payload.expected_owner_id, ownerId);
+            if (expectedOwner === 'invalid') {
+                return response({
+                    error: {
+                        code: 'INVALID_EXPECTED_OWNER',
+                        message: 'expected_owner_id must be a UUID',
+                    },
+                }, 400);
+            }
+            if (expectedOwner === 'mismatch') {
+                return response({
+                    error: {
+                        code: 'EXPECTED_OWNER_MISMATCH',
+                        message: 'Import manifest belongs to a different signed-in account',
+                    },
+                }, 403);
             }
 
             // ── Rate limit (TICKET-091) — every user-facing call costs a Google
@@ -237,186 +313,138 @@ serve(async req => {
                     { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
                 );
             }
+        } else {
+            // Internal resolve_content calls still charge the real job owner.
+            // The owner header is trusted only after the timing-safe secret gate.
+            const internalOwner = req.headers.get('x-owner-id') ?? '';
+            const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            if (!uuid.test(internalOwner)) return response({ error: 'Missing internal owner' }, 400);
+            ownerId = internalOwner;
         }
         // On the internal path: no auth.getUser call; supabase client uses service-role
         // key. Internal calls are already throttled upstream by resolve-url's buckets.
 
-        // ── API key check ──────────────────────────────────────────────────
-        if (!GOOGLE_PLACES_API_KEY) {
-            return new Response(
-                JSON.stringify({ error: 'GOOGLE_PLACES_API_KEY is not configured' }),
-                {
-                    status: 500,
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                },
-            );
-        }
-
-        const payload: SearchPayload = await parsePayload(req);
-        console.log('Google Places search payload:', payload);
         const query = payload.query?.trim();
         const placeId = payload.place_id?.trim();
+        const claimant = crypto.randomUUID();
+        const provider = new CompletenessProvider(supabase, {
+            googleApiKey: GOOGLE_PLACES_API_KEY ?? '',
+            spendFrozen: Deno.env.get('COMPLETENESS_SPEND_FROZEN') === 'true',
+        });
+        const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const importNonce = typeof payload.import_nonce === 'string' && uuid.test(payload.import_nonce)
+            ? payload.import_nonce
+            : null;
 
-        if (!query && !placeId) {
-            return new Response(
-                JSON.stringify({ error: 'Missing query or place_id parameter' }),
-                {
-                    status: 400,
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                },
-            );
-        }
-
-        // ── Branch A: lookup by place_id (Place Details) ─────────────────
-        if (placeId) {
-            // TICKET-081 fix-pass: pin languageCode=en so regularOpeningHours
-            // weekdayDescriptions come back with English day-name prefixes. The
-            // restaurant page derives "today" by matching that day name (never by
-            // array position, which is locale-dependent), so deterministic English
-            // labels are required for the match to fire.
-            const detailsUrl = `${GOOGLE_PLACE_DETAILS_BASE_URL}/${encodeURIComponent(placeId)}?languageCode=en`;
-            const detailsRes = await fetch(detailsUrl, {
-                method: 'GET',
-                headers: {
-                    'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-                    'X-Goog-FieldMask': PLACE_FIELDS.join(','),
-                },
-            });
-            const detailsBody = await detailsRes.json();
-            if (!detailsRes.ok) {
-                console.error('Place Details error:', detailsBody);
-                return new Response(
-                    JSON.stringify({
-                        error: detailsBody?.error?.message || 'Place Details request failed',
-                        details: detailsBody,
-                    }),
-                    {
-                        status: detailsRes.status,
-                        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                    },
-                );
+        // Edited/manual picker matches always mint FRESH server authority.
+        // Stored evidence is reusable only when it already attests the same id;
+        // otherwise Details is re-derived through the shared cache/budget path.
+        if (payload.action === 'match_correction') {
+            const chosenExternalId = payload.chosen_external_id?.trim() ?? '';
+            if (!importNonce || !chosenExternalId) {
+                return response({ error: 'import_nonce and chosen_external_id are required' }, 400);
             }
 
-            const sanitized = sanitizePlace(detailsBody);
-            let restaurantId: string | null = null;
-
-            // Opportunistic upsert: when persist=true, mirror the place into
-            // restaurants. _shared/restaurant.ts handles non-destructive merge
-            // and Storage hero-photo mirroring.
-            if (payload.persist && sanitized.id && sanitized.name) {
-                try {
-                    restaurantId = await upsertRestaurant(supabase, {
-                        external_id: sanitized.id,
-                        name: sanitized.name,
-                        location: {
-                            address: sanitized.formattedAddress ?? undefined,
-                            locality: sanitized.city ?? undefined,
-                            country: sanitized.country ?? undefined,
-                        },
-                        latitude: sanitized.latitude ?? undefined,
-                        longitude: sanitized.longitude ?? undefined,
-                        photoReference: sanitized.photoReference ?? undefined,
-                        photoAttributionHtml: sanitized.photoAttributionHtml ?? null,
-                        googleRating: sanitized.googleRating ?? undefined,
-                        googleRatingCount: sanitized.googleRatingCount ?? undefined,
-                        priceLevel: sanitized.priceLevel ?? undefined,
-                        cuisine: sanitized.cuisine ?? undefined,
-                        // TICKET-081: persist metadata on the same backfill upsert.
-                        phone: sanitized.phone ?? undefined,
-                        website: sanitized.website ?? undefined,
-                        googleMapsUri: sanitized.google_maps_uri ?? undefined,
-                        hours: sanitized.hours ?? undefined,
-                    });
-                } catch (e) {
-                    // Persist failure is non-fatal; the client still gets the
-                    // sanitized place to render a ghost.
-                    console.error('Persist upsert failed:', e);
+            let evidence: unknown = null;
+            if (payload.prior_resolution_id && uuid.test(payload.prior_resolution_id)) {
+                const { data: prior, error: priorError } = await supabase
+                    .from('import_resolutions')
+                    .select('candidate_evidence,matched_external_id,decision')
+                    .eq('resolution_id', payload.prior_resolution_id)
+                    .eq('user_id', ownerId)
+                    .maybeSingle();
+                if (priorError) throw priorError;
+                if (prior?.decision === 'matched' && prior.matched_external_id === chosenExternalId) {
+                    evidence = { reused_resolution_id: payload.prior_resolution_id, stored: prior.candidate_evidence };
                 }
             }
-
-            return new Response(
-                // Echo the upserted Napkin id (when persist minted/merged a row) so
-                // callers that need a restaurant_id — e.g. the Top 4 picker featuring
-                // a never-logged place — can use it without a second round-trip.
-                JSON.stringify({ data: [{ ...sanitized, restaurant_id: restaurantId }] }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+            if (!evidence) {
+                const projection = await provider.attest(ownerId, chosenExternalId, claimant);
+                evidence = { attestation: projection };
+            }
+            const resolutionId = await mintResolution(
+                supabase,
+                ownerId,
+                importNonce,
+                chosenExternalId,
+                evidence,
             );
+            return response({ data: { resolution_id: resolutionId, external_id: chosenExternalId } });
         }
 
-        // ── Branch B: text search (existing behaviour) ────────────────────
-
-        // Build the request body for Google Places Text Search
-        // TICKET-081 fix-pass: languageCode=en pins English weekday-name prefixes in
-        // regularOpeningHours.weekdayDescriptions (the page matches "today" by day name,
-        // not by locale-dependent array position).
-        const requestBody: any = {
-            textQuery: query,
-            maxResultCount: clamp(payload.limit ?? 5, 1, 20),
-            languageCode: 'en',
-        };
-
-        // Add location bias if coordinates provided
-        if (typeof payload.latitude === 'number' && typeof payload.longitude === 'number') {
-            requestBody.locationBias = {
-                circle: {
-                    center: {
-                        latitude: payload.latitude,
-                        longitude: payload.longitude,
-                    },
-                    radius: payload.radius ?? 5000,
-                },
-            };
+        if (!query && !placeId) {
+            return response({ error: 'Missing query or place_id parameter' }, 400);
         }
 
-        // Extended field mask to include rating, price, and address components
-        const fieldMask = PLACE_FIELDS.map(f => `places.${f}`).join(',');
+        const ownsResolution = req.headers.get('x-candidate-consumer') !== 'resolve-url';
 
-        const upstream = await fetch(GOOGLE_PLACES_BASE_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-                'X-Goog-FieldMask': fieldMask,
-            },
-            body: JSON.stringify(requestBody),
-        });
-
-        const responseBody = await upstream.json();
-
-        // DEBUG: Log the first result to see the raw structure
-        if (responseBody.places && responseBody.places.length > 0) {
-            console.log('Raw Google Places Result:', JSON.stringify(responseBody.places[0]));
+        // ── Branch A: lookup by place_id (minimal Pro attestation) ────────
+        if (placeId) {
+            const projection = await provider.attest(ownerId, placeId, claimant);
+            const sanitized = projectionToPlace(projection);
+            let restaurantId: string | null = null;
+            if (payload.persist) {
+                const { data: existing, error: existingError } = await supabase
+                    .from('restaurants')
+                    .select('id')
+                    .eq('external_id', placeId)
+                    .maybeSingle();
+                if (existingError) throw existingError;
+                const persisted = await provider.persistAttestedRestaurant(
+                    ownerId,
+                    existing?.id ?? null,
+                    projection,
+                    claimant,
+                    true,
+                );
+                restaurantId = persisted.restaurant_id;
+            }
+            const resolutionId = ownsResolution
+                ? await mintResolution(supabase, ownerId, importNonce, placeId, { attestation: projection })
+                : null;
+            return response({
+                data: [{ ...sanitized, restaurant_id: restaurantId, resolution_id: resolutionId }],
+            });
         }
 
-        if (!upstream.ok) {
-            console.error('Google Places API error:', responseBody);
-            return new Response(
-                JSON.stringify({
-                    error: responseBody?.error?.message || 'Google Places request failed',
-                    details: responseBody,
-                }),
-                {
-                    status: upstream.status,
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                },
-            );
-        }
+        // ── Branch B: Text Search (separate endpoint/mask/debit) ──────────
+        const candidates = await provider.searchText(ownerId, {
+            name: query!,
+            city: '',
+            area: null,
+            address: null,
+        }, claimant);
+        const limited = candidates.slice(0, clamp(payload.limit ?? 5, 1, 5));
+        const sanitized = await Promise.all(limited.map(async (candidate) => ({
+            ...textCandidateToPlace(candidate),
+            resolution_id: ownsResolution
+                ? await mintResolution(
+                    supabase,
+                    ownerId,
+                    importNonce,
+                    candidate.externalId,
+                    { text_search_candidate: candidate.raw },
+                )
+                : null,
+        })));
 
-        // Transform to normalized shape for Napkin clients
-        const sanitized = (responseBody?.places ?? []).map(sanitizePlace);
-
-        return new Response(JSON.stringify({ data: sanitized }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return response({ data: sanitized });
     } catch (error) {
         console.error('Edge function error', error);
         reportError(error, { fn: 'places-search' });
-        return new Response(
-            JSON.stringify({ error: 'Unexpected error', details: String(error) }),
-            {
-                status: 500,
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            },
-        );
+        if (error instanceof CompletenessPaidPathError) {
+            const status = error.code === 'BUDGET_DEFERRED'
+                ? 429
+                : error.code === 'CLAIM_PENDING'
+                ? 503
+                : error.providerStatus ?? 502;
+            return response({
+                error: {
+                    code: error.code,
+                    message: error.message,
+                },
+            }, status);
+        }
+        return response({ error: 'Unexpected error', details: String(error) }, 500);
     }
 });

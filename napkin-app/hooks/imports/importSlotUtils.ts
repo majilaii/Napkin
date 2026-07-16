@@ -97,6 +97,7 @@ export function deriveImportSlot(
         };
     }
     const digestImported = largeDone.reduce((sum, m) => sum + (m.large?.imported ?? 0), 0);
+    const digestQueued = largeDone.reduce((sum, m) => sum + (m.large?.queued ?? 0), 0);
     const digestNeedsLook = largeDone.reduce((sum, m) => sum + (m.large?.needsLook ?? 0), 0);
     // 4 — digest with needsLook (attention): a completed large job whose digest
     // is still active and flags rows worth a look.
@@ -108,6 +109,17 @@ export function deriveImportSlot(
             icon: 'checkmark-circle-outline' as const,
             title: `${digestImported} imported`,
             sublabel: `${digestNeedsLook} worth a look`,
+            route: '/import-progress',
+        };
+    }
+    if (largeDone.length > 0 && digestQueued > 0) {
+        return {
+            kind: 'working' as const,
+            count: null,
+            accent: 'calm' as const,
+            icon: 'sync-outline' as const,
+            title: `${digestQueued} ${digestQueued === 1 ? 'spot is' : 'spots are'} completing…`,
+            sublabel: digestImported > 0 ? `${digestImported} already imported` : 'finishing in the background',
             route: '/import-progress',
         };
     }

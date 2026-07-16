@@ -246,6 +246,11 @@ export const queryKeys = {
         detail: (jobId: string) => ['importJobs', 'detail', jobId] as const,
     },
 
+    // Server-side completeness work that exhausted automatic retries.
+    completeness: {
+        exhausted: (userId: string) => ['restaurantCompleteness', 'exhausted', userId] as const,
+    },
+
     // Table Shares — shared-restaurant feed cards (TICKET-060)
     tableShares: {
         forTable: (tableId: string) => ['tableShares', tableId] as const,

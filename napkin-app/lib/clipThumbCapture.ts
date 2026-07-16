@@ -33,6 +33,7 @@ export async function captureClipThumbFromUrl(
     videoUrl: string,
     thumbUrl: string | null | undefined,
     sourceType: ClipThumbSourceType,
+    expectedOwnerId?: string,
 ): Promise<void> {
     if (!videoUrl || !thumbUrl) return;
     try {
@@ -66,7 +67,12 @@ export async function captureClipThumbFromUrl(
 
         await callEdgeFn('resolve-url', {
             action: 'cache_clip_thumb',
-            body: { video_url: videoUrl, image_base64: base64, source_type: sourceType },
+            body: {
+                video_url: videoUrl,
+                image_base64: base64,
+                source_type: sourceType,
+                ...(expectedOwnerId ? { expected_owner_id: expectedOwnerId } : {}),
+            },
         });
     } catch {
         // Swallow ALL failures — best-effort, never blocks or fails the save.
