@@ -1464,8 +1464,8 @@ as $fn$
               or (q.state = 'leased' and q.lease_until < pg_catalog.now())
           )
         order by coalesce(q.lease_until, q.next_attempt_at), q.created_at, q.id
-        for update of q skip locked
         limit pg_catalog.least(pg_catalog.greatest(coalesce(p_limit, 25), 1), 100)
+        for update of q skip locked
     ), claimed as (
         update public.restaurant_completeness_queue q
         set state = 'leased',
