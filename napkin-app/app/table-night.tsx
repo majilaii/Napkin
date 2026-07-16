@@ -20,7 +20,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
-// eslint-disable-next-line import/no-unresolved
 import Slider from '@react-native-community/slider';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -28,7 +27,7 @@ import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { MultiPhotoRow } from '@/components/MultiPhotoRow';
-import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
+import { compressAndUpload, isModerationRejected } from '@/lib/imageUpload';
 import {
     useTableNightStatus,
     useRateTableNight,
@@ -39,6 +38,7 @@ import {
 } from '@/hooks/tables/useTableNight';
 import { useTableNightRealtime } from '@/hooks/tables/useTableNightRealtime';
 import { usePresence } from '@/hooks/tables/usePresence';
+import { submitRateWithSettledPhotos } from '@/hooks/rounds/ratePhotoSubmission';
 import { PresenceRow } from '@/components/table-night/PresenceRow';
 import { ActivityToast, type Toast } from '@/components/table-night/ActivityToast';
 
@@ -238,24 +238,11 @@ export default function TableNightScreen() {
 
     // ── Photo state (multi-photo) ─────────────────────────────────────────
     const [photos, setPhotos] = useState<PhotoSlot[]>([]);
-    const uploadGenRefs = useRef(new Map<string, number>());
-
-    // Keep ref in sync for cleanup on unmount
     const photosRef = useRef(photos);
     useEffect(() => {
         photosRef.current = photos;
     }, [photos]);
-
-    // Clean up orphaned uploads if user exits without submitting
-    useEffect(() => {
-        return () => {
-            for (const slot of photosRef.current) {
-                if (slot.publicUrl) {
-                    removeUploadedPhoto(slot.publicUrl).catch(() => {});
-                }
-            }
-        };
-    }, []);
+    const uploadGenRefs = useRef(new Map<string, number>());
 
     const startUploadForSlot = useCallback(async (slotId: string, uri: string) => {
         if (!user?.id) return;
@@ -271,7 +258,7 @@ export default function TableNightScreen() {
         try {
             const url = await compressAndUpload(uri, user.id);
             if (uploadGenRefs.current.get(slotId) !== gen) {
-                removeUploadedPhoto(url).catch(() => {});
+                // Approved but unbound: the registry's 48h GC reclaims it.
                 return;
             }
             setPhotos(prev => prev.map(s => s.id === slotId
@@ -279,8 +266,11 @@ export default function TableNightScreen() {
                 : s
             ));
             updateStatus('viewing');
-        } catch {
+        } catch (error) {
             if (uploadGenRefs.current.get(slotId) !== gen) return;
+            if (isModerationRejected(error)) {
+                Alert.alert("That photo can't be used", 'Choose another photo.');
+            }
             setPhotos(prev => prev.map(s => s.id === slotId
                 ? { ...s, uploading: false, error: true }
                 : s
@@ -309,10 +299,8 @@ export default function TableNightScreen() {
         const currentGen = uploadGenRefs.current.get(slotId) ?? 0;
         uploadGenRefs.current.set(slotId, currentGen + 1);
         setPhotos(prev => {
-            const slot = prev.find(s => s.id === slotId);
-            if (slot?.publicUrl) {
-                removeUploadedPhoto(slot.publicUrl).catch(() => {});
-            }
+            // Approved objects are service-owned; an unbound removal is left
+            // for the registry's fenced TTL GC.
             return prev.filter(s => s.id !== slotId);
         });
     }, []);
@@ -389,6 +377,8 @@ export default function TableNightScreen() {
 
     const handleCastVote = useCallback(async () => {
         if (!nightId) return;
+        // Keep the selected photos attached to this vote while staging/moderation runs.
+        if (photosRef.current.some((photo) => photo.uploading)) return;
 
         if (!isParticipant) {
             try {
@@ -399,22 +389,24 @@ export default function TableNightScreen() {
             }
         }
 
-        const photoUrls = photos
-            .filter(p => p.publicUrl !== null)
-            .map(p => p.publicUrl as string);
-
         try {
-            await rateMutation.mutateAsync({
-                table_night_id: nightId,
-                rating: Math.round(starRating * 2) / 2,
-                ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
-                vibe_rating: categories.vibe || undefined,
-                flavor_rating: categories.flavor || undefined,
-                service_rating: categories.service || undefined,
-                value_rating: categories.value || undefined,
+            const submitted = await submitRateWithSettledPhotos({
+                getPhotos: () => photosRef.current,
+                submit: async (photoUrls) => {
+                    await rateMutation.mutateAsync({
+                        table_night_id: nightId,
+                        rating: Math.round(starRating * 2) / 2,
+                        ...(photoUrls.length > 0 ? { photo_urls: photoUrls } : {}),
+                        vibe_rating: categories.vibe || undefined,
+                        flavor_rating: categories.flavor || undefined,
+                        service_rating: categories.service || undefined,
+                        value_rating: categories.value || undefined,
+                    });
+                },
+                // Photos are now bound by rate_round; clear the local slots.
+                onCommitted: () => setPhotos([]),
             });
-            // Photos are now persisted — clear so unmount cleanup won't delete them
-            setPhotos([]);
+            if (!submitted) return;
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not submit rating');
             return;
@@ -426,7 +418,7 @@ export default function TableNightScreen() {
         } catch (e: any) {
             Alert.alert('Error', e.message ?? 'Could not lock in');
         }
-    }, [nightId, isParticipant, starRating, categories, photos, joinMutation, rateMutation, readyMutation, updateStatus]);
+    }, [nightId, isParticipant, starRating, categories, joinMutation, rateMutation, readyMutation, updateStatus]);
 
     const handleReveal = useCallback(async () => {
         if (!nightId) return;
@@ -454,7 +446,9 @@ export default function TableNightScreen() {
 
     let ctaLabel = 'Cast Vote';
     let ctaAction = handleCastVote;
-    let ctaDisabled = false;
+    let ctaDisabled = !isRevealed
+        && !isReady
+        && photos.some((photo) => photo.uploading);
 
     if (isRevealed) {
         ctaLabel = 'View Full Breakdown';

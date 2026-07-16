@@ -25,6 +25,51 @@ describe('callEdgeFn POST action routing (TICKET-121 follow-up)', () => {
         mockSupabase.functions.invoke.mockResolvedValue({ data: { data: { ok: true } }, error: null });
     });
 
+    it('sends a binary POST body without JSON encoding and preserves query auth', async () => {
+        const previousUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+        const previousKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+        process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://project.test';
+        process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'anon-key';
+        const bytes = new Uint8Array([0xff, 0xd8, 0xff]).buffer;
+        const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
+            new Response(JSON.stringify({ data: { state: 'staged' } }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            }),
+        );
+
+        try {
+            await expect(callEdgeFn('moderate-image', {
+                action: 'finish_stage',
+                params: { staging_path: 'image-staging/u/x', generation: 2 },
+                rawBody: bytes,
+                contentType: 'image/jpeg',
+                signal: new AbortController().signal,
+            })).resolves.toEqual({ state: 'staged' });
+
+            const [url, init] = fetchSpy.mock.calls[0];
+            const parsed = new URL(String(url));
+            expect(parsed.searchParams.get('action')).toBe('finish_stage');
+            expect(parsed.searchParams.get('staging_path')).toBe('image-staging/u/x');
+            expect(parsed.searchParams.get('generation')).toBe('2');
+            expect(init).toMatchObject({
+                method: 'POST',
+                body: bytes,
+                headers: {
+                    'Content-Type': 'image/jpeg',
+                    Authorization: 'Bearer mock-access-token',
+                    apikey: 'anon-key',
+                },
+            });
+        } finally {
+            fetchSpy.mockRestore();
+            if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_SUPABASE_URL;
+            else process.env.EXPO_PUBLIC_SUPABASE_URL = previousUrl;
+            if (previousKey === undefined) delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+            else process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = previousKey;
+        }
+    });
+
     it('puts a top-level action in the query string AND the body', async () => {
         await callEdgeFn('table-management', {
             action: 'top_four_get',

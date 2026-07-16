@@ -1,10 +1,12 @@
 /**
  * useDeleteAccount (TICKET-090, guideline 5.1.1(v)) — permanently delete the
- * caller's account. The edge fn transfers/deletes owned tables, wipes storage,
- * then deletes the auth user (FK cascades clean up the rest).
+ * caller's account. The edge fn first freezes the account at a durable
+ * tombstone, then drains/inventories/purges it synchronously or through the
+ * monitored cleanup worker before deleting the auth user.
  *
- * On success the local session is dead server-side; the caller must signOut()
- * to tear down client state — done here so every call site behaves the same.
+ * A 202 pending response means the irreversible freeze was accepted and cleanup
+ * will resume durably, so it is also a success: clear private state and sign out
+ * immediately in every call site, even if Auth deletion has not run yet.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';

@@ -1,17 +1,11 @@
 /**
  * useDeleteEntry — delete the viewer's own review (entry).
  *
- * Authorization + child cleanup are already in the DB: the `entries_delete_own`
- * RLS policy (auth.uid() = user_id) gates the delete, and every entry-child table
- * (entry_photos, entry_companions, entry_participants, entry_tables, round_entries,
- * post_reactions/comments via trigger) is ON DELETE CASCADE. So this is a direct
- * supabase-js delete — no edge function needed.
+ * The delete routes through the entry writer as part of the B-1 lifecycle closure.
+ * Authorization, child cascades, image-ref queueing, and hero cleanup remain
+ * database-transactional behind that writer.
  *
- * Two things the DB cascade does NOT handle, done here:
- *  1. Storage objects — entry_photos ROWS cascade, but the uploaded image files in
- *     the Storage bucket do not. We read the urls and best-effort remove them
- *     before the row delete (mirrors useEntryPhotoMutations).
- *  2. Client caches — optimistically remove the entry from every list it can appear
+ * Client caches optimistically remove the entry from every list it can appear
  *     in (feed, table activity, personal journal), snapshot for rollback, and
  *     reconcile dependent surfaces (restaurant page who's-been, supper detail) on
  *     success. (TICKET-036 lifecycle; envelope-safe — pages are { rows }, never
@@ -21,10 +15,9 @@
  * cluster; the supper + other members' takes are untouched.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { removeFromArray } from '@/lib/optimistic';
-import { removeUploadedPhoto } from '@/lib/imageUpload';
 import { invalidateEntryTasteCaches } from './invalidateEntryTaste';
 
 export interface DeleteEntryInput {
@@ -60,24 +53,16 @@ export function useDeleteEntry() {
 
     return useMutation({
         mutationFn: async ({ entryId }: DeleteEntryInput) => {
-            // Best-effort Storage cleanup before the cascade drops the rows.
-            try {
-                const { data: photos } = await supabase
-                    .from('entry_photos')
-                    .select('photo_url')
-                    .eq('entry_id', entryId);
-                await Promise.all(
-                    (photos ?? [])
-                        .map((p: any) => p.photo_url)
-                        .filter(Boolean)
-                        .map((url: string) => removeUploadedPhoto(url).catch(() => {})),
-                );
-            } catch {
-                // Non-fatal — orphaned Storage objects are tolerable; the delete must proceed.
+            const result = await callEdgeFn<{
+                deleted: boolean;
+                entry_id: string;
+            } | null>('entry', {
+                action: 'delete_entry',
+                body: { entry_id: entryId },
+            });
+            if (!result || result.deleted !== true || result.entry_id !== entryId) {
+                throw new Error('delete_entry returned an invalid result');
             }
-
-            const { error } = await supabase.from('entries').delete().eq('id', entryId);
-            if (error) throw error;
             return { entryId };
         },
 

@@ -21,13 +21,13 @@
  *   initialTableId — optional string (pre-selects a table in SHARE TO +
  *                    used for cache invalidation on success)
  *
- * All LogSheet logic is preserved: photo slot machinery (gen-guards,
- * cleanup-on-unmount, retry), date edit, companion picker, table checklist,
+ * All LogSheet logic is preserved: photo slot machinery (gen-guards, retry;
+ * unbound moderated objects are reclaimed server-side), date edit, companion picker, table checklist,
  * sub-ratings, submit via lib/composer.ts + useCreateEntry hook.
  * Payload contract FROZEN (composer.test.ts must stay green).
  * Toast: "tried {name}" via useToast on success then router.back().
  */
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -60,8 +60,7 @@ import {
 import { StitchConfirmSheet } from '@/components/suppers';
 import { useToast } from '@/providers/ToastProvider';
 import { queryKeys } from '@/lib/queryKeys';
-import { compressAndUpload, removeUploadedPhoto } from '@/lib/imageUpload';
-import { collectOrphanedBlobUrls } from '@/lib/photoCleanup';
+import { compressAndUpload, PhotoUploadError } from '@/lib/imageUpload';
 import { buildEntryPayload, toggleTableId } from '@/lib/composer';
 import type { ComposerBreakdown } from '@/lib/composer';
 import { CompanionPickerSheet } from '@/components/logging/CompanionPickerSheet';
@@ -341,26 +340,6 @@ export default function LogMealScreen() {
     // ── Upload generation counter ─────────────────────────────────────
     const uploadGenRefs = useRef(new Map<string, number>());
 
-    // ── Stable ref to photos for cleanup effects ──────────────────────
-    const photosRef = useRef(photos);
-    useEffect(() => { photosRef.current = photos; }, [photos]);
-
-    // Set true once a save succeeds — gates the unmount cleanup so the
-    // just-saved photos (now owned by the entry) are NOT deleted.
-    const savedRef = useRef(false);
-
-    // ── Unmount cleanup — orphaned blobs only ─────────────────────────
-    // On a successful save every blob is referenced by the new entry, so
-    // collectOrphanedBlobUrls returns [] and nothing is deleted. Only an
-    // abandoned logger (closed without saving) cleans up its uploads.
-    useEffect(() => {
-        return () => {
-            for (const url of collectOrphanedBlobUrls(photosRef.current, savedRef.current)) {
-                removeUploadedPhoto(url).catch(() => {});
-            }
-        };
-    }, []);
-
     // ── Photo machinery ────────────────────────────────────────────────
 
     const startUploadForSlot = useCallback(async (slotId: string, uri: string) => {
@@ -375,7 +354,7 @@ export default function LogMealScreen() {
         try {
             const url = await compressAndUpload(uri, user.id);
             if (uploadGenRefs.current.get(slotId) !== gen) {
-                removeUploadedPhoto(url).catch(() => {});
+                // Approved but unbound: the registry's 48h GC reclaims it.
                 return;
             }
             setPhotos((prev) =>
@@ -383,11 +362,15 @@ export default function LogMealScreen() {
                     s.id === slotId ? { ...s, publicUrl: url, uploading: false, uploadGen: gen } : s,
                 ),
             );
-        } catch {
+        } catch (error) {
             if (uploadGenRefs.current.get(slotId) !== gen) return;
+            const message = error instanceof PhotoUploadError
+                && error.code === 'moderation_rejected'
+                ? "That photo can't be used. Tap to choose another."
+                : 'Upload failed. Tap to retry.';
             setPhotos((prev) =>
                 prev.map((s) =>
-                    s.id === slotId ? { ...s, uploading: false, error: 'Upload failed. Tap to retry.' } : s,
+                    s.id === slotId ? { ...s, uploading: false, error: message } : s,
                 ),
             );
         }
@@ -442,10 +425,8 @@ export default function LogMealScreen() {
         uploadGenRefs.current.set(slotId, currentGen + 1);
 
         setPhotos((prev) => {
-            const slot = prev.find((s) => s.id === slotId);
-            if (slot?.publicUrl) {
-                removeUploadedPhoto(slot.publicUrl).catch(() => {});
-            }
+            // Approved objects are service-owned; an unbound removal is left
+            // for the registry's fenced TTL GC.
             return prev.filter((s) => s.id !== slotId);
         });
     }, []);
@@ -506,8 +487,6 @@ export default function LogMealScreen() {
                 },
                 {
                     onSuccess: () => {
-                        // Photos now belong to the take entry — don't clean them up.
-                        savedRef.current = true;
                         // The take is the caller's own entry → surface it in their
                         // Journal (which shows all own entries since 20260616000100).
                         if (user?.id) {
@@ -595,9 +574,6 @@ export default function LogMealScreen() {
             } as any,
             {
                 onSuccess: (result) => {
-                    // Mark saved BEFORE navigating: the unmount cleanup must
-                    // not delete photos now owned by the entry (TICKET-071 bug).
-                    savedRef.current = true;
                     // Invalidate the originating page's cache (pageId covers
                     // ghost first-logs where restaurant.id is undefined).
                     const invalidateId = pageId ?? restaurant.id;

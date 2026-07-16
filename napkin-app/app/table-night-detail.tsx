@@ -45,7 +45,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import { queryKeys } from '@/lib/queryKeys';
-import { compressAndUpload } from '@/lib/imageUpload';
+import { appendModeratedEntryPhoto } from '@/hooks/entries/useEntryPhotoMutations';
+import { isModerationRejected } from '@/lib/imageStaging';
 import {
     useTableNightStatus,
     type TableNightParticipant,
@@ -840,29 +841,7 @@ function SharedPhotoGrid({
             if (!userId || !myEntryId) return;
             setIsUploading(true);
             try {
-                const publicUrl = await compressAndUpload(uri, userId);
-
-                const { data: maxRow } = await supabase
-                    .from('entry_photos')
-                    .select('sort_order')
-                    .eq('entry_id', myEntryId)
-                    .order('sort_order', { ascending: false })
-                    .limit(1)
-                    .single();
-                const sortOrder = (maxRow?.sort_order ?? 0) + 1;
-
-                const { error } = await supabase
-                    .from('entry_photos')
-                    .insert({
-                        entry_id: myEntryId,
-                        photo_url: publicUrl,
-                        sort_order: sortOrder,
-                    });
-
-                if (error) {
-                    Alert.alert('Upload failed', error.message);
-                    return;
-                }
+                await appendModeratedEntryPhoto(myEntryId, uri, userId);
 
                 await Promise.all([
                     queryClient.invalidateQueries({
@@ -871,9 +850,16 @@ function SharedPhotoGrid({
                     queryClient.invalidateQueries({
                         queryKey: queryKeys.tableNight.nightPhotos(nightId),
                     }),
+                    // append_entry_photo may atomically establish the first hero.
+                    queryClient.invalidateQueries({
+                        queryKey: queryKeys.tableNight.status(nightId),
+                    }),
                 ]);
-            } catch {
-                Alert.alert('Upload failed', 'Could not upload photo. Please try again.');
+            } catch (error) {
+                Alert.alert(
+                    isModerationRejected(error) ? "That photo can't be used" : 'Upload failed',
+                    isModerationRejected(error) ? 'Choose another photo.' : 'Could not upload photo. Please try again.',
+                );
             } finally {
                 setIsUploading(false);
             }

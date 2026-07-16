@@ -99,6 +99,9 @@ jest.mock('@/lib/profilePhoto', () => ({
     chooseAndSaveNewProfilePhoto: jest.fn(),
     shouldBlockProfilePhotoPicker: (status: string) => status === 'offline',
 }));
+jest.mock('@/lib/imageStaging', () => ({
+    isModerationRejected: (error: { code?: string }) => error?.code === 'moderation_rejected',
+}));
 
 jest.mock('../ProfileHeader', () => ({
     ProfileHeader: (props: Record<string, unknown>) =>
@@ -191,8 +194,8 @@ describe('ProfileScreenBody avatar-swap orchestration', () => {
         expect(profileHeader(renderer).props.isChangingPhoto).toBe(true);
         expect(mockChooseAndSave).toHaveBeenCalledWith(
             expect.objectContaining({
-                userId: 'user-1',
-                previousAvatarUrl: 'https://cdn.example/old.jpg',
+                onSourceChosen: expect.any(Function),
+                saveAvatarUrl: expect.any(Function),
             }),
         );
 
@@ -223,8 +226,8 @@ describe('ProfileScreenBody avatar-swap orchestration', () => {
 
         expect(mockChooseAndSave).toHaveBeenCalledWith(
             expect.objectContaining({
-                userId: 'user-1',
-                previousAvatarUrl: 'https://cdn.example/old.jpg',
+                onSourceChosen: expect.any(Function),
+                saveAvatarUrl: expect.any(Function),
             }),
         );
         expect(mockUpdateProfile).toHaveBeenCalledWith({
@@ -248,6 +251,27 @@ describe('ProfileScreenBody avatar-swap orchestration', () => {
         expect(mockAlert).toHaveBeenCalledWith(
             "Couldn't save that photo",
             'Please try again.',
+        );
+        expect(profileHeader(renderer).props.isChangingPhoto).toBe(false);
+        act(() => renderer.unmount());
+    });
+
+    it('uses the moderation-specific retry alert for a rejected quick-swap', async () => {
+        mockChooseAndSave.mockImplementation(({ onSourceChosen }) => {
+            onSourceChosen();
+            return Promise.reject(Object.assign(new Error('rejected'), {
+                code: 'moderation_rejected',
+            }));
+        });
+        const renderer = renderBody();
+
+        await act(async () => {
+            await profileHeader(renderer).props.onChangePhoto();
+        });
+
+        expect(mockAlert).toHaveBeenCalledWith(
+            "That photo can't be used",
+            'Choose another photo.',
         );
         expect(profileHeader(renderer).props.isChangingPhoto).toBe(false);
         act(() => renderer.unmount());

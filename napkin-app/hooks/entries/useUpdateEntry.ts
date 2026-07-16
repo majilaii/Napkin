@@ -1,14 +1,14 @@
 /**
  * useUpdateEntry — entry edits via two paths (by design — see ticket TICKET-027):
  *
- *  1. Scalar-only fields (rating, content, etc.): direct supabase-js PATCH.
+ *  1. Non-image scalar fields (rating, content, etc.): direct supabase-js PATCH.
  *     RLS policy `entries_update_own` (auth.uid() = user_id) covers this.
  *     Optimistic patch is applied immediately.
  *
- *  2. companion_ids present: routes through the `entry` edge function
- *     (action='update-companions') because `entry_companions` is a join table
- *     that edge functions access via service-role (no direct-client RLS write path
- *     is needed from the app layer). Scalar fields can be bundled with this call.
+ *  2. `photo_url` routes through `set_entry_hero`, which commits the hero sink
+ *     and registry ref transactionally. Companion edits route through
+ *     `update-companions` because `entry_companions` is a service-written join
+ *     table. Scalar fields remain on the direct, explicitly image-free path.
  *
  * Invalidation: entry detail plus server-derived profile/Spots/Taste aggregates.
  * Table activity and entries.list stay patched in place so edits do not
@@ -47,20 +47,44 @@ export function useUpdateEntry(entryId: string) {
 
     return useMutation({
         mutationFn: async (input: UpdateEntryInput) => {
-            const { companion_ids, optimisticCompanions: _previews, ...scalarInput } = input;
+            const {
+                companion_ids,
+                optimisticCompanions: _previews,
+                photo_url,
+                ...scalarInput
+            } = input;
+            const hasPhotoUrl = Object.prototype.hasOwnProperty.call(input, 'photo_url');
+            let result: unknown = null;
 
             if (companion_ids !== undefined) {
                 // Companion edit path — edge function (service role)
-                const result = await callEdgeFn<unknown>('entry', {
+                result = await callEdgeFn<unknown>('entry', {
                     action: 'update-companions',
                     body: { entry_id: entryId, companion_ids },
                 });
-                // If no scalar changes, return early
-                if (Object.keys(scalarInput).length === 0) return result;
             }
 
-            // Scalar edit path — direct PATCH (only when there are scalar fields to update)
-            if (Object.keys(scalarInput).length === 0) return null;
+            if (hasPhotoUrl) {
+                // Image hero + ref binding must commit inside the flag-aware writer.
+                const heroResult = await callEdgeFn<{
+                    id: string;
+                    photo_url: string | null;
+                } | null>('entry', {
+                    action: 'set_entry_hero',
+                    body: { entry_id: entryId, photo_url: photo_url ?? null },
+                });
+                if (
+                    !heroResult
+                    || heroResult.id !== entryId
+                    || (heroResult.photo_url !== null && typeof heroResult.photo_url !== 'string')
+                ) {
+                    throw new Error('set_entry_hero returned an invalid result');
+                }
+                result = heroResult;
+            }
+
+            // Direct PATCH is intentionally image-free before B-2 revokes land.
+            if (Object.keys(scalarInput).length === 0) return result;
 
             // TICKET-043: explicit column list excludes table_id (column-level revoke
             // prevents authenticated from reading entries.table_id directly).
@@ -81,7 +105,7 @@ export function useUpdateEntry(entryId: string) {
                 .single();
 
             if (error) throw error;
-            return data;
+            return data ?? result;
         },
 
         onMutate: async (input) => {

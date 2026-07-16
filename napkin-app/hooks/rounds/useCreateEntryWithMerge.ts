@@ -27,7 +27,6 @@
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { InfiniteData } from '@tanstack/react-query';
-import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
@@ -41,6 +40,7 @@ import type { Page } from '@/lib/pagination';
 import type { ActivityItem, TableNightActivity } from '@/hooks/tables/useTableActivity';
 import type { DiaryEntryRow } from '@/hooks/users/useUserProfile';
 import { invalidateEntryTasteCaches } from '@/hooks/entries/invalidateEntryTaste';
+import { callMergeWith } from './mergeRequest';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -122,21 +122,6 @@ interface MutationContext {
 }
 
 // ── Fetch helper ──────────────────────────────────────────────────────────────
-
-async function callMergeWith(input: CreateEntryWithMergeInput): Promise<MergeWithResult> {
-    const { entry_a_id, table_id, restaurant_id, visited_at, client_nonce, ...bPayload } = input;
-    return callEdgeFn<MergeWithResult>('entry', {
-        body: {
-            action: 'merge_with',
-            entry_a_id,
-            table_id,
-            restaurant_id,
-            visited_at,
-            client_nonce,
-            ...bPayload,
-        },
-    });
-}
 
 // ── Optimistic helpers ────────────────────────────────────────────────────────
 
@@ -236,7 +221,7 @@ export function useCreateEntryWithMerge() {
     const toast = useToast();
 
     return useMutation<MergeWithResult, Error, CreateEntryWithMergeInput, MutationContext>({
-        mutationFn: callMergeWith,
+        mutationFn: (input) => callMergeWith<CreateEntryWithMergeInput, MergeWithResult>(input),
 
         onMutate: async (input): Promise<MutationContext> => {
             const { entry_a_id, table_id, restaurant_id, client_nonce: nonce } = input;

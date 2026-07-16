@@ -20,6 +20,14 @@ export interface CallEdgeFnOptions<TBody = unknown> {
     /** JSON body for POST. Ignored for GET. */
     body?: TBody;
     /**
+     * Raw POST body for binary edge contracts. When present, POST uses the
+     * fetch transport (never `functions.invoke`) and does not JSON-encode or
+     * merge `action` into the body. `action`/`params` still ride the query.
+     */
+    rawBody?: BodyInit;
+    /** Content type for `rawBody` (defaults to application/octet-stream). */
+    contentType?: string;
+    /**
      * Set false to keep the complete successful response envelope instead of
      * returning its `data` field. Pagination endpoints need this when cursors
      * live beside `data`, for example `{ data: rows, next_cursor }`.
@@ -29,9 +37,9 @@ export interface CallEdgeFnOptions<TBody = unknown> {
     /**
      * AbortSignal for cancellation.
      * - On GET: always wired through to fetch (existing behavior).
-     * - On POST with signal: routes to postWithFetch() so the upstream request
-     *   is actually cancelled. Without signal, POST uses supabase.functions.invoke
-     *   (unchanged behavior for all existing callers). [ARCH-REVIEW-M2]
+     * - On POST with signal or `rawBody`: routes to postWithFetch() so the
+     *   upstream request is cancellable and binary bytes are not JSON-encoded.
+     *   Ordinary JSON POSTs keep using supabase.functions.invoke.
      */
     signal?: AbortSignal;
 }
@@ -182,7 +190,7 @@ async function callEdgeFnOnce<T = unknown>(
     name: string,
     opts: CallEdgeFnOptions = {},
 ): Promise<T> {
-    const { action, method = 'POST', params, body, signal, unwrapData = true } = opts;
+    const { action, method = 'POST', params, body, rawBody, signal, unwrapData = true } = opts;
 
     addBreadcrumb({ category: 'edge', message: `${name}:${action ?? ''}` });
 
@@ -248,10 +256,10 @@ async function callEdgeFnOnce<T = unknown>(
         return (unwrapData ? (json?.data ?? json) : json) as T;
     }
 
-    // POST: if a signal is provided, use raw fetch so AbortSignal actually cancels
-    // the upstream request. Without signal, fall through to supabase.functions.invoke
-    // (unchanged behavior for all existing callers). [ARCH-REVIEW-M2]
-    if (signal) {
+    // POST: a signal needs fetch so cancellation reaches the upstream request;
+    // binary bodies also require fetch so they are not JSON-encoded by invoke.
+    // Existing JSON callers without either stay on functions.invoke.
+    if (signal || rawBody !== undefined) {
         return postWithFetch<T>(name, opts);
     }
 
@@ -307,10 +315,18 @@ async function callEdgeFnOnce<T = unknown>(
 /**
  * POST via raw fetch with manual auth header forwarding + AbortSignal support.
  * Mirrors the GET fetch branch — same auth attachment, same error-envelope unwrap.
- * Called by callEdgeFn when method === 'POST' && signal is present. [ARCH-REVIEW-M2]
+ * Called by callEdgeFn for cancellable and/or raw-body POST requests.
  */
 async function postWithFetch<T>(name: string, opts: CallEdgeFnOptions): Promise<T> {
-    const { action, params, body, signal, unwrapData = true } = opts;
+    const {
+        action,
+        params,
+        body,
+        rawBody,
+        contentType,
+        signal,
+        unwrapData = true,
+    } = opts;
     const { data: { session } } = await supabase.auth.getSession();
     const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
     const url = new URL(`${baseUrl}/functions/v1/${name}`);
@@ -322,22 +338,26 @@ async function postWithFetch<T>(name: string, opts: CallEdgeFnOptions): Promise<
         }
     }
 
-    const postBody = action
-        ? { action, ...((body as object | undefined) ?? {}) }
-        : body;
+    const postBody = rawBody === undefined
+        ? (action
+            ? { action, ...((body as object | undefined) ?? {}) }
+            : body)
+        : undefined;
 
     let res: Response;
     try {
         res = await fetch(url.toString(), {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': rawBody !== undefined
+                    ? (contentType ?? 'application/octet-stream')
+                    : 'application/json',
                 ...(session?.access_token
                     ? { Authorization: `Bearer ${session.access_token}` }
                     : {}),
                 apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '',
             },
-            body: postBody !== undefined ? JSON.stringify(postBody) : undefined,
+            body: rawBody ?? (postBody !== undefined ? JSON.stringify(postBody) : undefined),
             signal,
         });
     } catch (fetchErr) {
