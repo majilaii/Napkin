@@ -25,8 +25,11 @@
  *                           le.id ASC). Smallest, highest-value; unblocks covers.
  *   --set=all               Every list_entries-referenced restaurant. Larger;
  *                           survives reorders/edits, feeds the profile shelves.
+ *   --set=everything        Every restaurant in the table, with no list join. It
+ *                           supersedes the narrower sets for full-surface coverage
+ *                           across map, feed, and restaurant pages.
  *
- * Real run:   node scripts/backfill-list-cover-hero.mjs [--set=covers|all]
+ * Real run:   node scripts/backfill-list-cover-hero.mjs [--set=covers|all|everything]
  * Over 500:   add --force
  * Stale ids:  add --refresh-stale (see below)
  *
@@ -116,11 +119,11 @@ const FORCE = args.has('--force');
 // mirrors the photo from the SAME search response.
 const REFRESH_STALE = args.has('--refresh-stale');
 
-// --set=covers (default) | --set=all — the two TICKET-187 priority sets.
+// --set=covers (default) | --set=all | --set=everything.
 const setArg = process.argv.slice(2).find((a) => a.startsWith('--set='));
 const CANDIDATE_SET = setArg ? setArg.slice('--set='.length) : 'covers';
-if (CANDIDATE_SET !== 'covers' && CANDIDATE_SET !== 'all') {
-    console.error(`Unknown --set=${CANDIDATE_SET}. Use --set=covers (default) or --set=all.`);
+if (!['covers', 'all', 'everything'].includes(CANDIDATE_SET)) {
+    console.error(`Unknown --set=${CANDIDATE_SET}. Use --set=covers (default), --set=all, or --set=everything.`);
     process.exit(1);
 }
 
@@ -259,6 +262,14 @@ function coverCandidateRestaurantId(entries, ranked) {
 /** Build the deduped candidate restaurant_id set for the chosen priority set. */
 async function buildCandidateSet() {
     const candidates = new Set();
+
+    if (CANDIDATE_SET === 'everything') {
+        const restaurantRows = await fetchAll('restaurants?select=id', 'id');
+        for (const r of restaurantRows) {
+            if (r.id) candidates.add(r.id);
+        }
+        return candidates;
+    }
 
     const entryRows = await fetchAll(
         'list_entries?select=id,list_id,restaurant_id,position,created_at',
@@ -519,7 +530,9 @@ async function main() {
         `${REFRESH_STALE ? ' + --refresh-stale' : ''} · set=${CANDIDATE_SET}`);
     console.log(CANDIDATE_SET === 'covers'
         ? 'Building candidate set (cover-candidate restaurant per list — exact fn_saved_list_cards ordering)…'
-        : 'Building candidate set (ALL list_entries-referenced restaurants)…');
+        : CANDIDATE_SET === 'all'
+            ? 'Building candidate set (ALL list_entries-referenced restaurants)…'
+            : 'Building candidate set (EVERY restaurant — no list join)…');
     const candidates = await buildCandidateSet();
     console.log(`  candidate restaurants (deduped): ${candidates.size}`);
 
@@ -635,7 +648,9 @@ async function main() {
     console.log(`  raced (CAS miss, no-op):            ${raced}`);
     console.log(`  refreshed (stale external_id):      ${refreshed}`);
     console.log(`  errors (http/upload):               ${errors}`);
-    console.log('\nRun the OTHER priority set next (--set=covers → --set=all), dry-run first.');
+    if (CANDIDATE_SET !== 'everything') {
+        console.log('\nRun the OTHER priority set next (--set=covers → --set=all), dry-run first.');
+    }
 }
 
 main().catch((err) => {
