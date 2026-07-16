@@ -14,6 +14,9 @@ jest.mock('react-native', () => ({
     Modal: 'Modal',
     Pressable: 'Pressable',
     ScrollView: 'ScrollView',
+    // theme.ts calls Platform.select at module scope — a partial RN mock
+    // without Platform crashes every import of @/constants/theme.
+    Platform: { OS: 'ios', select: (spec: { ios?: unknown; default?: unknown }) => spec.ios ?? spec.default },
     StyleSheet: {
         absoluteFillObject: {},
         create: (styles: unknown) => styles,
