@@ -132,7 +132,7 @@ Diagnostics" answer is **stale**. Declare:
 | ASC category → type | What it is | Purposes | Linked? | Tracking? |
 |---|---|---|---|---|
 | Contact Info → Email Address | Account email (Supabase Auth, incl. Apple private-relay) | App Functionality | **Linked** | No |
-| User Content → Photos or Videos | Entry photos, avatar | App Functionality | **Linked** | No |
+| User Content → Photos or Videos | Entry photos and the mandatory new-account avatar; canonical copies are safety-checked by Google Cloud Vision before publication | App Functionality | **Linked** | No |
 | User Content → Other User Content | Logs, notes, wishlist, lists, Tables, comments, reactions, display name | App Functionality | **Linked** | No |
 | Identifiers → User ID | Supabase account id | App Functionality, Analytics | **Linked** | No |
 | Usage Data → Product Interaction | First-party events in our own DB | Analytics | **Linked** | No |
@@ -147,12 +147,20 @@ holds: **no tracking, no ATT prompt**, and location / search history /
 contacts / device ID stay **undeclared** (foreground round-trip only, nothing
 retained — the reasoning table in that doc is the answer if App Review asks).
 
+**TICKET-196 processor assessment (2026-07-16):** the existing Photos or
+Videos declaration remains the right data type, purpose, linkage, and tracking
+answer. The moderation call is App Functionality/security, not a new data type.
+The privacy policy and review notes must name **Google Cloud Vision SafeSearch**:
+the canonical JPEG is sent for an online response; Google documents that online
+image bytes are processed in memory rather than persisted to disk, are not used
+to train Cloud Vision, and are not shared publicly or with another third party.
+
 ## 5. Rejection-risk map (what a reviewer may flag → your answer)
 
 | Guideline | Risk | Your answer (all shipped) |
 |---|---|---|
-| 1.2 UGC | Social app without safety rails | Report + block on every review/profile ⋯ menu, blocked-users screen, 24h moderation policy in Terms |
-| 5.1.1(v) | Account deletion missing | Settings → bottom → delete, double-confirmed, immediate |
+| 1.2 UGC | Social app without safety rails | Mandatory new-account avatar + every published user image passes Google Cloud Vision SafeSearch; Report + Block remain available on every review/profile ⋯ menu; blocked-users screen; 24h human-review policy in Terms |
+| 5.1.1(v) | Account deletion missing | Settings → bottom → delete, double-confirmed; the account freezes and signs out immediately while durable storage cleanup retries to completion |
 | 4.8 | Offers Google sign-in without Apple | Sign in with Apple shipped (TICKET-110) |
 | 2.1 | Demo account looks empty / reviewer can't see social surface | Seeder pre-populates journal + wishlist + a Table with a second user + comments |
 | 5.1.1 | Permission strings vs behavior | Location foreground-only; speech recognition string explains on-device video import; photo picker is images-only (no mic string) |
