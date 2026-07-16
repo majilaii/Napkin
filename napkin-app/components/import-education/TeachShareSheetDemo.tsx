@@ -7,6 +7,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
+    AccessibilityInfo,
     ActivityIndicator,
     Image,
     Pressable,
@@ -31,7 +32,7 @@ import Animated, {
     withTiming,
 } from 'react-native-reanimated';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import {
     BEAT_COUNT,
     LAST_BEAT,
@@ -57,6 +58,9 @@ export interface TeachShareSheetDemoProps {
 const VIDEO_IMAGE = require('../../assets/onboarding/tiktok-crudo.png');
 const NAPKIN_ICON = require('../../assets/images/icon.png');
 
+const EXTENSION_BEAT = 5;
+const IMPORTS_BEAT = 6;
+
 const TIKTOK_RECIPIENTS = [
     { name: 'Leah', initials: 'L', colors: ['#fa9d72', '#d95b83'] as const },
     { name: 'Marco', initials: 'M', colors: ['#5374e8', '#252b63'] as const },
@@ -72,11 +76,7 @@ const NEARBY_RECIPIENTS = [
     { name: 'Family', icon: 'people-outline' as IconName, badge: '#2dcc62' },
 ] as const;
 
-const SAVED_PLACES = [
-    { name: 'Lita', detail: 'Marylebone · Mediterranean', score: '4.8' },
-    { name: 'Donia', detail: 'Soho · Filipino', score: '4.7' },
-    { name: 'Berenjak', detail: 'Borough · Persian', score: '4.6' },
-] as const;
+const SAVED_PLACES = ['Lita', 'Donia', 'Berenjak'] as const;
 
 export function TeachShareSheetDemo({
     palette,
@@ -94,6 +94,7 @@ export function TeachShareSheetDemo({
     const [tiktokMoreReady, setTiktokMoreReady] = useState(false);
     const [iosMoreReady, setIosMoreReady] = useState(false);
     const [napkinReady, setNapkinReady] = useState(false);
+    const [extensionAdded, setExtensionAdded] = useState(false);
     const tiktokAppsRef = useRef<ScrollView>(null);
     const iosAppsRef = useRef<ScrollView>(null);
     const appListRef = useRef<ScrollView>(null);
@@ -104,6 +105,8 @@ export function TeachShareSheetDemo({
     const tiktokDrawerProgress = useSharedValue(0);
     const iosSheetProgress = useSharedValue(0);
     const appsSheetProgress = useSharedValue(0);
+    const extensionSheetProgress = useSharedValue(0);
+    const importsProgress = useSharedValue(0);
     const resultProgress = useSharedValue(0);
 
     useEffect(() => {
@@ -120,11 +123,28 @@ export function TeachShareSheetDemo({
             duration,
             easing: Easing.out(Easing.cubic),
         });
+        extensionSheetProgress.value = withTiming(beat === EXTENSION_BEAT ? 1 : 0, {
+            duration,
+            easing: Easing.out(Easing.cubic),
+        });
+        importsProgress.value = withTiming(beat === IMPORTS_BEAT ? 1 : 0, {
+            duration,
+            easing: Easing.out(Easing.cubic),
+        });
         resultProgress.value = withTiming(beat === LAST_BEAT ? 1 : 0, {
             duration: reduced ? 0 : 280,
             easing: Easing.out(Easing.cubic),
         });
-    }, [appsSheetProgress, beat, iosSheetProgress, reduced, resultProgress, tiktokDrawerProgress]);
+    }, [
+        appsSheetProgress,
+        beat,
+        extensionSheetProgress,
+        importsProgress,
+        iosSheetProgress,
+        reduced,
+        resultProgress,
+        tiktokDrawerProgress,
+    ]);
 
     useEffect(() => {
         revealTimers.current.forEach(clearTimeout);
@@ -171,11 +191,24 @@ export function TeachShareSheetDemo({
         };
     }, [beat, reduced, width]);
 
+    useEffect(() => {
+        if (beat !== EXTENSION_BEAT || !extensionAdded) return;
+        // This is a content dwell, not animation: keep it long enough for the
+        // confirmation to register even when reduced motion makes the morph instant.
+        const timer = setTimeout(
+            () => setBeat((current) => advanceOnTarget(current, 'addForReview')),
+            800,
+        );
+        return () => clearTimeout(timer);
+    }, [beat, extensionAdded]);
+
     const shouldPulse =
         beat === 1 ||
         (beat === 2 && tiktokMoreReady) ||
         (beat === 3 && iosMoreReady) ||
-        (beat === 4 && napkinReady);
+        (beat === 4 && napkinReady) ||
+        (beat === EXTENSION_BEAT && !extensionAdded) ||
+        beat === IMPORTS_BEAT;
 
     useEffect(() => {
         cancelAnimation(targetPulse);
@@ -214,6 +247,14 @@ export function TeachShareSheetDemo({
         opacity: appsSheetProgress.value,
         transform: [{ translateY: (1 - appsSheetProgress.value) * 96 }],
     }));
+    const extensionSheetStyle = useAnimatedStyle(() => ({
+        opacity: extensionSheetProgress.value,
+        transform: [{ translateY: (1 - extensionSheetProgress.value) * 72 }],
+    }));
+    const importsStyle = useAnimatedStyle(() => ({
+        opacity: importsProgress.value,
+        transform: [{ translateY: (1 - importsProgress.value) * 12 }],
+    }));
     const resultStyle = useAnimatedStyle(() => ({
         opacity: resultProgress.value,
         transform: [{ scale: 0.985 + resultProgress.value * 0.015 }],
@@ -225,7 +266,7 @@ export function TeachShareSheetDemo({
 
     return (
         <View style={styles.root} accessibilityViewIsModal>
-            <StatusBar style={beat === LAST_BEAT ? 'auto' : 'light'} />
+            <StatusBar style={beat >= IMPORTS_BEAT ? 'auto' : 'light'} />
             <TikTokScreen
                 topInset={topInset}
                 bottomInset={bottomInset}
@@ -291,6 +332,42 @@ export function TeachShareSheetDemo({
             </Animated.View>
 
             <Animated.View
+                pointerEvents={beat === EXTENSION_BEAT ? 'auto' : 'none'}
+                accessibilityElementsHidden={beat !== EXTENSION_BEAT}
+                importantForAccessibility={beat === EXTENSION_BEAT ? 'auto' : 'no-hide-descendants'}
+                style={[styles.fullOverlay, extensionSheetStyle]}
+            >
+                <ExtensionShareCard
+                    palette={palette}
+                    bottomInset={bottomInset}
+                    added={extensionAdded}
+                    reduced={reduced}
+                    pulseStyle={pulseStyle}
+                    onAdd={() => {
+                        setExtensionAdded(true);
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+                            () => undefined,
+                        );
+                    }}
+                />
+            </Animated.View>
+
+            <Animated.View
+                pointerEvents={beat === IMPORTS_BEAT ? 'auto' : 'none'}
+                accessibilityElementsHidden={beat !== IMPORTS_BEAT}
+                importantForAccessibility={beat === IMPORTS_BEAT ? 'auto' : 'no-hide-descendants'}
+                style={[styles.fullOverlay, importsStyle]}
+            >
+                <ImportsHubScreen
+                    palette={palette}
+                    topInset={topInset}
+                    bottomInset={bottomInset}
+                    pulseStyle={pulseStyle}
+                    onApprove={() => completeTarget('approveAll')}
+                />
+            </Animated.View>
+
+            <Animated.View
                 pointerEvents={beat === LAST_BEAT ? 'auto' : 'none'}
                 accessibilityElementsHidden={beat !== LAST_BEAT}
                 importantForAccessibility={beat === LAST_BEAT ? 'auto' : 'no-hide-descendants'}
@@ -315,7 +392,11 @@ export function TeachShareSheetDemo({
                     {Array.from({ length: BEAT_COUNT - 1 }).map((_, index) => (
                         <View
                             key={index}
-                            style={[styles.progressSegment, { opacity: index < beat ? 0.95 : 0.28 }]}
+                            style={[
+                                styles.progressSegment,
+                                { opacity: index < beat ? 0.95 : 0.28 },
+                                beat === IMPORTS_BEAT ? { backgroundColor: palette.primary } : null,
+                            ]}
                         />
                     ))}
                 </View>
@@ -329,10 +410,20 @@ export function TeachShareSheetDemo({
                     hitSlop={8}
                     style={({ pressed }) => [
                         styles.closeButton,
-                        { top: topInset + 18, transform: [{ scale: pressed ? 0.96 : 1 }] },
+                        {
+                            top: topInset + 18,
+                            transform: [{ scale: pressed ? 0.96 : 1 }],
+                        },
+                        beat >= IMPORTS_BEAT
+                            ? { backgroundColor: palette.surfaceJournalHi }
+                            : null,
                     ]}
                 >
-                    <Ionicons name="close" size={20} color="#fff" />
+                    <Ionicons
+                        name="close"
+                        size={20}
+                        color={beat >= IMPORTS_BEAT ? palette.textMuted : Colors.light.textInverse}
+                    />
                 </Pressable>
             ) : null}
         </View>
@@ -874,6 +965,235 @@ function AppListRow({
     );
 }
 
+function ExtensionShareCard({
+    palette,
+    bottomInset,
+    added,
+    reduced,
+    pulseStyle,
+    onAdd,
+}: {
+    palette: Palette;
+    bottomInset: number;
+    added: boolean;
+    reduced: boolean;
+    pulseStyle: object;
+    onAdd: () => void;
+}) {
+    const morph = useSharedValue(0);
+
+    useEffect(() => {
+        if (!added) return;
+        AccessibilityInfo.announceForAccessibility(
+            `${TEACH_COPY.addedTitle}. ${TEACH_COPY.addedMeta}`,
+        );
+        morph.value = withSequence(
+            withTiming(1, { duration: reduced ? 0 : 90, easing: Easing.out(Easing.cubic) }),
+            withTiming(0, { duration: reduced ? 0 : 130, easing: Easing.out(Easing.cubic) }),
+        );
+    }, [added, morph, reduced]);
+
+    const morphStyle = useAnimatedStyle(() => ({
+        opacity: 1 - morph.value * 0.04,
+        transform: [{ scale: 1 - morph.value * 0.006 }],
+    }));
+
+    return (
+        <View
+            style={[
+                styles.extensionScreen,
+                { backgroundColor: palette.overlay, paddingBottom: bottomInset + Spacing.sm },
+            ]}
+        >
+            <View
+                style={[
+                    styles.beatCaption,
+                    { backgroundColor: palette.surfaceNote },
+                    Shadow.note,
+                ]}
+            >
+                <Text style={[styles.beatCaptionText, { color: palette.text }]}>
+                    {TEACH_COPY.extensionCaption}
+                </Text>
+            </View>
+
+            <Animated.View
+                style={[
+                    styles.extensionCard,
+                    { backgroundColor: palette.surfaceNote },
+                    Shadow.ambient,
+                    morphStyle,
+                ]}
+            >
+                <View style={[styles.extensionGrabber, { backgroundColor: palette.outlineVariant }]} />
+
+                <View style={styles.extensionHeader}>
+                    <Text
+                        style={[
+                            Type.displayMedium,
+                            {
+                                color: palette.text,
+                                fontFamily: Type.headlineItalic.fontFamily,
+                                fontWeight: Type.headlineItalic.fontWeight,
+                            },
+                        ]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                    >
+                        {added ? TEACH_COPY.addedTitle : TEACH_COPY.extensionTitle}
+                    </Text>
+                    <Text style={[Type.metadata, { color: palette.textSecondary }]}>
+                        {added ? TEACH_COPY.addedMeta : TEACH_COPY.extensionMeta}
+                    </Text>
+                </View>
+
+                <View style={[styles.reviewPanel, { backgroundColor: palette.terracottaScrim }]}>
+                    <Ionicons name="shield-checkmark-outline" size={24} color={palette.primary} />
+                    <View style={styles.reviewCopy}>
+                        <Text style={[Type.titleSmall, { color: palette.text }]}>
+                            {TEACH_COPY.reviewTitle}
+                        </Text>
+                        <Text style={[Type.metadata, { color: palette.textSecondary }]}>
+                            {TEACH_COPY.reviewBody}
+                        </Text>
+                    </View>
+                </View>
+
+                <Pressable
+                    onPress={onAdd}
+                    disabled={added}
+                    accessibilityRole="button"
+                    accessibilityLabel={added ? TEACH_COPY.addedCta : TEACH_COPY.addForReviewCta}
+                    accessibilityState={{ disabled: added }}
+                    style={({ pressed }) => [
+                        styles.extensionButton,
+                        {
+                            backgroundColor: palette.primary,
+                            opacity: added ? 0.5 : 1,
+                            transform: [{ scale: pressed && !added ? 0.96 : 1 }],
+                        },
+                    ]}
+                >
+                    {!added ? (
+                        <Animated.View
+                            pointerEvents="none"
+                            style={[
+                                styles.wideTargetPulse,
+                                { backgroundColor: palette.textInverse },
+                                pulseStyle,
+                            ]}
+                        />
+                    ) : null}
+                    <Text style={[styles.extensionButtonText, { color: palette.textInverse }]}>
+                        {added ? TEACH_COPY.addedCta : TEACH_COPY.addForReviewCta}
+                    </Text>
+                </Pressable>
+            </Animated.View>
+        </View>
+    );
+}
+
+function ImportsHubScreen({
+    palette,
+    topInset,
+    bottomInset,
+    pulseStyle,
+    onApprove,
+}: {
+    palette: Palette;
+    topInset: number;
+    bottomInset: number;
+    pulseStyle: object;
+    onApprove: () => void;
+}) {
+    return (
+        <View
+            style={[
+                styles.importsScreen,
+                {
+                    backgroundColor: palette.background,
+                    paddingTop: topInset + Spacing.md,
+                    paddingBottom: bottomInset + Spacing.md,
+                },
+            ]}
+        >
+            <Text style={[Type.screenTitle, styles.importsHeader, { color: palette.text }]}>
+                {TEACH_COPY.importsTitle}
+            </Text>
+
+            <View style={styles.importsContent}>
+                <View style={[styles.importCard, { backgroundColor: palette.surfaceJournalLow }]}>
+                    <View
+                        style={[
+                            styles.importThumb,
+                            {
+                                backgroundColor: palette.surfaceJournalHi,
+                                borderColor: palette.outlineVariant,
+                            },
+                        ]}
+                    >
+                        <Ionicons name="play-outline" size={20} color={palette.primary} />
+                    </View>
+                    <View style={styles.importCardCopy}>
+                        <Text style={[Type.titleMedium, { color: palette.text }]} numberOfLines={1}>
+                            {TEACH_COPY.importsCardTitle}
+                        </Text>
+                        <Text
+                            style={[Type.quote, { color: palette.textMuted }]}
+                            numberOfLines={1}
+                        >
+                            {TEACH_COPY.importsNames}
+                        </Text>
+                        <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={1}>
+                            {TEACH_COPY.importsMeta}
+                        </Text>
+                    </View>
+                </View>
+
+                <Text style={[Type.bodySmall, styles.importsBody, { color: palette.textSecondary }]}>
+                    {TEACH_COPY.importsBody}
+                </Text>
+
+                <Pressable
+                    onPress={onApprove}
+                    accessibilityRole="button"
+                    accessibilityLabel={TEACH_COPY.approveAllCta}
+                    style={({ pressed }) => [
+                        styles.approveAction,
+                        { transform: [{ scale: pressed ? 0.96 : 1 }] },
+                    ]}
+                >
+                    <Animated.View
+                        pointerEvents="none"
+                        style={[
+                            styles.approveTargetPulse,
+                            { backgroundColor: palette.primaryMuted },
+                            pulseStyle,
+                        ]}
+                    />
+                    <Text style={[styles.approveActionText, { color: palette.primary }]}>
+                        {TEACH_COPY.approveAllCta}
+                    </Text>
+                </Pressable>
+            </View>
+
+            <View
+                style={[
+                    styles.beatCaption,
+                    styles.importsCaption,
+                    { backgroundColor: palette.surfaceNote },
+                    Shadow.note,
+                ]}
+            >
+                <Text style={[styles.beatCaptionText, { color: palette.text }]}>
+                    {TEACH_COPY.importsCaption}
+                </Text>
+            </View>
+        </View>
+    );
+}
+
 function ResultScreen({
     palette,
     topInset,
@@ -906,8 +1226,12 @@ function ResultScreen({
         >
             <View style={styles.resultHeader}>
                 <View>
-                    <Text style={[styles.resultKicker, { color: palette.primary }]}>NAPKIN</Text>
-                    <Text style={[styles.resultPageTitle, { color: palette.text }]}>Wishlist</Text>
+                    <Text style={[styles.resultKicker, { color: palette.primary }]}>
+                        {TEACH_COPY.resultKicker}
+                    </Text>
+                    <Text style={[styles.resultPageTitle, { color: palette.text }]}>
+                        {TEACH_COPY.resultPageTitle}
+                    </Text>
                 </View>
                 <View style={[styles.resultProfile, { backgroundColor: palette.surfaceJournalHi }]}>
                     <Ionicons name="person" size={19} color={palette.textMuted} />
@@ -920,14 +1244,13 @@ function ResultScreen({
                 </View>
                 <View style={styles.successCopy}>
                     <Text style={[styles.successTitle, { color: palette.text }]}>{TEACH_COPY.resultTitle}</Text>
-                    <Text style={[styles.successBody, { color: palette.textSecondary }]}>{TEACH_COPY.resultBody}</Text>
                 </View>
             </View>
 
             <View style={styles.savedList}>
                 {SAVED_PLACES.map((place, index) => (
                     <View
-                        key={place.name}
+                        key={place}
                         style={[
                             styles.savedRow,
                             index < SAVED_PLACES.length - 1
@@ -935,14 +1258,12 @@ function ResultScreen({
                                 : null,
                         ]}
                     >
-                        <Image source={VIDEO_IMAGE} style={styles.savedThumb} />
+                        <Image
+                            source={VIDEO_IMAGE}
+                            style={[styles.savedThumb, { borderColor: palette.imageOutline }]}
+                        />
                         <View style={styles.savedCopy}>
-                            <Text style={[styles.savedName, { color: palette.text }]}>{place.name}</Text>
-                            <Text style={[styles.savedDetail, { color: palette.textMuted }]}>{place.detail}</Text>
-                            <View style={styles.ratingRow}>
-                                <Ionicons name="star" size={13} color="#d99522" />
-                                <Text style={[styles.rating, { color: palette.textSecondary }]}>{place.score}</Text>
-                            </View>
+                            <Text style={[styles.savedName, { color: palette.text }]}>{place}</Text>
                         </View>
                         <View style={[styles.savedBookmark, { backgroundColor: palette.primaryMuted }]}>
                             <Ionicons name="bookmark" size={17} color={palette.primary} />
@@ -1162,6 +1483,100 @@ const styles = StyleSheet.create({
     rowDivider: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.13)', marginLeft: 75, marginRight: 20 },
     napkinRowPulse: { position: 'absolute', left: 17, width: 46, height: 46, borderRadius: 12, backgroundColor: 'rgba(36,147,245,0.4)' },
     napkinRowCoach: { position: 'absolute', right: 10, height: 40, borderRadius: 20 },
+    extensionScreen: {
+        flex: 1,
+        justifyContent: 'flex-end',
+        paddingHorizontal: Spacing.sm,
+    },
+    beatCaption: {
+        minHeight: 44,
+        borderRadius: Radius.full,
+        paddingHorizontal: Spacing.md,
+        alignSelf: 'center',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: Spacing.md,
+    },
+    beatCaptionText: { ...Type.titleSmall, textAlign: 'center' },
+    extensionCard: {
+        borderRadius: Radius.xxl,
+        paddingTop: Spacing.sm,
+        paddingHorizontal: Spacing.lg,
+        paddingBottom: Spacing.lg,
+    },
+    extensionGrabber: {
+        width: 40,
+        height: 5,
+        borderRadius: 2.5,
+        alignSelf: 'center',
+        marginBottom: Spacing.md,
+    },
+    extensionHeader: { gap: Spacing.xs, marginBottom: Spacing.lg },
+    reviewPanel: {
+        borderRadius: Radius.lg,
+        padding: Spacing.md,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: Spacing.md,
+    },
+    reviewCopy: { flex: 1, gap: Spacing.xs },
+    extensionButton: {
+        height: 52,
+        borderRadius: Radius.lg,
+        marginTop: Spacing.md,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    extensionButtonText: { ...Type.titleMedium, zIndex: 1 },
+    wideTargetPulse: {
+        position: 'absolute',
+        top: Spacing.xs,
+        bottom: Spacing.xs,
+        left: Spacing.lg,
+        right: Spacing.lg,
+        borderRadius: Radius.md,
+    },
+    importsScreen: { flex: 1, paddingHorizontal: Spacing.lg },
+    importsHeader: { textAlign: 'center', paddingVertical: Spacing.sm },
+    importsContent: { marginTop: Spacing.xxl },
+    importCard: {
+        borderRadius: Radius.lg,
+        padding: Spacing.md,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+    },
+    importThumb: {
+        width: 46,
+        height: 58,
+        borderRadius: Radius.md,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    importCardCopy: { flex: 1, minWidth: 0, gap: Spacing.xs },
+    importsBody: { marginTop: Spacing.md, paddingHorizontal: Spacing.sm },
+    approveAction: {
+        minHeight: 44,
+        borderRadius: Radius.full,
+        paddingHorizontal: Spacing.md,
+        marginTop: Spacing.sm,
+        alignSelf: 'center',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    approveTargetPulse: {
+        position: 'absolute',
+        top: Spacing.xs,
+        bottom: Spacing.xs,
+        left: Spacing.xs,
+        right: Spacing.xs,
+        borderRadius: Radius.full,
+    },
+    approveActionText: { ...Type.titleSmall, zIndex: 1 },
+    importsCaption: { marginTop: 'auto', marginBottom: 0 },
     progressRail: { position: 'absolute', left: 13, right: 13, height: 3, flexDirection: 'row', gap: 4, zIndex: 50 },
     progressSegment: { flex: 1, height: 3, borderRadius: 2, backgroundColor: '#fff' },
     closeButton: {
@@ -1181,19 +1596,23 @@ const styles = StyleSheet.create({
     resultKicker: { fontFamily: 'Manrope_700Bold', fontSize: 11, letterSpacing: 2.5, marginBottom: 2 },
     resultPageTitle: { fontFamily: 'Newsreader_700Bold', fontSize: 36, lineHeight: 41 },
     resultProfile: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-    importSuccess: { minHeight: 82, borderRadius: 22, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.1)' },
+    importSuccess: {
+        minHeight: 82,
+        borderRadius: 22,
+        padding: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        ...Shadow.subtle,
+    },
     successIcon: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
     successCopy: { flex: 1 },
-    successTitle: { fontFamily: 'Manrope_700Bold', fontSize: 15, marginBottom: 3 },
-    successBody: { fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 18 },
+    successTitle: { ...Type.titleSmall },
     savedList: { marginTop: 18 },
     savedRow: { minHeight: 82, flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
-    savedThumb: { width: 62, height: 62, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.1)' },
+    savedThumb: { width: 62, height: 62, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth },
     savedCopy: { flex: 1, paddingHorizontal: 12 },
     savedName: { fontFamily: 'Newsreader_700Bold', fontSize: 20, lineHeight: 23 },
-    savedDetail: { fontFamily: 'Manrope_500Medium', fontSize: 13, marginTop: 2 },
-    ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
-    rating: { fontFamily: 'Manrope_600SemiBold', fontSize: 12, fontVariant: ['tabular-nums'] },
     savedBookmark: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
     completionError: {
         minHeight: 54, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth,
