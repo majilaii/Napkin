@@ -16,9 +16,9 @@
  * Unlike FRIEND_TEST below these are ENABLE flags, not curtains.
  */
 /** "on socials this week" For You module (feed-socials + OnSocialsBlock). */
-export const FOR_YOU_SOCIALS = true;
+export const FOR_YOU_SOCIALS = false;
 /** People-to-follow v2 mixed rail (follow_candidates + public authors). */
-export const FOR_YOU_PEOPLE_V2 = true;
+export const FOR_YOU_PEOPLE_V2 = false;
 
 export const FRIEND_TEST = {
     /** Hide Lists screen entry points (profile index + settings row).
