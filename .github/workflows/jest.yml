@@ -21,6 +21,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Instant guard: Expo Router bundles ALL of app/ — a test file there
+      # poisons the production bundle (TestFlight EAGER_BUNDLE failure, #297).
+      - name: Route-tree guard
+        working-directory: ${{ github.workspace }}
+        run: node scripts/check-route-tree.mjs
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -36,3 +42,8 @@ jobs:
 
       - name: Run tests
         run: npm test -- --ci
+
+      # The only true gate for route-tree bundle poison: a real production
+      # bundle. tsc/eslint/jest cannot see Metro resolution failures.
+      - name: Production bundle export gate
+        run: npx expo export --platform ios --output-dir /tmp/export-gate
