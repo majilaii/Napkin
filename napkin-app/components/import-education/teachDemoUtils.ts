@@ -5,10 +5,17 @@
  * target, but it never advances the tutorial for the user.
  */
 
-export const BEAT_COUNT = 6;
+export const BEAT_COUNT = 8;
 export const LAST_BEAT = BEAT_COUNT - 1;
 
-export type TeachTarget = 'start' | 'share' | 'tiktokMore' | 'iosMore' | 'napkin';
+export type TeachTarget =
+    | 'start'
+    | 'share'
+    | 'tiktokMore'
+    | 'iosMore'
+    | 'napkin'
+    | 'addForReview'
+    | 'approveAll';
 
 /** The only accepted target at each non-terminal beat. */
 export const REQUIRED_TARGETS: readonly TeachTarget[] = [
@@ -17,6 +24,8 @@ export const REQUIRED_TARGETS: readonly TeachTarget[] = [
     'tiktokMore',
     'iosMore',
     'napkin',
+    'addForReview',
+    'approveAll',
 ];
 
 /** Advance only when the intended control was tapped; every other tap is ignored. */

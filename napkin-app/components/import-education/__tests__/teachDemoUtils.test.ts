@@ -7,24 +7,28 @@ import {
 } from '../teachDemoUtils';
 
 describe('TikTok tutorial state machine', () => {
-    it('has five required interactions and one terminal result', () => {
-        expect(BEAT_COUNT).toBe(6);
-        expect(LAST_BEAT).toBe(5);
+    it('has seven required interactions and one terminal result', () => {
+        expect(BEAT_COUNT).toBe(8);
+        expect(LAST_BEAT).toBe(7);
         expect(REQUIRED_TARGETS).toEqual([
             'start',
             'share',
             'tiktokMore',
             'iosMore',
             'napkin',
+            'addForReview',
+            'approveAll',
         ]);
     });
 
-    it('requires the authentic TikTok → iOS → Napkin sequence', () => {
+    it('requires the authentic TikTok → iOS → Napkin → review sequence', () => {
         expect(advanceOnTarget(0, 'start')).toBe(1);
         expect(advanceOnTarget(1, 'share')).toBe(2);
         expect(advanceOnTarget(2, 'tiktokMore')).toBe(3);
         expect(advanceOnTarget(3, 'iosMore')).toBe(4);
         expect(advanceOnTarget(4, 'napkin')).toBe(5);
+        expect(advanceOnTarget(5, 'addForReview')).toBe(6);
+        expect(advanceOnTarget(6, 'approveAll')).toBe(7);
     });
 
     it.each([
@@ -33,14 +37,18 @@ describe('TikTok tutorial state machine', () => {
         [2, 'iosMore'],
         [3, 'napkin'],
         [4, 'share'],
+        [5, 'approveAll'],
+        [6, 'addForReview'],
+        [1, 'addForReview'],
+        [4, 'approveAll'],
     ] as const)('ignores the wrong target at beat %s', (beat, target) => {
         expect(advanceOnTarget(beat, target)).toBe(beat);
     });
 
     it('clamps before the first and after the terminal beat', () => {
         expect(advanceOnTarget(-2, 'start')).toBe(0);
-        expect(advanceOnTarget(5, 'napkin')).toBe(5);
-        expect(advanceOnTarget(9, 'start')).toBe(5);
+        expect(advanceOnTarget(7, 'approveAll')).toBe(7);
+        expect(advanceOnTarget(9, 'start')).toBe(7);
     });
 });
 
