@@ -33,7 +33,7 @@ jobs:
           curl --fail-with-body --silent --show-error \
             --retry 2 --retry-all-errors --max-time 180 \
             -X POST \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -H "x-completeness-cron: $COMPLETENESS_CRON_SECRET" \
             --data '{"action":"drain","batch_limit":20}' \

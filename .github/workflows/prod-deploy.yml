@@ -22,6 +22,9 @@ name: Deploy to Production
 #   - PROD_SMOKE_TEST_RESTAURANT_ID
 #   - SUPABASE_SERVICE_ROLE_KEY        (cron transport + deploy gate)
 #   - COMPLETENESS_CRON_SECRET         (shared only by CI and the Edge runtime)
+# Key rotation: create the replacement Supabase key, update the repository
+# secret, immediately dispatch this workflow to pin the same key in the Edge
+# runtime, then revoke the prior key.
 
 on:
   push:
@@ -145,12 +148,14 @@ jobs:
       - name: Disable completeness worker before rollout
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           COMPLETENESS_CRON_SECRET: ${{ secrets.COMPLETENESS_CRON_SECRET }}
         run: |
           supabase secrets set \
             COMPLETENESS_WORKER_ENABLED=false \
             COMPLETENESS_SPEND_FROZEN=true \
             COMPLETENESS_CRON_SECRET="$COMPLETENESS_CRON_SECRET" \
+            COMPLETENESS_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" \
             --project-ref ftvmseaqwwlcxtdlvxxz
 
       - name: Freeze an existing completeness rollout (bootstrap-safe)
@@ -160,7 +165,6 @@ jobs:
           code=$(curl --silent --show-error -o /tmp/completeness-pre-freeze.json -w '%{http_code}' \
             -X POST \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H 'Content-Type: application/json' \
             --data '{"p_frozen":true,"p_reason":"rollout"}' \
             https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze || true)
@@ -207,7 +211,6 @@ jobs:
           curl --fail-with-body --silent --show-error \
             -X POST \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H 'Content-Type: application/json' \
             --data '{"p_frozen":true,"p_reason":"rollout"}' \
             https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze
@@ -413,11 +416,11 @@ jobs:
             COMPLETENESS_WORKER_ENABLED=true \
             COMPLETENESS_SPEND_FROZEN=false \
             COMPLETENESS_CRON_SECRET="$COMPLETENESS_CRON_SECRET" \
+            COMPLETENESS_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" \
             --project-ref ftvmseaqwwlcxtdlvxxz
           curl --fail-with-body --silent --show-error \
             -X POST \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H 'Content-Type: application/json' \
             --data '{"p_frozen":false,"p_reason":"post-deploy gate"}' \
             https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze
@@ -481,7 +484,7 @@ jobs:
 
           curl --fail-with-body --silent --show-error \
             -X POST \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
             -H "x-completeness-cron: $COMPLETENESS_CRON_SECRET" \
             --data "$payload" \
@@ -504,6 +507,7 @@ jobs:
               COMPLETENESS_WORKER_ENABLED=false \
               COMPLETENESS_SPEND_FROZEN=true \
               COMPLETENESS_CRON_SECRET="$COMPLETENESS_CRON_SECRET" \
+              COMPLETENESS_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" \
               --project-ref ftvmseaqwwlcxtdlvxxz; then
             echo "Completeness Edge worker disabled and provider spend frozen."
           else
@@ -515,7 +519,6 @@ jobs:
             -o /tmp/completeness-restore-freeze.json -w '%{http_code}' \
             -X POST \
             -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H 'Content-Type: application/json' \
             --data '{"p_frozen":true,"p_reason":"rollout failed"}' \
             https://ftvmseaqwwlcxtdlvxxz.supabase.co/rest/v1/rpc/fn_set_completeness_freeze) \

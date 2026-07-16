@@ -75,11 +75,21 @@ function cronAuthorized(
   req: Request,
   env: (name: string) => string | undefined,
 ): boolean {
-  return timingSafeSecretEqual(
+  // The caller key is pinned explicitly because modern sb_secret_* API keys
+  // are opaque and therefore differ from the hosted runtime's legacy
+  // SUPABASE_SERVICE_ROLE_KEY JWT. Cron callers send that pinned key through
+  // `apikey`, as required for service-to-service Edge Function calls.
+  // Evaluate both factors even when one is wrong so the response path does
+  // not reveal which credential failed.
+  const cronSecretMatches = timingSafeSecretEqual(
     req.headers.get("x-completeness-cron"),
-    env("COMPLETENESS_CRON_SECRET"),
-  ) &&
-    timingSafeSecretEqual(bearerToken(req), env("SUPABASE_SERVICE_ROLE_KEY"));
+    env("COMPLETENESS_CRON_SECRET")?.trim(),
+  );
+  const callerKeyMatches = timingSafeSecretEqual(
+    req.headers.get("apikey"),
+    env("COMPLETENESS_SERVICE_ROLE_KEY")?.trim(),
+  );
+  return cronSecretMatches && callerKeyMatches;
 }
 
 export function createRestaurantCompletenessHandler(

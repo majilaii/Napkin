@@ -10,7 +10,8 @@ const ITEM = "00000000-0000-4000-8000-000000000004";
 function environment(overrides: Record<string, string> = {}) {
   const values: Record<string, string> = {
     SUPABASE_URL: "https://test.supabase.co",
-    SUPABASE_SERVICE_ROLE_KEY: "service-role-secret",
+    SUPABASE_SERVICE_ROLE_KEY: "runtime-service-role-secret",
+    COMPLETENESS_SERVICE_ROLE_KEY: "caller-service-secret",
     COMPLETENESS_CRON_SECRET: "cron-secret",
     COMPLETENESS_WORKER_ENABLED: "false",
     ...overrides,
@@ -36,7 +37,7 @@ function request(
 
 function cronHeaders() {
   return {
-    Authorization: "Bearer service-role-secret",
+    apikey: "caller-service-secret",
     "x-completeness-cron": "cron-secret",
   };
 }
@@ -57,9 +58,80 @@ Deno.test("cron secret is required even while the worker is default-disabled", a
     env: environment(),
     createSupabase: () => fakeSupabase(),
   });
-  const response = await handler(request(null));
+  const response = await handler(request(null, {}, {
+    apikey: "caller-service-secret",
+  }));
   assertEquals(response.status, 401);
   assertEquals((await response.json()).error.code, "UNAUTHORIZED");
+});
+
+Deno.test("cron caller key is independently pinned from the runtime DB key", async () => {
+  const handler = createRestaurantCompletenessHandler({
+    env: environment(),
+    createSupabase: () => fakeSupabase(),
+  });
+  const response = await handler(request(null, {}, {
+    apikey: "runtime-service-role-secret",
+    "x-completeness-cron": "cron-secret",
+  }));
+  assertEquals(response.status, 401);
+  assertEquals((await response.json()).error.code, "UNAUTHORIZED");
+});
+
+Deno.test("cron caller key is rejected when sent as a bearer token", async () => {
+  const handler = createRestaurantCompletenessHandler({
+    env: environment(),
+    createSupabase: () => fakeSupabase(),
+  });
+  const response = await handler(request(null, {}, {
+    Authorization: "Bearer caller-service-secret",
+    "x-completeness-cron": "cron-secret",
+  }));
+  assertEquals(response.status, 401);
+  assertEquals((await response.json()).error.code, "UNAUTHORIZED");
+});
+
+Deno.test("cron caller key must match the pinned apikey", async () => {
+  const handler = createRestaurantCompletenessHandler({
+    env: environment(),
+    createSupabase: () => fakeSupabase(),
+  });
+  const response = await handler(request(null, {}, {
+    apikey: "wrong-caller-secret",
+    "x-completeness-cron": "cron-secret",
+  }));
+  assertEquals(response.status, 401);
+  assertEquals((await response.json()).error.code, "UNAUTHORIZED");
+});
+
+Deno.test("configured cron credentials tolerate secret-store whitespace", async () => {
+  const handler = createRestaurantCompletenessHandler({
+    env: environment({
+      COMPLETENESS_SERVICE_ROLE_KEY: "  caller-service-secret  ",
+      COMPLETENESS_CRON_SECRET: "  cron-secret  ",
+    }),
+    createSupabase: () => fakeSupabase(),
+  });
+  const response = await handler(request(null, {}, cronHeaders()));
+  assertEquals(response.status, 200);
+  assertEquals((await response.json()).data.enabled, false);
+});
+
+Deno.test("runtime DB client keeps the hosted service-role credential", async () => {
+  let createdWith: [string, string] | null = null;
+  const handler = createRestaurantCompletenessHandler({
+    env: environment(),
+    createSupabase: (url, key) => {
+      createdWith = [url, key];
+      return fakeSupabase();
+    },
+  });
+  const response = await handler(request(null, {}, cronHeaders()));
+  assertEquals(response.status, 200);
+  assertEquals(createdWith, [
+    "https://test.supabase.co",
+    "runtime-service-role-secret",
+  ]);
 });
 
 Deno.test("default-disabled cron is inert 200 and performs no DB drain", async () => {
