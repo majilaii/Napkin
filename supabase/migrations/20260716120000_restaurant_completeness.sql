@@ -508,7 +508,7 @@ begin
        or nullif(pg_catalog.btrim(p_bucket_key), '') is null
        or p_max < 1 or p_window_seconds < 1 or p_window_seconds > 86400
     then
-        return query select false, pg_catalog.greatest(p_window_seconds, 1);
+        return query select false, greatest(p_window_seconds, 1);
         return;
     end if;
 
@@ -526,7 +526,7 @@ begin
     return query select
         v_count <= p_max,
         case when v_count <= p_max then 0
-             else pg_catalog.greatest(0, pg_catalog.date_part('epoch', v_window_end - v_now)::integer)
+             else greatest(0, pg_catalog.date_part('epoch', v_window_end - v_now)::integer)
         end;
 end;
 $fn$;
@@ -660,7 +660,7 @@ begin
     if nullif(pg_catalog.btrim(p_place_id), '') is null or p_claimant is null then
         raise exception using errcode = '22023', message = 'place_id and claimant are required';
     end if;
-    v_lease := pg_catalog.least(pg_catalog.greatest(coalesce(p_lease_seconds, 120), 15), 900);
+    v_lease := least(greatest(coalesce(p_lease_seconds, 120), 15), 900);
 
     -- The advisory key covers the initially-absent row, which FOR UPDATE cannot.
     perform pg_catalog.pg_advisory_xact_lock(
@@ -838,7 +838,7 @@ begin
     then
         raise exception using errcode = '22023', message = 'restaurant, photo reference, and claimant are required';
     end if;
-    v_lease := pg_catalog.least(pg_catalog.greatest(coalesce(p_lease_seconds, 180), 15), 900);
+    v_lease := least(greatest(coalesce(p_lease_seconds, 180), 15), 900);
 
     -- Resolve internally, then lock the always-present identity row.  The merge
     -- function takes the same restaurant locks before touching media_claims, so
@@ -1464,7 +1464,7 @@ as $fn$
               or (q.state = 'leased' and q.lease_until < pg_catalog.now())
           )
         order by coalesce(q.lease_until, q.next_attempt_at), q.created_at, q.id
-        limit pg_catalog.least(pg_catalog.greatest(coalesce(p_limit, 25), 1), 100)
+        limit least(greatest(coalesce(p_limit, 25), 1), 100)
         for update of q skip locked
     ), claimed as (
         update public.restaurant_completeness_queue q
@@ -1472,7 +1472,7 @@ as $fn$
             lease_owner = p_worker_id,
             lease_token = gen_random_uuid(),
             lease_until = pg_catalog.now() + (
-                pg_catalog.least(pg_catalog.greatest(coalesce(p_lease_seconds, 180), 15), 900)
+                least(greatest(coalesce(p_lease_seconds, 180), 15), 900)
                 * interval '1 second'
             ),
             updated_at = pg_catalog.now()
@@ -1518,7 +1518,7 @@ as $fn$
         update public.restaurant_completeness_queue q
         set state = 'leased', lease_owner = p_worker_id, lease_token = gen_random_uuid(),
             lease_until = pg_catalog.now() + (
-                pg_catalog.least(pg_catalog.greatest(coalesce(p_lease_seconds, 180), 15), 900)
+                least(greatest(coalesce(p_lease_seconds, 180), 15), 900)
                 * interval '1 second'
             ), updated_at = pg_catalog.now()
         from candidate c
@@ -2014,8 +2014,8 @@ begin
                 update public.list_entries
                 set note = coalesce(v_row.note, v_other.note),
                     added_by = coalesce(v_row.added_by, v_other.added_by),
-                    position = pg_catalog.least(v_row.position, v_other.position),
-                    created_at = pg_catalog.least(v_row.created_at, v_other.created_at)
+                    position = least(v_row.position, v_other.position),
+                    created_at = least(v_row.created_at, v_other.created_at)
                 where id = v_row.id;
                 delete from public.list_entries where id = v_other.id;
                 update public.list_entries set restaurant_id = v_canonical_id where id = v_row.id;
@@ -2023,8 +2023,8 @@ begin
                 update public.list_entries
                 set note = coalesce(v_other.note, v_row.note),
                     added_by = coalesce(v_other.added_by, v_row.added_by),
-                    position = pg_catalog.least(v_other.position, v_row.position),
-                    created_at = pg_catalog.least(v_other.created_at, v_row.created_at)
+                    position = least(v_other.position, v_row.position),
+                    created_at = least(v_other.created_at, v_row.created_at)
                 where id = v_other.id;
                 delete from public.list_entries where id = v_row.id;
             end if;
@@ -2044,7 +2044,7 @@ begin
                 position = case
                     when v_other.position is null then v_row.position
                     when v_row.position is null then v_other.position
-                    else pg_catalog.least(v_other.position, v_row.position)
+                    else least(v_other.position, v_row.position)
                 end
             where list_id = v_other.list_id and restaurant_id = v_canonical_id;
             delete from public.list_items
@@ -2070,8 +2070,8 @@ begin
             set been = coalesce(v_other.been, false) or coalesce(v_row.been, false),
                 liked = coalesce(v_other.liked, false) or coalesce(v_row.liked, false),
                 want_to_try = coalesce(v_other.want_to_try, false) or coalesce(v_row.want_to_try, false),
-                created_at = pg_catalog.least(v_other.created_at, v_row.created_at),
-                updated_at = pg_catalog.greatest(v_other.updated_at, v_row.updated_at)
+                created_at = least(v_other.created_at, v_row.created_at),
+                updated_at = greatest(v_other.updated_at, v_row.updated_at)
             where user_id = v_row.user_id and restaurant_id = v_canonical_id;
             delete from public.user_restaurant_status
             where user_id = v_row.user_id and restaurant_id = p_ghost_id;
@@ -2160,7 +2160,7 @@ begin
             on conflict (gathering_id, user_id) do update
             set response = excluded.response,
                 counter_on = excluded.counter_on,
-                created_at = pg_catalog.least(gathering_rsvps.created_at, excluded.created_at),
+                created_at = least(gathering_rsvps.created_at, excluded.created_at),
                 updated_at = excluded.updated_at
             where excluded.updated_at > gathering_rsvps.updated_at
                or (excluded.updated_at = gathering_rsvps.updated_at and v_ghost_wins);
@@ -2248,7 +2248,7 @@ begin
             update public.critic_scrape_attempts
             set status = case when v_row.last_attempted_at > v_other.last_attempted_at
                               then v_row.status else v_other.status end,
-                last_attempted_at = pg_catalog.greatest(v_other.last_attempted_at, v_row.last_attempted_at)
+                last_attempted_at = greatest(v_other.last_attempted_at, v_row.last_attempted_at)
             where restaurant_id = v_canonical_id and publication = v_row.publication;
             delete from public.critic_scrape_attempts
             where restaurant_id = p_ghost_id and publication = v_row.publication;
@@ -2900,7 +2900,7 @@ begin
     end if;
 
     v_attempts := v_item.attempts + 1;
-    if v_attempts >= pg_catalog.least(pg_catalog.greatest(coalesce(p_attempt_cap, 6), 1), 20) then
+    if v_attempts >= least(greatest(coalesce(p_attempt_cap, 6), 1), 20) then
         perform public.fn_finalize_completeness_item(
             p_item_id, p_lease_token, 'exhausted', v_item.restaurant_id, p_reason
         );
@@ -2911,7 +2911,7 @@ begin
     update public.restaurant_completeness_queue
     set state = 'deferred', attempts = v_attempts,
         next_attempt_at = pg_catalog.now() + pg_catalog.make_interval(
-            secs => pg_catalog.least(86400, (60 * pg_catalog.power(2::numeric, v_attempts))::integer)
+            secs => least(86400, (60 * pg_catalog.power(2::numeric, v_attempts))::integer)
         ),
         last_error = p_reason, lease_owner = null, lease_token = null, lease_until = null,
         updated_at = pg_catalog.now()
@@ -2946,7 +2946,7 @@ begin
           ) = j.expected_items
         order by j.sealed_at, j.job_id
         for update skip locked
-        limit pg_catalog.least(pg_catalog.greatest(coalesce(p_limit, 25), 1), 100)
+        limit least(greatest(coalesce(p_limit, 25), 1), 100)
     loop
         if public.fn_maybe_emit_import_done(v_job.job_id) then
             v_count := v_count + 1;
