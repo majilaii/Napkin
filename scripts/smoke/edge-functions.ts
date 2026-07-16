@@ -120,6 +120,26 @@ function jwtSub(jwt: string): string {
 
 const SMOKE_USER_ID = jwtSub(JWT);
 
+function peekCardShape(json: unknown): string | null {
+    const data = (json as { data?: Record<string, unknown> }).data;
+    if (!data) return 'missing data envelope';
+    if (!Array.isArray(data.media)) return 'data.media is not an array';
+    for (const key of [
+        'google_rating',
+        'google_rating_count',
+        'price_level',
+        'address_short',
+        'reserve_url',
+        'hours',
+    ]) {
+        if (!(key in data)) return `missing data.${key}`;
+    }
+    if (data.hours !== null && typeof data.hours !== 'object') {
+        return 'data.hours is neither object nor null';
+    }
+    return null;
+}
+
 // ── Checks ─────────────────────────────────────────────────────────────────
 //
 // Add one entry per (function, action) you want guarded. Keep this list small
@@ -218,25 +238,17 @@ const CHECKS: Check[] = [
         fn: 'restaurant-history',
         query: `action=peek_card&restaurant_id=${RESTAURANT_ID}`,
         body: { restaurant_id: RESTAURANT_ID, context: { layer: 'saved' } },
-        shape: (json) => {
-            const data = (json as { data?: Record<string, unknown> }).data;
-            if (!data) return 'missing data envelope';
-            if (!Array.isArray(data.media)) return 'data.media is not an array';
-            for (const key of [
-                'google_rating',
-                'google_rating_count',
-                'price_level',
-                'address_short',
-                'reserve_url',
-                'hours',
-            ]) {
-                if (!(key in data)) return `missing data.${key}`;
-            }
-            if (data.hours !== null && typeof data.hours !== 'object') {
-                return 'data.hours is neither object nor null';
-            }
-            return null;
-        },
+        shape: peekCardShape,
+    },
+    // TICKET-199: old overlap callers omit table_id. This must remain a 200
+    // generic card while the new context branch loads and returns its full shape.
+    {
+        name: 'restaurant-history?action=peek_card&context=overlap (TICKET-199 legacy shape)',
+        method: 'POST',
+        fn: 'restaurant-history',
+        query: `action=peek_card&context=overlap&restaurant_id=${RESTAURANT_ID}`,
+        body: { restaurant_id: RESTAURANT_ID, context: { layer: 'overlap' } },
+        shape: peekCardShape,
     },
     // TICKET-149: booking-page resolver behind the Reserve pill. Value is
     // fixture-dependent (usually null, cached on the row after first run) —

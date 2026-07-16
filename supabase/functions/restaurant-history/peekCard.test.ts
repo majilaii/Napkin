@@ -30,6 +30,8 @@ interface Fixtures {
     publicAccountError?: any;
     saverRows?: any[];
     saverError?: any;
+    blockError?: any;
+    listError?: any;
 }
 
 function nestedValue(row: any, path: string): unknown {
@@ -57,6 +59,11 @@ function fakeClient(fixtures: Fixtures = {}): {
             limit: null,
         };
         queries.push(log);
+        const queryError = table === 'blocked_users'
+            ? fixtures.blockError ?? null
+            : table === 'lists'
+            ? fixtures.listError ?? null
+            : null;
 
         const rows = () => {
             let result = [...(tables[table] ?? [])];
@@ -112,8 +119,17 @@ function fakeClient(fixtures: Fixtures = {}): {
                 log.limit = value;
                 return builder;
             },
-            maybeSingle: () => Promise.resolve({ data: rows()[0] ?? null, error: null }),
-            then: (resolve: (value: { data: any[]; error: null }) => void) => resolve({ data: rows(), error: null }),
+            maybeSingle: () =>
+                Promise.resolve({
+                    data: queryError ? null : rows()[0] ?? null,
+                    error: queryError,
+                }),
+            then: (
+                resolve: (value: { data: any[] | null; error: any }) => void,
+            ) => resolve({
+                data: queryError ? null : rows(),
+                error: queryError,
+            }),
         };
         return builder;
     };
@@ -146,6 +162,9 @@ const ENTRY = '40000000-0000-4000-8000-000000000004';
 const OTHER_ENTRY = '40000000-0000-4000-8000-000000000005';
 const TABLE_A = '50000000-0000-4000-8000-000000000005';
 const TABLE_B = '50000000-0000-4000-8000-000000000006';
+const TABLE_LIST = '60000000-0000-4000-8000-000000000006';
+const PERSONAL_LIST = '60000000-0000-4000-8000-000000000007';
+const SECOND_AUTHOR = '20000000-0000-4000-8000-000000000003';
 const SUPABASE_URL = 'https://example.supabase.co';
 
 const restaurant = (overrides: Record<string, unknown> = {}) => ({
@@ -173,6 +192,39 @@ const networkEntry = (overrides: Record<string, unknown> = {}) => ({
     rating: 4.5,
     ...overrides,
 });
+
+function exactBlockPredicate(authorIds: readonly string[]): string {
+    const candidates = [...new Set(authorIds)].sort().join(',');
+    return `and(blocker_id.eq.${VIEWER},blocked_id.in.(${candidates})),` +
+        `and(blocker_id.in.(${candidates}),blocked_id.eq.${VIEWER})`;
+}
+
+function tableBranchContext(layer: 'overlap' | 'list'): PeekCardContext {
+    return layer === 'overlap' ? { layer, table_id: TABLE_A } : { layer, list_id: TABLE_LIST };
+}
+
+function tableBranchTables(
+    layer: 'overlap' | 'list',
+    overrides: Record<string, any[]> = {},
+): Record<string, any[]> {
+    return {
+        table_members: [{ table_id: TABLE_A, member_id: VIEWER }],
+        entry_tables: [{
+            table_id: TABLE_A,
+            entry_id: ENTRY,
+            posted_at: '2026-07-02',
+        }],
+        entries: [networkEntry()],
+        blocked_users: [],
+        entry_photos: [{
+            entry_id: ENTRY,
+            photo_url: 'table-shared.jpg',
+            created_at: '2026-07-02',
+        }],
+        ...(layer === 'list' ? { lists: [{ id: TABLE_LIST, table_id: TABLE_A }] } : {}),
+        ...overrides,
+    };
+}
 
 async function run(
     context: PeekCardContext,
@@ -449,6 +501,387 @@ Deno.test('gathered rung: one table with two restaurants returns only the resolv
     assertEquals(entries.eq.restaurant_id, RESTAURANT);
     const photos = queries.find((query) => query.table === 'entry_photos')!;
     assertEquals(photos.in.entry_id, [ENTRY]);
+});
+
+Deno.test('overlap rung: a member sees the newest photo shared into the exact table', async () => {
+    const { data, queries } = await run(
+        { layer: 'overlap', table_id: TABLE_A },
+        { tables: tableBranchTables('overlap') },
+    );
+
+    assertEquals(entryMedia(data), [{
+        kind: 'entry',
+        url: 'table-shared.jpg',
+        photo_source: 'table',
+    }]);
+    const membership = queries.find((query) => query.table === 'table_members')!;
+    assertEquals(membership.select, 'member_id');
+    assertEquals(membership.eq, { table_id: TABLE_A, member_id: VIEWER });
+    const shares = queries.find((query) => query.table === 'entry_tables')!;
+    assertEquals(shares.eq, { table_id: TABLE_A });
+    const entries = queries.find((query) => query.table === 'entries')!;
+    assertEquals(entries.in.id, [ENTRY]);
+    assertEquals(entries.eq.restaurant_id, RESTAURANT);
+    const block = queries.find((query) => query.table === 'blocked_users')!;
+    assertEquals(block.or, [exactBlockPredicate([AUTHOR])]);
+    const photos = queries.find((query) => query.table === 'entry_photos')!;
+    assertEquals(photos.in.entry_id, [ENTRY]);
+});
+
+Deno.test("overlap rung: a member's unshared entry never reaches entry or photo reads", async () => {
+    const { data, queries } = await run(
+        { layer: 'overlap', table_id: TABLE_A },
+        {
+            tables: tableBranchTables('overlap', {
+                entry_tables: [],
+            }),
+        },
+    );
+
+    assertEquals(entryMedia(data), []);
+    for (const table of ['entries', 'blocked_users', 'entry_photos']) {
+        assertEquals(queries.some((query) => query.table === table), false);
+    }
+});
+
+Deno.test('overlap rung: an entry shared only to another table never surfaces', async () => {
+    const { data, queries } = await run(
+        { layer: 'overlap', table_id: TABLE_A },
+        {
+            tables: tableBranchTables('overlap', {
+                entry_tables: [{
+                    table_id: TABLE_B,
+                    entry_id: ENTRY,
+                    posted_at: '2026-07-02',
+                }],
+            }),
+        },
+    );
+
+    assertEquals(entryMedia(data), []);
+    const shares = queries.find((query) => query.table === 'entry_tables')!;
+    assertEquals(shares.eq, { table_id: TABLE_A });
+    for (const table of ['entries', 'blocked_users', 'entry_photos']) {
+        assertEquals(queries.some((query) => query.table === table), false);
+    }
+});
+
+Deno.test('overlap rung: a forged foreign table id fails membership before every downstream read', async () => {
+    const { data, queries } = await run(
+        { layer: 'overlap', table_id: TABLE_B },
+        { tables: tableBranchTables('overlap') },
+    );
+
+    assertEquals(entryMedia(data), []);
+    const membership = queries.find((query) => query.table === 'table_members')!;
+    assertEquals(membership.eq, { table_id: TABLE_B, member_id: VIEWER });
+    for (
+        const table of [
+            'entry_tables',
+            'entries',
+            'blocked_users',
+            'entry_photos',
+        ]
+    ) {
+        assertEquals(queries.some((query) => query.table === table), false);
+    }
+});
+
+Deno.test('overlap rung: legacy context without table_id keeps fallback and performs zero table auth reads', async () => {
+    const { data, queries } = await run(
+        { layer: 'overlap' },
+        {
+            tables: {
+                restaurants: [restaurant({
+                    photo_url: 'places-fallback.jpg',
+                    photo_source: 'places',
+                    places_photo_attribution_html: '<a>Fallback Guide</a>',
+                })],
+            },
+        },
+    );
+
+    assertEquals(data.media, [{
+        kind: 'places',
+        url: 'places-fallback.jpg',
+        photo_source: 'places',
+        attribution: 'Fallback Guide',
+    }]);
+    for (
+        const table of [
+            'table_members',
+            'entry_tables',
+            'entries',
+            'blocked_users',
+            'entry_photos',
+        ]
+    ) {
+        assertEquals(queries.some((query) => query.table === table), false);
+    }
+});
+
+Deno.test('overlap rung: a photoless member falls through after the authorized photo read', async () => {
+    const { data, queries } = await run(
+        { layer: 'overlap', table_id: TABLE_A },
+        {
+            tables: tableBranchTables('overlap', {
+                entry_photos: [],
+            }),
+        },
+    );
+
+    assertEquals(entryMedia(data), []);
+    const block = queries.find((query) => query.table === 'blocked_users')!;
+    assertEquals(block.or, [exactBlockPredicate([AUTHOR])]);
+    assertEquals(queries.some((query) => query.table === 'entry_photos'), true);
+});
+
+Deno.test('list rung: a table list derives its table and enriches for a member', async () => {
+    const { data, queries } = await run(
+        { layer: 'list', list_id: TABLE_LIST },
+        { tables: tableBranchTables('list') },
+    );
+
+    assertEquals(entryMedia(data), [{
+        kind: 'entry',
+        url: 'table-shared.jpg',
+        photo_source: 'table',
+    }]);
+    const list = queries.find((query) => query.table === 'lists')!;
+    assertEquals(list.eq, { id: TABLE_LIST });
+    const membership = queries.find((query) => query.table === 'table_members')!;
+    assertEquals(membership.eq, { table_id: TABLE_A, member_id: VIEWER });
+    const block = queries.find((query) => query.table === 'blocked_users')!;
+    assertEquals(block.or, [exactBlockPredicate([AUTHOR])]);
+});
+
+for (
+    const [label, listRows] of [
+        ['personal', [{ id: PERSONAL_LIST, table_id: null }]],
+        ['nonexistent', []],
+    ] as const
+) {
+    Deno.test(`list rung: a ${label} list stays un-enriched with zero table reads`, async () => {
+        const listId = label === 'personal' ? PERSONAL_LIST : TABLE_LIST;
+        const { data, queries } = await run(
+            { layer: 'list', list_id: listId },
+            { tables: { lists: [...listRows] } },
+        );
+
+        assertEquals(entryMedia(data), []);
+        for (
+            const table of [
+                'table_members',
+                'entry_tables',
+                'entries',
+                'blocked_users',
+                'entry_photos',
+            ]
+        ) {
+            assertEquals(queries.some((query) => query.table === table), false);
+        }
+    });
+}
+
+Deno.test('list rung: a maybeSingle error stays un-enriched with zero table reads', async () => {
+    const { data, queries } = await run(
+        { layer: 'list', list_id: TABLE_LIST },
+        {
+            listError: { code: 'LIST_READ_FAILED' },
+            tables: { lists: [{ id: TABLE_LIST, table_id: TABLE_A }] },
+        },
+    );
+
+    assertEquals(entryMedia(data), []);
+    assertEquals(queries.filter((query) => query.table === 'lists').length, 1);
+    for (
+        const table of [
+            'table_members',
+            'entry_tables',
+            'entries',
+            'blocked_users',
+            'entry_photos',
+        ]
+    ) {
+        assertEquals(queries.some((query) => query.table === table), false);
+    }
+});
+
+Deno.test('list rung: a foreign table list fails membership with zero downstream reads', async () => {
+    const { data, queries } = await run(
+        { layer: 'list', list_id: TABLE_LIST },
+        {
+            tables: tableBranchTables('list', {
+                lists: [{ id: TABLE_LIST, table_id: TABLE_B }],
+            }),
+        },
+    );
+
+    assertEquals(entryMedia(data), []);
+    const membership = queries.find((query) => query.table === 'table_members')!;
+    assertEquals(membership.eq, { table_id: TABLE_B, member_id: VIEWER });
+    for (
+        const table of [
+            'entry_tables',
+            'entries',
+            'blocked_users',
+            'entry_photos',
+        ]
+    ) {
+        assertEquals(queries.some((query) => query.table === table), false);
+    }
+});
+
+for (const layer of ['overlap', 'list'] as const) {
+    for (
+        const [label, blocker_id, blocked_id] of [
+            ['viewer blocks author', VIEWER, AUTHOR],
+            ['author blocks viewer', AUTHOR, VIEWER],
+        ] as const
+    ) {
+        Deno.test(`${layer} rung: either-direction block (${label}) suppresses before photos`, async () => {
+            const { data, queries } = await run(
+                tableBranchContext(layer),
+                {
+                    tables: tableBranchTables(layer, {
+                        blocked_users: [{ blocker_id, blocked_id }],
+                    }),
+                },
+            );
+
+            assertEquals(entryMedia(data), []);
+            const block = queries.find((query) => query.table === 'blocked_users')!;
+            assertEquals(block.or, [exactBlockPredicate([AUTHOR])]);
+            assertEquals(
+                queries.some((query) => query.table === 'entry_photos'),
+                false,
+            );
+        });
+    }
+}
+
+for (const layer of ['overlap', 'list'] as const) {
+    Deno.test(`${layer} rung: blocked authors are filtered and the newest unblocked photo wins`, async () => {
+        const { data, queries } = await run(
+            tableBranchContext(layer),
+            {
+                tables: tableBranchTables(layer, {
+                    entry_tables: [
+                        {
+                            table_id: TABLE_A,
+                            entry_id: ENTRY,
+                            posted_at: '2026-07-03',
+                        },
+                        {
+                            table_id: TABLE_A,
+                            entry_id: OTHER_ENTRY,
+                            posted_at: '2026-07-02',
+                        },
+                    ],
+                    entries: [
+                        networkEntry(),
+                        networkEntry({
+                            id: OTHER_ENTRY,
+                            user_id: SECOND_AUTHOR,
+                        }),
+                    ],
+                    blocked_users: [{
+                        blocker_id: VIEWER,
+                        blocked_id: AUTHOR,
+                    }],
+                    entry_photos: [
+                        {
+                            entry_id: ENTRY,
+                            photo_url: 'newest-but-blocked.jpg',
+                            created_at: '2026-07-03',
+                        },
+                        {
+                            entry_id: OTHER_ENTRY,
+                            photo_url: 'newest-unblocked.jpg',
+                            created_at: '2026-07-02',
+                        },
+                    ],
+                }),
+            },
+        );
+
+        assertEquals(entryMedia(data), [{
+            kind: 'entry',
+            url: 'newest-unblocked.jpg',
+            photo_source: 'table',
+        }]);
+        const block = queries.find((query) => query.table === 'blocked_users')!;
+        assertEquals(block.or, [exactBlockPredicate([AUTHOR, SECOND_AUTHOR])]);
+        const photo = queries.find((query) => query.table === 'entry_photos')!;
+        assertEquals(photo.in.entry_id, [OTHER_ENTRY]);
+    });
+}
+
+for (const layer of ['overlap', 'list'] as const) {
+    Deno.test(`${layer} rung: a block-query error fails closed before photo reads`, async () => {
+        const { data, queries } = await run(
+            tableBranchContext(layer),
+            {
+                blockError: { code: 'BLOCK_READ_FAILED' },
+                tables: tableBranchTables(layer),
+            },
+        );
+
+        assertEquals(entryMedia(data), []);
+        const block = queries.find((query) => query.table === 'blocked_users')!;
+        assertEquals(block.or, [exactBlockPredicate([AUTHOR])]);
+        assertEquals(
+            queries.some((query) => query.table === 'entry_photos'),
+            false,
+        );
+    });
+}
+
+Deno.test('overlap rung: 31 sorted authors produce two exact block chunks before photos', async () => {
+    const authorIds = Array.from(
+        { length: 31 },
+        (_, index) => `70000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    );
+    const entryIds = Array.from(
+        { length: 31 },
+        (_, index) => `80000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    );
+    const { data, queries } = await run(
+        { layer: 'overlap', table_id: TABLE_A },
+        {
+            tables: tableBranchTables('overlap', {
+                entry_tables: entryIds.map((entry_id, index) => ({
+                    table_id: TABLE_A,
+                    entry_id,
+                    posted_at: `2026-07-${String(index + 1).padStart(2, '0')}`,
+                })),
+                entries: entryIds.map((id, index) => ({
+                    id,
+                    user_id: authorIds[index],
+                    restaurant_id: RESTAURANT,
+                })),
+                blocked_users: [],
+                entry_photos: [{
+                    entry_id: entryIds[30],
+                    photo_url: 'after-all-block-chunks.jpg',
+                    created_at: '2026-07-31',
+                }],
+            }),
+        },
+    );
+
+    assertEquals(entryMedia(data), [{
+        kind: 'entry',
+        url: 'after-all-block-chunks.jpg',
+        photo_source: 'table',
+    }]);
+    const blocks = queries.filter((query) => query.table === 'blocked_users');
+    assertEquals(blocks.length, 2);
+    assertEquals(blocks[0].or, [exactBlockPredicate(authorIds.slice(0, 30))]);
+    assertEquals(blocks[1].or, [exactBlockPredicate(authorIds.slice(30))]);
+    const photoIndex = queries.findIndex((query) => query.table === 'entry_photos');
+    assert(photoIndex > queries.indexOf(blocks[0]));
+    assert(photoIndex > queries.indexOf(blocks[1]));
 });
 
 Deno.test('clip rung walks past an unthumbed winner; count is pre-social-filter and k-floored', async () => {

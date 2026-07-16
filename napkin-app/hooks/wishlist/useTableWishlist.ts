@@ -18,6 +18,8 @@ export interface TableWishlistItem {
     restaurant: WishlistRestaurant;
     count: number;
     members: TableWishlistMember[];
+    /** Exact save id only when this viewer personally saved the restaurant. */
+    viewer_item_id: string | null;
 }
 
 async function fetchTableWishlist(tableId: string): Promise<TableWishlistItem[]> {
@@ -28,11 +30,18 @@ async function fetchTableWishlist(tableId: string): Promise<TableWishlistItem[]>
     return data ?? [];
 }
 
-export function useTableWishlist(tableId: string | null | undefined) {
+export function useTableWishlist(
+    userId: string | null | undefined,
+    tableId: string | null | undefined,
+) {
+    const queryKey = userId && tableId
+        ? queryKeys.wishlist.table(userId, tableId)
+        : queryKeys.wishlist.tableDisabled();
+
     return useQuery<TableWishlistItem[], Error>({
-        queryKey: queryKeys.wishlist.table(tableId ?? ''),
+        queryKey,
         queryFn: () => fetchTableWishlist(tableId!),
-        enabled: !!tableId,
+        enabled: !!userId && !!tableId,
         staleTime: 1000 * 60 * 5,
     });
 }

@@ -2,8 +2,8 @@
  * useRepointWishlistItem — fix a mis-resolved import spot (b48 amend).
  *
  * Re-points ONE wishlist item to a different restaurant via wishlist `repoint`.
- * Narrow-invalidates the import batch + the personal wishlist (the row's shape
- * changes in ways an optimistic patch can't synthesize, so we refetch).
+ * Narrow-invalidates the import batch, personal wishlist, and optional Table
+ * aggregate (the repaired rows are server-derived and cannot be synthesized).
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
@@ -15,7 +15,11 @@ export interface RepointInput {
     restaurant_id: string;
 }
 
-export function useRepointWishlistItem(userId: string | null | undefined, jobId: string | null | undefined) {
+export function useRepointWishlistItem(
+    userId: string | null | undefined,
+    jobId: string | null | undefined,
+    tableId?: string | null,
+) {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: (input: RepointInput) =>
@@ -30,6 +34,12 @@ export function useRepointWishlistItem(userId: string | null | undefined, jobId:
             if (userId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.wishlist.personal(userId) });
                 queryClient.invalidateQueries({ queryKey: queryKeys.importJobs.all(userId) });
+                if (tableId) {
+                    // invalidate: overlap rows + viewer_item_id are server-derived.
+                    queryClient.invalidateQueries({
+                        queryKey: queryKeys.wishlist.table(userId, tableId),
+                    });
+                }
             }
         },
     });

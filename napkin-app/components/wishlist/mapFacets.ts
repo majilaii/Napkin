@@ -2,17 +2,20 @@
  * mapFacets — filter facets + filtering + ledger ordering for a map's chrome
  * (TICKET-143, table-map parity).
  *
- * The table-map brings the Map tab's Filter chip + List pill to /table-map. Its
- * layers are already `WishlistMapItem[]` (overlap saves / been-together pins), so
- * the facet counts and the filter predicate operate directly on those — no new
- * server plumbing, no new sheet props. Pure so the whole matrix is unit-testable.
+ * Facets operate on a minimal structural row so source rows without coordinates
+ * remain selectable before they are projected into map pins.
  *
- * Cuisine match reuses `filterItemsByCuisine` (one source of truth); price/city
- * extend it. `null` on any filter is pass-through. Facets are frequency-ranked
- * (ties → alpha), mirroring the Map tab's saved-set option lists.
+ * `null` on any filter is pass-through. Facets are frequency-ranked (ties →
+ * alpha), mirroring the Map tab's saved-set option lists.
  */
-import type { WishlistMapItem } from './WishlistMapView';
-import { filterItemsByCuisine } from './mapItems';
+import type { WishlistMapItem } from './mapShared';
+
+export interface FacetRow {
+    cuisine: string | null;
+    city: string | null;
+    /** Optional because some pin producers do not carry a price tier. */
+    priceLevel?: number | null;
+}
 
 export interface FacetCount<T> {
     value: T;
@@ -20,7 +23,7 @@ export interface FacetCount<T> {
 }
 
 /** Cuisines present in the set, frequency-ranked (ties → alpha). */
-export function cuisineFacets(items: WishlistMapItem[]): FacetCount<string>[] {
+export function cuisineFacets(items: readonly FacetRow[]): FacetCount<string>[] {
     const counts = new Map<string, number>();
     for (const i of items) {
         const c = i.cuisine?.trim();
@@ -32,7 +35,7 @@ export function cuisineFacets(items: WishlistMapItem[]): FacetCount<string>[] {
 }
 
 /** Price tiers present (1–4), ascending — only tiers that exist appear. */
-export function priceFacets(items: WishlistMapItem[]): FacetCount<number>[] {
+export function priceFacets(items: readonly FacetRow[]): FacetCount<number>[] {
     const counts = new Map<number, number>();
     for (const i of items) {
         const lvl = i.priceLevel;
@@ -44,7 +47,7 @@ export function priceFacets(items: WishlistMapItem[]): FacetCount<number>[] {
 }
 
 /** Cities present, frequency-ranked (ties → alpha). */
-export function cityFacets(items: WishlistMapItem[]): FacetCount<string>[] {
+export function cityFacets(items: readonly FacetRow[]): FacetCount<string>[] {
     const counts = new Map<string, number>();
     for (const i of items) {
         const c = i.city?.trim();
@@ -62,17 +65,28 @@ export interface MapFilters {
     city?: string | null;
 }
 
-/** Apply the active cuisine/price/city filters (any null = pass-through). */
-export function filterMapItems(items: WishlistMapItem[], filters: MapFilters): WishlistMapItem[] {
-    let out = filterItemsByCuisine(items, filters.cuisine ?? null);
-    if (filters.price) {
-        const lvl = Number(filters.price);
-        out = out.filter((i) => i.priceLevel === lvl);
-    }
-    if (filters.city) {
-        out = out.filter((i) => (i.city?.trim() ?? '') === filters.city);
-    }
-    return out;
+/** One predicate shared by pin filtering and source-row filtering. */
+export function matchesFacets(row: FacetRow, filters: MapFilters): boolean {
+    if (filters.cuisine && (row.cuisine?.trim() ?? '') !== filters.cuisine) return false;
+    if (filters.price && row.priceLevel !== Number(filters.price)) return false;
+    if (filters.city && (row.city?.trim() ?? '') !== filters.city) return false;
+    return true;
+}
+
+/** Keep the concrete source-row type instead of erasing it to `FacetRow`. */
+export function filterFacetRows<T extends FacetRow>(
+    rows: readonly T[],
+    filters: MapFilters,
+): T[] {
+    return rows.filter((row) => matchesFacets(row, filters));
+}
+
+/** Apply active facets while preserving all pin-specific fields. */
+export function filterMapItems<T extends FacetRow>(
+    items: readonly T[],
+    filters: MapFilters,
+): T[] {
+    return filterFacetRows(items, filters);
 }
 
 /**

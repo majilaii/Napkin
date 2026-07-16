@@ -17,6 +17,11 @@ import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
 import type { TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
 import type { TableMapPin } from '@/hooks/tables/useTableMapPins';
 import type { WishlistMapItem } from './WishlistMapView';
+import {
+    matchesFacets,
+    type FacetRow,
+    type MapFilters,
+} from './mapFacets';
 
 /**
  * Logged spots → olive "been" pins. Coord-less spots are dropped (the caller
@@ -129,6 +134,23 @@ export function filterItemsByCuisine(
 // an amber count bubble ("N of you saved this"). The `count` is server-authoritative
 // (member-gated, table-inclusive — computed by wishlist?action=list_table), so the
 // mapper never recomputes it.
+
+/** Project one aggregate Table-wishlist row into the shared facet shape. */
+export function tableRowFacetView(item: TableWishlistItem): FacetRow {
+    return {
+        cuisine: item.restaurant.cuisine,
+        city: item.restaurant.city,
+        priceLevel: item.restaurant.price_level,
+    };
+}
+
+/** Filter source rows before coordinate-less rows are partitioned from pins. */
+export function filterTableWishlistRows(
+    rows: readonly TableWishlistItem[],
+    filters: MapFilters,
+): TableWishlistItem[] {
+    return rows.filter((row) => matchesFacets(tableRowFacetView(row), filters));
+}
 
 /**
  * Table overlap rows → amber count-bubble items. Merges across the viewer's tables:

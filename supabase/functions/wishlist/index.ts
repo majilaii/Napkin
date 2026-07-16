@@ -12,6 +12,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant, type RestaurantInput } from '../_shared/restaurant.ts';
 import { validateWishlistSource } from '../_shared/wishlistSource.ts';
+import { aggregateTableWishlist, type TableWishlistRow } from './listTable.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -280,6 +281,7 @@ serve(async (req) => {
             const { data: wishlistRows, error: wishlistError } = await supabase
                 .from('wishlist_items')
                 .select(`
+                    id,
                     user_id,
                     restaurant_id,
                     created_at,
@@ -322,49 +324,11 @@ serve(async (req) => {
                 }
             }
 
-            // Aggregate: group by restaurant_id, count members, collect member info
-            const restaurantMap = new Map<string, {
-                restaurant: RestaurantRow;
-                count: number;
-                members: Array<{ user_id: string; display_name: string | null; avatar_url: string | null }>;
-                max_created_at: string;
-            }>();
-
-            for (const row of (wishlistRows ?? [])) {
-                const rid = row.restaurant_id as string;
-                if (!restaurantMap.has(rid)) {
-                    restaurantMap.set(rid, {
-                        restaurant: row.restaurant as RestaurantRow,
-                        count: 0,
-                        members: [],
-                        max_created_at: row.created_at as string,
-                    });
-                }
-                const entry = restaurantMap.get(rid)!;
-                entry.count++;
-                // Cap at 5 members for the avatar stack
-                if (entry.members.length < 5) {
-                    const prof = profileMap.get(row.user_id as string);
-                    entry.members.push({
-                        user_id: row.user_id as string,
-                        display_name: prof?.display_name ?? null,
-                        avatar_url: prof?.avatar_url ?? null,
-                    });
-                }
-                // Keep the most recent save timestamp for secondary sort
-                if (row.created_at > entry.max_created_at) {
-                    entry.max_created_at = row.created_at as string;
-                }
-            }
-
-            // Sort: count DESC, max_created_at DESC; cap at 200
-            const sorted = Array.from(restaurantMap.values())
-                .sort((a, b) => {
-                    if (b.count !== a.count) return b.count - a.count;
-                    return b.max_created_at > a.max_created_at ? 1 : -1;
-                })
-                .slice(0, 200)
-                .map(({ restaurant, count, members }) => ({ restaurant, count, members }));
+            const sorted = aggregateTableWishlist(
+                (wishlistRows ?? []) as unknown as TableWishlistRow<RestaurantRow>[],
+                profileMap,
+                user.id,
+            );
 
             return jsonResponse({ data: sorted });
         }

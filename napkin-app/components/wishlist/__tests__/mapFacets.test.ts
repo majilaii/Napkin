@@ -11,8 +11,11 @@ import {
     cuisineFacets,
     priceFacets,
     cityFacets,
+    filterFacetRows,
     filterMapItems,
+    matchesFacets,
     sortGatheredRecent,
+    type FacetRow,
 } from '../mapFacets';
 import type { WishlistMapItem } from '../WishlistMapView';
 
@@ -87,6 +90,39 @@ describe('filterMapItems', () => {
         expect(filterMapItems(set, { cuisine: 'Italian', price: '2', city: 'London' }).map((i) => i.id)).toEqual([
             'a',
         ]);
+    });
+
+    it('preserves pin-only fields in its generic return type', () => {
+        const filtered = filterMapItems(set, { cuisine: 'Thai' });
+        expect(filtered[0].id).toBe('c');
+        expect(filtered[0].lat).toBe(0);
+    });
+});
+
+describe('source-row facet filtering', () => {
+    interface SourceRow extends FacetRow {
+        sourceId: string;
+        coordinateStatus: 'mapped' | 'unmapped';
+    }
+
+    const rows: readonly SourceRow[] = [
+        { sourceId: 'thai-unmapped', cuisine: ' Thai ', city: 'London', coordinateStatus: 'unmapped' },
+        { sourceId: 'italian-mapped', cuisine: 'Italian', city: 'London', priceLevel: 3, coordinateStatus: 'mapped' },
+    ];
+
+    it('accepts a missing optional price level and matches trimmed source fields', () => {
+        expect(matchesFacets(rows[0], { cuisine: 'Thai', city: 'London' })).toBe(true);
+        expect(matchesFacets(rows[0], { price: '2' })).toBe(false);
+    });
+
+    it('keeps the source-row subtype when filtering', () => {
+        const filtered = filterFacetRows(rows, { cuisine: 'Thai' });
+        expect(filtered).toEqual([rows[0]]);
+        expect(filtered[0].coordinateStatus).toBe('unmapped');
+    });
+
+    it('derives facets from coord-less source rows too', () => {
+        expect(cuisineFacets(rows)).toContainEqual({ value: 'Thai', count: 1 });
     });
 });
 

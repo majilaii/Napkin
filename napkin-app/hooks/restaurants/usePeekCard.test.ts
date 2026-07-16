@@ -54,6 +54,41 @@ describe('peek-card cache fence', () => {
         expect(client.getQueryData(networkKey)).toBeUndefined();
     });
 
+    it('viewer-fences overlap cards and separates the same restaurant by table id', () => {
+        const overlapItem = (tableId: string): WishlistMapItem => ({
+            ...base,
+            overlap: {
+                count: 2,
+                tableId,
+                tableName: 'Table',
+                members: [],
+            },
+        });
+        const contextA = peekCardContextForItem(overlapItem('table-a'));
+        const contextB = peekCardContextForItem(overlapItem('table-b'));
+        const viewerAKey = queryKeys.restaurants.peekCard(
+            'viewer-a',
+            base.id,
+            peekCardContextToken(contextA),
+        );
+        const viewerBKey = queryKeys.restaurants.peekCard(
+            'viewer-b',
+            base.id,
+            peekCardContextToken(contextA),
+        );
+        const tableBKey = queryKeys.restaurants.peekCard(
+            'viewer-a',
+            base.id,
+            peekCardContextToken(contextB),
+        );
+
+        expect(contextA).toEqual({ layer: 'overlap', table_id: 'table-a' });
+        expect(peekCardContextToken(contextA)).not.toBe(peekCardContextToken(contextB));
+        expect(viewerAKey).toContain('viewer-a');
+        expect(viewerAKey).not.toEqual(viewerBKey);
+        expect(viewerAKey).not.toEqual(tableBKey);
+    });
+
     it('fetches enrichment only after a pre-rendered card becomes selected', async () => {
         const payload: PeekCardData = {
             media: [],
