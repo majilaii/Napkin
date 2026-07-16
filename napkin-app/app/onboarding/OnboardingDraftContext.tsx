@@ -1,12 +1,11 @@
 /**
  * OnboardingDraftContext (TICKET-126).
  *
- * The onboarding stack grew from 3 → 5 screens (Name → Photo → City → Follows →
- * Teach) with a conditional middle step, which makes the old name→city→teach
- * route-param chain fragile (a 4-hop chain carrying a long avatar_url, plus a
- * step that's sometimes skipped). This tiny Context lives at the stack _layout
- * so every screen reads/writes one draft; teach.tsx stays a thin complete()
- * caller (TICKET-122 will replace that screen, so it must not own the state).
+ * The onboarding stack spans Name → Photo → City → Follows, with the last step
+ * conditional. That makes the old route-param chain fragile (multiple hops
+ * carrying a long avatar_url, plus a step that's sometimes skipped). This tiny
+ * Context lives at the stack _layout so every screen and terminal branch reads
+ * and writes one draft.
  *
  * Not persisted — onboarding is a single uninterrupted session; the atomic
  * complete_onboarding write is the only durable sink.
