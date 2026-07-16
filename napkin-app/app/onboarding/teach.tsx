@@ -14,6 +14,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCompleteOnboarding } from '@/hooks/onboarding/useCompleteOnboarding';
 import { TeachShareSheetDemo } from '@/components/import-education';
+import { getPreviewOnboardingOnLaunchCached } from '@/lib/devPrefs';
 import { useOnboardingDraft } from './OnboardingDraftContext';
 
 export default function OnboardingTeachScreen() {
@@ -21,11 +22,18 @@ export default function OnboardingTeachScreen() {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const { user } = useAuth();
+    const { user, onboardedAt } = useAuth();
     const { draft } = useOnboardingDraft();
     const complete = useCompleteOnboarding();
 
     const finish = () => {
+        if (
+            typeof onboardedAt === 'string' &&
+            getPreviewOnboardingOnLaunchCached()
+        ) {
+            router.replace('/wishlist');
+            return;
+        }
         if (complete.isPending) return;
         const display_name =
             (draft.display_name && draft.display_name.trim()) ||

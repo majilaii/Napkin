@@ -23,7 +23,7 @@ import {
 } from '@expo-google-fonts/manrope';
 import * as SplashScreen from 'expo-splash-screen';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, View, Pressable, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -46,6 +46,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { track, trackError, flushNow } from '@/lib/track';
 import { initSentry, captureError, wrapRootComponent } from '@/lib/sentry';
 import { ConnectivityProvider } from '@/providers/ConnectivityProvider';
+import { getPreviewOnboardingOnLaunch } from '@/lib/devPrefs';
 
 // TICKET-121: before any render. No-op until EXPO_PUBLIC_SENTRY_DSN exists.
 initSentry();
@@ -253,6 +254,18 @@ function RootLayoutNav() {
   const { session, isLoading, onboardedAt } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const [previewOnLaunch, setPreviewOnLaunch] = useState<boolean | undefined>(undefined);
+  const previewLaunchConsumed = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    getPreviewOnboardingOnLaunch().then((value) => {
+      if (alive) setPreviewOnLaunch(value);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // TICKET-083 Part B: drain the async video-import queue in the background
   // (launch + every foreground). Self-gated on session; safe no-op when signed
@@ -285,7 +298,10 @@ function RootLayoutNav() {
   useEffect(() => onNotifPromptRequest(() => setNotifSheetVisible(true)), []);
 
   useEffect(() => {
-    if (isLoading) return;
+    // Resolve the local preview preference before any launch routing. Signed-in
+    // decisions also wait for the tri-state onboarding gate below, so auth never
+    // routes once to Wishlist and then again to the preview.
+    if (isLoading || previewOnLaunch === undefined) return;
 
     const inAuthGroup = segments[0] === 'auth';
     // TICKET-090: the password-recovery deep link must survive both redirects —
@@ -297,29 +313,45 @@ function RootLayoutNav() {
     const inOnboarding = segments[0] === 'onboarding';
     const inResume = segments[0] === 'import' || segments[0] === 'handoff' || segments[0] === 'join-table';
 
-    if (!session && !inAuthGroup && !inRecovery) {
-      router.replace('/auth');
-    } else if (session && inAuthGroup) {
-      // TICKET-107: onboardedAt is TRI-STATE (undefined = still loading). Wait
-      // for it to resolve before redirecting so a fresh signup routes straight
-      // to /onboarding instead of flashing /wishlist then bouncing. AuthProvider
-      // always resolves it to null-or-string (read errors fall back to
-      // "onboarded"), so this never strands a user on /auth.
-      if (onboardedAt !== undefined) {
-        // Launch-readiness (2026-07-03): onboarded users land on Wishlist, not
-        // Tables — the capture surface is the product's first-value moment.
-        router.replace(onboardedAt === null ? '/onboarding' : '/wishlist');
+    if (!session) {
+      if (!inAuthGroup && !inRecovery) router.replace('/auth');
+      return;
+    }
+
+    // TICKET-107: onboardedAt is TRI-STATE (undefined = still loading). Wait
+    // for it to resolve before redirecting so a fresh signup routes straight
+    // to /onboarding instead of flashing /wishlist then bouncing. AuthProvider
+    // always resolves it to null-or-string (read errors fall back to
+    // "onboarded"), so this never strands a user on /auth.
+    if (onboardedAt === undefined) return;
+
+    if (onboardedAt === null) {
+      // Normal onboarding owns this launch. Consuming the optional preview now
+      // prevents completion from immediately sending the user through it again.
+      previewLaunchConsumed.current = true;
+      if (!inRecovery && !inOnboarding && !inResume) {
+        router.replace('/onboarding');
       }
-    } else if (
-      session &&
-      onboardedAt === null &&
+      return;
+    }
+
+    if (
+      previewOnLaunch &&
+      !previewLaunchConsumed.current &&
       !inRecovery &&
-      !inOnboarding &&
       !inResume
     ) {
-      router.replace('/onboarding');
+      previewLaunchConsumed.current = true;
+      if (!inOnboarding) router.replace('/onboarding');
+      return;
     }
-  }, [session, isLoading, onboardedAt, segments, router]);
+
+    if (inAuthGroup) {
+      // Launch-readiness (2026-07-03): onboarded users land on Wishlist, not
+      // Tables — the capture surface is the product's first-value moment.
+      router.replace('/wishlist');
+    }
+  }, [session, isLoading, onboardedAt, previewOnLaunch, segments, router]);
 
   // TICKET-088: app_open on launch + every foreground (D1/D7/D30 cohorts).
   const userId = session?.user?.id;
