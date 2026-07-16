@@ -20,6 +20,7 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { resolveTilePhoto } from '@/lib/restaurantPhoto';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { SectionHeader } from './SectionHeader';
 import { MarqueePlate } from './MarqueePlate';
 import type { TopPick } from '@/hooks/users/useUserProfile';
@@ -38,6 +39,7 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
     const { width: viewportWidth } = useWindowDimensions();
     const plateWidth = (viewportWidth - (Spacing.lg * 2) - (Spacing.sm * 3)) / 4;
     const plateDimensions = { width: plateWidth, height: plateWidth * 1.5 };
+    const [failedPhotoKeys, setFailedPhotoKeys] = React.useState<Set<string>>(() => new Set());
 
     const slots: (TopPick | null)[] = [
         picks[0] ?? null,
@@ -45,6 +47,36 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
         picks[2] ?? null,
         picks[3] ?? null,
     ];
+
+    // Resolve the final image once so the aggregate credit describes only the
+    // photos that actually reach the grid. A chosen-memory photo wins over the
+    // restaurant's Places hero and therefore contributes no Places credit.
+    const resolvedSlots = slots.map((pick) => {
+        if (!pick) return null;
+        const sourced = resolveSourcedPhoto({
+            url: pick.photo_url,
+            photoSource: pick.photo_source,
+            attributionHtml: pick.places_photo_attribution_html,
+            restaurantName: pick.name,
+        });
+        const photo = resolveTilePhoto({
+            custom_photo_url: pick.hero_photo_url,
+            primary_photo_url: sourced.url,
+            photo_source: pick.photo_source,
+            places_hero_enabled: FRIEND_TEST.topFourPlacesHero,
+            restaurant_name: pick.name,
+        });
+        return {
+            pick,
+            photo,
+            credit: photo.kind === 'url' && photo.isPlaces ? sourced.credit : null,
+        };
+    });
+    const renderedPlacesPhotos = resolvedSlots.flatMap((slot) => {
+        if (!slot?.credit || slot.photo.kind !== 'url') return [];
+        const key = `${slot.pick.restaurant_id}:${slot.photo.url}`;
+        return failedPhotoKeys.has(key) ? [] : [slot];
+    });
 
     const openPick = (pick: TopPick) =>
         // Tap a pick with a review → open the review. Gated to the owner so a
@@ -62,8 +94,8 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                 onRightLabelPress={onEdit}
             />
             <View style={styles.row}>
-                {slots.map((pick, i) => {
-                    if (!pick) {
+                {resolvedSlots.map((slot, i) => {
+                    if (!slot) {
                         return (
                             <Pressable
                                 key={i}
@@ -86,16 +118,7 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                             </Pressable>
                         );
                     }
-                    // TICKET-157: chosen-memory (hero_photo_url) → custom tier (absolute
-                    // precedence, never washed) → gated Places tier (`photo_source ===
-                    // 'places'` + flag) → typographic. Flag read here, not in the resolver.
-                    const resolved = resolveTilePhoto({
-                        custom_photo_url: pick.hero_photo_url,
-                        primary_photo_url: pick.photo_url,
-                        photo_source: pick.photo_source,
-                        places_hero_enabled: FRIEND_TEST.topFourPlacesHero,
-                        restaurant_name: pick.name,
-                    });
+                    const { pick, photo } = slot;
                     return (
                         <MarqueePlate
                             key={i}
@@ -108,13 +131,25 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                             rating={pick.max_rating}
                             rank={i + 1}
                             compact
-                            photoUrl={resolved.kind === 'url' ? resolved.url : null}
-                            placesWash={resolved.kind === 'url' && resolved.isPlaces}
+                            photoUrl={photo.kind === 'url' ? photo.url : null}
+                            placesWash={photo.kind === 'url' && photo.isPlaces}
                             onPress={() => openPick(pick)}
+                            onPhotoError={(url) => setFailedPhotoKeys(
+                                (current) => new Set(current).add(`${pick.restaurant_id}:${url}`),
+                            )}
                         />
                     );
                 })}
             </View>
+            {renderedPlacesPhotos.length > 0 ? (
+                <View style={styles.placesCreditRow}>
+                    <PlacesCredit
+                        credits={renderedPlacesPhotos.map((slot) => slot.credit)}
+                        photoCount={renderedPlacesPhotos.length}
+                        testID="profile-top-four-places-credit"
+                    />
+                </View>
+            ) : null}
         </View>
     );
 }
@@ -128,6 +163,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         paddingHorizontal: Spacing.lg,
         gap: Spacing.sm,
+    },
+    placesCreditRow: {
+        marginHorizontal: Spacing.lg,
+        marginTop: Spacing.sm,
     },
     plate: {
         flexGrow: 0,

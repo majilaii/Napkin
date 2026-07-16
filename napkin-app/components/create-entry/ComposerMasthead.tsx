@@ -9,10 +9,11 @@
  *
  * Stars are gone — rating moved to standalone RatingBand below.
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 interface Props {
     restaurantName: string;
@@ -20,6 +21,8 @@ interface Props {
     meta?: string;
     /** Proxy or storage URL for the 48px thumbnail. Null shows a placeholder block. */
     thumbnailUri?: string | null;
+    thumbnailPhotoSource?: 'places' | 'user' | 'table' | 'none' | null;
+    thumbnailAttributionHtml?: string | null;
     /** When provided, renders the "change" affordance beneath the name. */
     onClearPlace?: () => void;
 }
@@ -28,10 +31,23 @@ export function ComposerMasthead({
     restaurantName,
     meta,
     thumbnailUri,
+    thumbnailPhotoSource,
+    thumbnailAttributionHtml,
     onClearPlace,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
+    const resolvedThumbnail = resolveSourcedPhoto({
+        url: thumbnailUri,
+        photoSource: thumbnailPhotoSource,
+        attributionHtml: thumbnailAttributionHtml,
+        restaurantName,
+    });
+    const [failedThumbnail, setFailedThumbnail] = useState<string | null>(null);
+    useEffect(() => setFailedThumbnail(null), [resolvedThumbnail.url]);
+    const visibleThumbnail = resolvedThumbnail.url !== failedThumbnail
+        ? resolvedThumbnail.url
+        : null;
 
     return (
         <View style={styles.wrapper}>
@@ -42,12 +58,13 @@ export function ComposerMasthead({
                     { backgroundColor: palette.surfaceContainerHigh },
                 ]}
             >
-                {thumbnailUri ? (
+                {visibleThumbnail ? (
                     <Image
-                        source={{ uri: thumbnailUri }}
+                        source={{ uri: visibleThumbnail }}
                         style={styles.thumbnailImage}
                         accessibilityRole="image"
                         accessibilityLabel={restaurantName}
+                        onError={() => setFailedThumbnail(visibleThumbnail)}
                     />
                 ) : null}
             </View>
@@ -68,6 +85,14 @@ export function ComposerMasthead({
                     >
                         {meta}
                     </Text>
+                ) : null}
+
+                {visibleThumbnail && resolvedThumbnail.credit ? (
+                    <PlacesCredit
+                        credits={[resolvedThumbnail.credit]}
+                        photoCount={1}
+                        testID="composer-masthead-places-credit"
+                    />
                 ) : null}
 
                 {onClearPlace ? (

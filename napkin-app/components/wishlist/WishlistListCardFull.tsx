@@ -6,12 +6,15 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import type { MyList } from '@/hooks/lists/useMyLists';
 
 interface Props {
     list: MyList;
     palette: typeof Colors.light;
     onPress: () => void;
+    failedCoverKeys?: ReadonlySet<string>;
+    onCoverError?: (failureKey: string) => void;
 }
 
 function formatUpdated(iso: string): string {
@@ -22,8 +25,24 @@ function formatUpdated(iso: string): string {
     return `updated ${Math.floor(days / 7)}w ago`;
 }
 
-export function WishlistListCardFull({ list, palette, onPress }: Props) {
+export function WishlistListCardFull({
+    list,
+    palette,
+    onPress,
+    failedCoverKeys = new Set(),
+    onCoverError,
+}: Props) {
     const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
+    const cover = resolveSourcedPhoto({
+        url: list.cover_photo_url,
+        photoSource: list.cover_photo_source,
+        attributionHtml: list.cover_attribution_html,
+        restaurantName: list.cover_restaurant_name,
+    });
+    const coverFailureKey = cover.url ? `${list.id}:${cover.url}` : null;
+    const coverUrl = coverFailureKey && failedCoverKeys.has(coverFailureKey)
+        ? null
+        : cover.url;
 
     return (
         <PressableScale
@@ -37,7 +56,7 @@ export function WishlistListCardFull({ list, palette, onPress }: Props) {
                 style={[
                     styles.cover,
                     { backgroundColor: palette.primaryMuted },
-                    list.cover_photo_url && {
+                    coverUrl && {
                         borderWidth: StyleSheet.hairlineWidth,
                         borderColor: scheme === 'dark'
                             ? 'rgba(255, 255, 255, 0.1)'
@@ -45,12 +64,13 @@ export function WishlistListCardFull({ list, palette, onPress }: Props) {
                     },
                 ]}
             >
-                {list.cover_photo_url ? (
+                {coverUrl ? (
                     <Image
-                        source={{ uri: list.cover_photo_url }}
+                        source={{ uri: coverUrl }}
                         style={StyleSheet.absoluteFillObject}
                         contentFit="cover"
                         transition={180}
+                        onError={() => coverFailureKey && onCoverError?.(coverFailureKey)}
                     />
                 ) : list.emoji ? (
                     <Text style={styles.emoji}>{list.emoji}</Text>

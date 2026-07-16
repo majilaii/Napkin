@@ -7,13 +7,14 @@
  *
  * Wireframe: atlas-canvas.html — stat-line + city-masonry
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { CityCard } from './CityCard';
 import { AtlasEmptyState } from './AtlasEmptyState';
 import type { TableAtlasData } from '@/hooks/tables/useTableAtlas';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 const LEFT_HEIGHTS = [200, 175, 210, 185, 195];
 const RIGHT_HEIGHTS = [175, 200, 185, 210, 170];
@@ -46,6 +47,25 @@ export function AtlasCityIndex({
 
     const { stats, cities } = data;
     const foundedLabel = formatFounded(stats.founded_at);
+    const [failedHeroKeys, setFailedHeroKeys] = useState<Set<string>>(() => new Set());
+
+    const resolvedCities = useMemo(() => cities.map((city) => {
+        const hero = resolveSourcedPhoto({
+            url: city.hero_photo_url,
+            photoSource: city.hero_photo_source,
+            attributionHtml: city.hero_places_photo_attribution_html,
+            restaurantName: city.hero_restaurant_name,
+        });
+        const failureKey = `${city.name}:${hero.url ?? ''}`;
+        return {
+            city,
+            hero: failedHeroKeys.has(failureKey)
+                ? { ...hero, url: null, credit: null }
+                : hero,
+            failureKey,
+        };
+    }), [cities, failedHeroKeys]);
+    const renderedPlacesHeroes = resolvedCities.filter(({ hero }) => hero.url && hero.credit);
 
     // Stat line pieces
     const statParts = [
@@ -57,10 +77,10 @@ export function AtlasCityIndex({
 
     // Split into two staggered columns
     const { leftCol, rightCol } = useMemo(() => {
-        const left = cities.filter((_, i) => i % 2 === 0);
-        const right = cities.filter((_, i) => i % 2 !== 0);
+        const left = resolvedCities.filter((_, i) => i % 2 === 0);
+        const right = resolvedCities.filter((_, i) => i % 2 !== 0);
         return { leftCol: left, rightCol: right };
-    }, [cities]);
+    }, [resolvedCities]);
 
     if (cities.length === 0) {
         return (
@@ -109,11 +129,15 @@ export function AtlasCityIndex({
             {/* 2-col masonry */}
             <View style={styles.masonry}>
                 <View style={styles.col}>
-                    {leftCol.map((city, i) => (
+                    {leftCol.map(({ city, hero, failureKey }, i) => (
                         <View key={city.name} style={styles.cardWrap}>
                             <CityCard
                                 city={city}
+                                resolvedHero={hero}
                                 onPress={() => onCityPress(city.name)}
+                                onHeroError={() => setFailedHeroKeys(
+                                    (current) => new Set(current).add(failureKey),
+                                )}
                                 heroHeight={LEFT_HEIGHTS[i % LEFT_HEIGHTS.length]}
                                 palette={palette}
                             />
@@ -122,11 +146,15 @@ export function AtlasCityIndex({
                 </View>
 
                 <View style={styles.col}>
-                    {rightCol.map((city, i) => (
+                    {rightCol.map(({ city, hero, failureKey }, i) => (
                         <View key={city.name} style={styles.cardWrap}>
                             <CityCard
                                 city={city}
+                                resolvedHero={hero}
                                 onPress={() => onCityPress(city.name)}
+                                onHeroError={() => setFailedHeroKeys(
+                                    (current) => new Set(current).add(failureKey),
+                                )}
                                 heroHeight={RIGHT_HEIGHTS[i % RIGHT_HEIGHTS.length]}
                                 palette={palette}
                             />
@@ -134,6 +162,14 @@ export function AtlasCityIndex({
                     ))}
                 </View>
             </View>
+            {renderedPlacesHeroes.length > 0 ? (
+                <PlacesCredit
+                    credits={renderedPlacesHeroes.map(({ hero }) => hero.credit)}
+                    photoCount={renderedPlacesHeroes.length}
+                    testID="atlas-city-index-places-credit"
+                    style={styles.placesCredit}
+                />
+            ) : null}
         </ScrollView>
     );
 }
@@ -166,6 +202,10 @@ const styles = StyleSheet.create({
     },
     cardWrap: {
         // No extra style needed
+    },
+    placesCredit: {
+        marginHorizontal: 20,
+        marginBottom: Spacing.lg,
     },
 });
 

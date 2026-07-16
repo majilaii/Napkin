@@ -15,6 +15,7 @@ import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { FetchResult, ListDetailData } from './useList';
 import type { SavedList } from './useSavedLists';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 export interface ToggleListSaveInput {
     list_id: string;
@@ -50,6 +51,13 @@ function optimisticSaveCount(detail: ListDetailData, nextSaved: boolean): number
 
 function toSavedList(detail: ListDetailData, savedAt: string): SavedList | null {
     if (detail.list.privacy !== 'public') return null;
+    const coverRestaurant = detail.entries[0]?.restaurant;
+    const cover = resolveSourcedPhoto({
+        url: coverRestaurant?.photo_url,
+        photoSource: coverRestaurant?.photo_source,
+        attributionHtml: coverRestaurant?.places_photo_attribution_html,
+        restaurantName: coverRestaurant?.name,
+    });
 
     return {
         id: detail.list.id,
@@ -64,8 +72,12 @@ function toSavedList(detail: ListDetailData, savedAt: string): SavedList | null 
         saved_at: savedAt,
         entry_count: detail.entries.length,
         save_count: optimisticSaveCount(detail, true),
-        cover_photo_url:
-            detail.entries.find((entry) => !!entry.restaurant.photo_url)?.restaurant.photo_url ?? null,
+        cover_photo_url: cover.url,
+        cover_photo_source: cover.url ? coverRestaurant?.photo_source ?? null : null,
+        cover_attribution_html: cover.credit
+            ? coverRestaurant?.places_photo_attribution_html ?? null
+            : null,
+        cover_restaurant_name: cover.url ? coverRestaurant?.name ?? null : null,
         owner_display_name: detail.owner_profile.display_name,
         owner_avatar_url: detail.owner_profile.avatar_url,
         owner_username: detail.owner_profile.username,

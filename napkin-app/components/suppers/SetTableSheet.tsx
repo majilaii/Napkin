@@ -39,15 +39,16 @@ import { useToast } from '@/providers/ToastProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { useSetTable, type SetTableInput, type SetTableResult } from '@/hooks/suppers';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui';
 import { InitialsAvatar } from './InitialsAvatar';
-
-type Palette = typeof Colors.light;
 
 export interface SetTableRestaurant {
     id?: string | null;
     name: string;
     city?: string | null;
     photo_url?: string | null;
+    photo_source?: string | null;
+    places_photo_attribution_html?: string | null;
 }
 
 interface SetTableSheetProps {
@@ -108,6 +109,23 @@ export function SetTableSheet({
     // Adapter submissions track their own pending flag (useSetTable.isPending
     // only covers the internal set-mode adapter).
     const [submitting, setSubmitting] = useState(false);
+    const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null);
+
+    const spotPhoto = useMemo(
+        () => resolveSourcedPhoto({
+            url: restaurant.photo_url,
+            photoSource: restaurant.photo_source,
+            attributionHtml: restaurant.places_photo_attribution_html,
+            restaurantName: restaurant.name,
+        }),
+        [
+            restaurant.name,
+            restaurant.photo_source,
+            restaurant.photo_url,
+            restaurant.places_photo_attribution_html,
+        ],
+    );
+    const showSpotPhoto = !!spotPhoto.url && failedPhotoUrl !== spotPhoto.url;
 
     const setTable = useSetTable();
     const { data: members, isLoading: loadingMembers } = useTableMembers(selectedTableId);
@@ -279,8 +297,13 @@ export function SetTableSheet({
                             {/* The spot */}
                             <Text style={[styles.kicker, { color: palette.textMuted }]}>The spot</Text>
                             <View style={[styles.spotCard, { backgroundColor: palette.surfaceNote }]}>
-                                {restaurant.photo_url ? (
-                                    <Image source={{ uri: restaurant.photo_url }} style={styles.spotThumb} />
+                                {showSpotPhoto ? (
+                                    <Image
+                                        testID="set-table-spot-photo"
+                                        source={{ uri: spotPhoto.url! }}
+                                        style={styles.spotThumb}
+                                        onError={() => setFailedPhotoUrl(spotPhoto.url)}
+                                    />
                                 ) : (
                                     <View style={[styles.spotThumb, { backgroundColor: palette.surfaceContainerHigh }]} />
                                 )}
@@ -288,6 +311,15 @@ export function SetTableSheet({
                                     <Text style={[styles.spotName, { color: palette.text }]} numberOfLines={1}>{restaurant.name}</Text>
                                     {restaurant.city ? (
                                         <Text style={[styles.spotCity, { color: palette.textMuted }]} numberOfLines={1}>{restaurant.city}</Text>
+                                    ) : null}
+                                    {showSpotPhoto && spotPhoto.credit ? (
+                                        <PlacesCredit
+                                            testID="set-table-places-credit"
+                                            credits={[spotPhoto.credit]}
+                                            photoCount={1}
+                                            interactive={false}
+                                            style={styles.spotCredit}
+                                        />
                                     ) : null}
                                 </View>
                             </View>
@@ -435,6 +467,7 @@ const styles = StyleSheet.create({
     spotThumb: { width: 52, height: 52, borderRadius: 12 },
     spotName: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 20, lineHeight: 24 },
     spotCity: { fontFamily: 'Manrope_600SemiBold', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', marginTop: 5 },
+    spotCredit: { marginTop: 4 },
     tableChips: { gap: 8, paddingRight: 8 },
     tableChip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 9999, maxWidth: 180 },
     tableChipText: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },

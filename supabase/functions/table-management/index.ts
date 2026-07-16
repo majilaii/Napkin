@@ -715,6 +715,7 @@ serve(async (req) => {
                         country,
                         photo_url,
                         photo_source,
+                        places_photo_attribution_html,
                         external_id
                     )
                 `)
@@ -807,7 +808,9 @@ serve(async (req) => {
                             name,
                             city,
                             country,
-                            photo_url
+                            photo_url,
+                            photo_source,
+                            places_photo_attribution_html
                         )
                     `)
                     .in('user_id', memberIds)
@@ -1000,6 +1003,7 @@ serve(async (req) => {
                         country,
                         photo_url,
                         photo_source,
+                        places_photo_attribution_html,
                         external_id
                     )
                 `)
@@ -1151,7 +1155,9 @@ serve(async (req) => {
                             name,
                             city,
                             country,
-                            photo_url
+                            photo_url,
+                            photo_source,
+                            places_photo_attribution_html
                         )
                     `)
                     .in('user_id', memberIdsAfter)

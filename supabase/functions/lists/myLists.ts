@@ -1,5 +1,6 @@
 /** Restaurant cover metadata selected for the `list_mine` shelf projection. */
 export interface MyListCoverRestaurant {
+    name?: string | null;
     photo_url: string | null;
     photo_source: string | null;
     places_photo_attribution_html: string | null;
@@ -45,6 +46,7 @@ export function buildMyListSummary<T extends object>({
         cover_photo_url: coverRestaurant?.photo_url ?? null,
         cover_photo_source: coverRestaurant?.photo_source ?? null,
         cover_attribution_html: coverRestaurant?.places_photo_attribution_html ?? null,
+        cover_restaurant_name: coverRestaurant?.name ?? null,
         table_name: tableName,
     };
 }

@@ -36,6 +36,7 @@ import { useUpdatePicks } from '@/hooks/top-fours/useUpdatePicks';
 import { EligibleRestaurantRow } from './EligibleRestaurantRow';
 import type { EligibleRestaurant } from '@/hooks/top-fours/useEligibleRestaurantsForCity';
 import type { TopFourPick } from '@/hooks/top-fours/useTopFours';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ interface DraftItem {
     restaurant_id: string;
     name: string;
     photo_url: string | null;
+    photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    places_photo_attribution_html?: string | null;
 }
 
 interface Props {
@@ -62,10 +65,21 @@ interface SlotItemProps {
     drag: () => void;
     isActive: boolean;
     palette: typeof Colors.light;
+    photoUrl: string | null;
     onRemove: (id: string) => void;
+    onPhotoError?: () => void;
 }
 
-function SlotItem({ item, index, drag, isActive, palette, onRemove }: SlotItemProps) {
+function SlotItem({
+    item,
+    index,
+    drag,
+    isActive,
+    palette,
+    photoUrl,
+    onRemove,
+    onPhotoError,
+}: SlotItemProps) {
     return (
         <ScaleDecorator>
             <Pressable
@@ -93,11 +107,12 @@ function SlotItem({ item, index, drag, isActive, palette, onRemove }: SlotItemPr
                         { backgroundColor: palette.surfaceJournalHi, borderRadius: Radius.sm },
                     ]}
                 >
-                    {item.photo_url ? (
+                    {photoUrl ? (
                         <ExpoImage
-                            source={{ uri: item.photo_url }}
+                            source={{ uri: photoUrl }}
                             style={StyleSheet.absoluteFill}
                             contentFit="cover"
+                            onError={onPhotoError}
                         />
                     ) : null}
                 </View>
@@ -151,6 +166,7 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
 
     // Draft: ordered list of picked restaurants
     const [draft, setDraft] = useState<DraftItem[]>([]);
+    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
 
     // Reset draft when sheet opens
     useEffect(() => {
@@ -162,8 +178,11 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
                     restaurant_id: p.restaurant.id,
                     name: p.restaurant.name,
                     photo_url: p.restaurant.photo_url,
+                    photo_source: p.restaurant.photo_source,
+                    places_photo_attribution_html: p.restaurant.places_photo_attribution_html,
                 }));
             setDraft(initial);
+            setFailedPhotoKeys(new Set());
         }
     }, [visible, currentPicks]);
 
@@ -187,6 +206,8 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
                 restaurant_id: restaurant.restaurant_id,
                 name: restaurant.name,
                 photo_url: restaurant.photo_url,
+                photo_source: restaurant.photo_source,
+                places_photo_attribution_html: restaurant.places_photo_attribution_html,
             },
         ]);
     }, [pickedIds, draft.length]);
@@ -234,6 +255,43 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
     }, [hasDiff, onClose]);
 
     const isPending = claimCity.isPending || updatePicks.isPending;
+
+    const draftPhotos = useMemo(() => new Map(draft.map((item) => {
+        const photo = resolveSourcedPhoto({
+            url: item.photo_url,
+            photoSource: item.photo_source,
+            attributionHtml: item.places_photo_attribution_html,
+            restaurantName: item.name,
+        });
+        const failureKey = `draft:${item.key}:${photo.url ?? ''}`;
+        return [item.key, {
+            url: photo.url && !failedPhotoKeys.has(failureKey) ? photo.url : null,
+            credit: photo.url && !failedPhotoKeys.has(failureKey) ? photo.credit : null,
+            failureKey,
+        }] as const;
+    })), [draft, failedPhotoKeys]);
+    const eligiblePhotos = useMemo(() => new Map((eligible ?? []).map((item) => {
+        const photo = resolveSourcedPhoto({
+            url: item.photo_url,
+            photoSource: item.photo_source,
+            attributionHtml: item.places_photo_attribution_html,
+            restaurantName: item.name,
+        });
+        const failureKey = `eligible:${item.restaurant_id}:${photo.url ?? ''}`;
+        return [item.restaurant_id, {
+            url: photo.url && !failedPhotoKeys.has(failureKey) ? photo.url : null,
+            credit: photo.url && !failedPhotoKeys.has(failureKey) ? photo.credit : null,
+            failureKey,
+        }] as const;
+    })), [eligible, failedPhotoKeys]);
+    const renderedPlacesPhotos = [
+        ...draftPhotos.values(),
+        ...eligiblePhotos.values(),
+    ].filter((photo) => photo.url && photo.credit);
+
+    const markPhotoFailed = useCallback((failureKey: string) => {
+        setFailedPhotoKeys((current) => new Set(current).add(failureKey));
+    }, []);
 
     return (
         <Modal
@@ -302,6 +360,15 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
                         : 'Pick up to 4. You can always edit later.'}
                 </Text>
 
+                {renderedPlacesPhotos.length > 0 ? (
+                    <PlacesCredit
+                        credits={renderedPlacesPhotos.map((photo) => photo.credit)}
+                        photoCount={renderedPlacesPhotos.length}
+                        testID="regional-top-four-editor-places-credit"
+                        style={styles.placesCredit}
+                    />
+                ) : null}
+
                 {/* Draft slots (draggable) */}
                 <View style={[styles.slotsSection, { borderBottomColor: palette.dividerSoft }]}>
                     {draft.length === 0 ? (
@@ -322,7 +389,12 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
                                     drag={drag}
                                     isActive={isActive}
                                     palette={palette}
+                                    photoUrl={draftPhotos.get(item.key)?.url ?? null}
                                     onRemove={handleRemove}
+                                    onPhotoError={() => {
+                                        const failureKey = draftPhotos.get(item.key)?.failureKey;
+                                        if (failureKey) markPhotoFailed(failureKey);
+                                    }}
                                 />
                             )}
                             scrollEnabled={false}
@@ -359,7 +431,12 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
                             <EligibleRestaurantRow
                                 key={r.restaurant_id}
                                 restaurant={r}
+                                photoUrl={eligiblePhotos.get(r.restaurant_id)?.url ?? null}
                                 isSelected={pickedIds.has(r.restaurant_id)}
+                                onPhotoError={() => {
+                                    const failureKey = eligiblePhotos.get(r.restaurant_id)?.failureKey;
+                                    if (failureKey) markPhotoFailed(failureKey);
+                                }}
                                 onPress={
                                     draft.length < 4 || pickedIds.has(r.restaurant_id)
                                         ? handleAdd
@@ -406,6 +483,10 @@ const styles = StyleSheet.create({
         borderBottomWidth: StyleSheet.hairlineWidth,
         marginHorizontal: 22,
         paddingBottom: Spacing.xs,
+    },
+    placesCredit: {
+        marginHorizontal: 22,
+        marginBottom: Spacing.sm,
     },
     slotRow: {
         flexDirection: 'row',

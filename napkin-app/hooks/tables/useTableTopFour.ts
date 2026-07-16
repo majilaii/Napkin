@@ -29,6 +29,11 @@ export interface TopFourSlot {
          * redeploy lacks it, so `undefined` reads as non-'places' → typographic.
          */
         photo_source?: 'places' | 'user' | 'table' | 'none' | null;
+        /**
+         * Stored, server-sanitized Places author attribution paired with the
+         * restaurant hero. Optional for stale cache entries, which fail closed.
+         */
+        places_photo_attribution_html?: string | null;
         external_id: string | null;
     };
 }
@@ -51,6 +56,8 @@ export interface TopFourSuggested {
         city: string | null;
         country: string | null;
         photo_url: string | null;
+        photo_source?: 'places' | 'user' | 'table' | 'none' | null;
+        places_photo_attribution_html?: string | null;
     };
     saved_by_n_members: number;
 }

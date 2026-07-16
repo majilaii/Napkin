@@ -14,6 +14,8 @@ export interface WishlistRestaurant {
     city: string | null;
     country: string | null;
     photo_url: string | null;
+    photo_source?: 'user' | 'table' | 'places' | 'none' | null;
+    places_photo_attribution_html?: string | null;
     cuisine: string | null;
     google_rating: number | null;
     price_level: number | null;

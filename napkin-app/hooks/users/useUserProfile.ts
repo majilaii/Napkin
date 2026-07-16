@@ -85,6 +85,7 @@ export type ProfileListSummary = {
      */
     cover_photo_source?: 'user' | 'table' | 'places' | 'none' | null;
     cover_attribution_html?: string | null;
+    cover_restaurant_name?: string | null;
 };
 
 export type RestaurantTile = {
@@ -118,6 +119,12 @@ export type TopPick = {
      * typographic rather than leaking an un-washed photo ([ARCH-REVIEW B1/N4]).
      */
     photo_source?: 'places' | 'user' | 'table' | 'none' | null;
+    /**
+     * Stored, server-sanitized Places author attribution paired with
+     * `photo_url`. Optional for stale cached profile payloads; a missing value
+     * makes the Places image fail closed to the typographic plate.
+     */
+    places_photo_attribution_html?: string | null;
     /**
      * TICKET-144 pt2: the owner's chosen hero photo (their OWN entry photo at
      * this restaurant), servable on the public profile because choosing it is

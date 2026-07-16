@@ -23,8 +23,9 @@
  *     (the caller must include the host in the profile fetch).
  *  5. source_url/source_type come from the host's (host, restaurant) wishlist
  *     source — the caller looks it up on the composite key, never a bare match.
- *  6. restaurant = { id, name, city, photo_url } | null; rescheduled_from,
- *     note, gather_on, status, supper_id from the row.
+ *  6. restaurant = { id, name, city, photo_url, photo_source,
+ *     places_photo_attribution_html } | null; rescheduled_from, note, gather_on,
+ *     status, supper_id from the row.
  *  7. type: 'gathering'; created_at = row.created_at. sort_date = row.created_at
  *     (the ONE field not byte-identical to the feed's ordering value — neither
  *     surface renders sort_date, so it's safe).
@@ -62,6 +63,8 @@ export interface RestaurantInput {
     name: string;
     city: string | null;
     photo_url: string | null;
+    photo_source: string | null;
+    places_photo_attribution_html: string | null;
 }
 
 export interface SourceInput {
@@ -171,6 +174,8 @@ export function buildGatheringCard(
                   name: restaurant.name,
                   city: restaurant.city ?? null,
                   photo_url: restaurant.photo_url ?? null,
+                  photo_source: restaurant.photo_source ?? null,
+                  places_photo_attribution_html: restaurant.places_photo_attribution_html ?? null,
               }
             : null,
         host_user_id: hostUserId,

@@ -13,15 +13,18 @@ import {
     Text,
     StyleSheet,
     ImageBackground,
-    useWindowDimensions,
 } from 'react-native';
 import { Colors, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { PressableScale } from '@/components/ui/napkin';
+import {
+    resolveSourcedPhoto,
+    type ResolvedSourcedPhoto,
+} from '@/components/ui/PlacesCredit';
 import type { AtlasCityRow } from '@/hooks/tables/useTableAtlas';
 
 // Warm gradient textures — rotated per city deterministically
-const TEXTURES: ReadonlyArray<readonly [string, string]> = [
+const TEXTURES: readonly (readonly [string, string])[] = [
     ['#cc8b4a', '#713617'],
     ['#c9946f', '#7a4a30'],
     ['#d48a3f', '#8e3c16'],
@@ -52,12 +55,29 @@ interface Props {
     /** Height for the photo hero area. Stagger between columns */
     heroHeight?: number;
     palette?: typeof Colors.light;
+    /** AtlasCityIndex supplies its already-resolved hero for aggregate credit parity. */
+    resolvedHero?: ResolvedSourcedPhoto;
+    onHeroError?: () => void;
 }
 
-export function CityCard({ city, onPress, heroHeight = 180, palette: paletteProp }: Props) {
+export function CityCard({
+    city,
+    onPress,
+    heroHeight = 180,
+    palette: paletteProp,
+    resolvedHero,
+    onHeroError,
+}: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = paletteProp ?? Colors[scheme];
     const [gradStart, gradEnd] = textureForCity(city.name);
+    const hero = resolvedHero ?? resolveSourcedPhoto({
+        url: city.hero_photo_url,
+        photoSource: city.hero_photo_source,
+        attributionHtml: city.hero_places_photo_attribution_html,
+        restaurantName: city.hero_restaurant_name,
+    });
+    const showHero = !!hero.url;
 
     const meta = `${city.spot_count} spot${city.spot_count !== 1 ? 's' : ''} · ${city.member_count} of us · last ${formatLastVisit(city.last_visit_at)}`;
 
@@ -65,12 +85,13 @@ export function CityCard({ city, onPress, heroHeight = 180, palette: paletteProp
         <PressableScale onPress={onPress} haptic="light" scaleTo={0.97}>
             <View style={[styles.card, Shadow.ambient]}>
                 {/* Photo hero */}
-                {city.hero_photo_url ? (
+                {showHero ? (
                     <ImageBackground
-                        source={{ uri: city.hero_photo_url }}
+                        source={{ uri: hero.url! }}
                         style={[styles.hero, { height: heroHeight }]}
                         imageStyle={styles.heroImage}
                         resizeMode="cover"
+                        onError={onHeroError}
                     >
                         <View style={styles.gradient} />
                         <View style={styles.imageOutline} />

@@ -48,6 +48,8 @@ export interface TableNightStatus extends TableNight {
         address: string | null;
         city: string | null;
         photo_url: string | null;
+        photo_source: string | null;
+        places_photo_attribution_html: string | null;
     } | null;
     participants: TableNightParticipant[];
 }

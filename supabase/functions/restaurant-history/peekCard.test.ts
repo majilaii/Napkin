@@ -548,6 +548,25 @@ Deno.test('canonical media order is authorized entry → clip → mirrored Place
     ]);
 });
 
+Deno.test('Places media fails closed when stored author attribution is missing', async () => {
+    for (const places_photo_attribution_html of [null, '   ', '<a href="https://maps.google.com"></a>']) {
+        const { data } = await run(
+            { layer: 'saved' },
+            {
+                tables: {
+                    restaurants: [restaurant({
+                        photo_url: 'https://storage.example/places.jpg',
+                        photo_source: 'places',
+                        places_photo_attribution_html,
+                    })],
+                },
+            },
+        );
+
+        assertEquals(data.media.some((candidate) => candidate.kind === 'places'), false);
+    }
+});
+
 Deno.test('response always carries required scalar keys and derives the short address', async () => {
     const { data } = await run({ layer: 'saved' }, {});
     assertEquals(data.google_rating, 4.5);

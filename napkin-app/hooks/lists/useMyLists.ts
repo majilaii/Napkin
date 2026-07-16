@@ -37,6 +37,7 @@ export interface MyList {
      */
     cover_photo_source?: 'user' | 'table' | 'places' | 'none' | null;
     cover_attribution_html?: string | null;
+    cover_restaurant_name?: string | null;
     created_at: string;
     updated_at: string;
 }

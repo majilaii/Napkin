@@ -4,16 +4,17 @@
  * directly; the header component renders the results.
  */
 import type { ListDetail, ListEntry, OwnerProfile } from '@/hooks/lists/useList';
-import { parsePlacesAttribution } from '@/lib/parsePlacesAttribution';
+import {
+    PlacesPhotoCredit,
+    resolveSourcedPhoto,
+} from '@/components/ui/PlacesCredit';
 
-type CoverEntry = Pick<ListEntry, 'restaurant'>;
+type CoverEntry = Pick<ListEntry, 'restaurant'> & Partial<Pick<ListEntry, 'id'>>;
 type HeaderList = Pick<ListDetail, 'table_id' | 'privacy'>;
 type HeaderOwner = Pick<OwnerProfile, 'display_name' | 'username' | 'account_privacy'>;
 
 export interface DerivedListCover {
     photoUrl: string;
-    /** Parsed display label only; raw HTML never reaches the header component. */
-    attributionLabel: string | null;
 }
 
 /**
@@ -24,20 +25,85 @@ export interface DerivedListCover {
  */
 export function deriveCover(entries: readonly CoverEntry[]): DerivedListCover | null {
     const restaurant = entries[0]?.restaurant;
-    if (!restaurant?.photo_url) return null;
+    if (!restaurant) return null;
+    const resolved = resolveSourcedPhoto({
+        url: restaurant.photo_url,
+        photoSource: restaurant.photo_source,
+        attributionHtml: restaurant.places_photo_attribution_html,
+        restaurantName: restaurant.name,
+    });
+    return resolved.url ? { photoUrl: resolved.url } : null;
+}
 
-    if (restaurant.photo_source === 'places') {
-        const attribution = parsePlacesAttribution(restaurant.places_photo_attribution_html);
-        return attribution
-            ? { photoUrl: restaurant.photo_url, attributionLabel: attribution.label }
-            : null;
-    }
+export interface ListPlacesCreditSummary {
+    credits: PlacesPhotoCredit[];
+    /** Rendered Places instances (header cover + row thumbnails) before author dedupe. */
+    photoCount: number;
+}
 
-    if (restaurant.photo_source === 'user' || restaurant.photo_source === 'table') {
-        return { photoUrl: restaurant.photo_url, attributionLabel: null };
-    }
+function resolvedEntryPhoto(entry: CoverEntry) {
+    return resolveSourcedPhoto({
+        url: entry.restaurant.photo_url,
+        photoSource: entry.restaurant.photo_source,
+        attributionHtml: entry.restaurant.places_photo_attribution_html,
+        restaurantName: entry.restaurant.name,
+    });
+}
 
-    return null;
+export function listRowPhotoFailureKey(entry: CoverEntry): string | null {
+    const photo = resolvedEntryPhoto(entry);
+    return photo.url
+        ? `row:${entry.id ?? entry.restaurant.id}:${photo.url}`
+        : null;
+}
+
+export function listCoverPhotoFailureKey(entries: readonly CoverEntry[]): string | null {
+    const first = entries[0];
+    if (!first) return null;
+    const photo = resolvedEntryPhoto(first);
+    return photo.url
+        ? `cover:${first.id ?? first.restaurant.id}:${photo.url}`
+        : null;
+}
+
+/**
+ * One header line covers every safely-renderable Places thumbnail in the list.
+ * Rows intentionally carry no credit text of their own.
+ */
+export function deriveListPlacesCredits(
+    entries: readonly CoverEntry[],
+    failedPhotoKeys: ReadonlySet<string> = new Set(),
+): ListPlacesCreditSummary {
+    const credits: PlacesPhotoCredit[] = [];
+    let photoCount = 0;
+    entries.forEach(({ restaurant }, index) => {
+        const resolved = resolveSourcedPhoto({
+            url: restaurant.photo_url,
+            photoSource: restaurant.photo_source,
+            attributionHtml: restaurant.places_photo_attribution_html,
+            restaurantName: restaurant.name,
+        });
+        if (!resolved.url || !resolved.credit) return;
+
+        const entry = entries[index];
+        const rowFailureKey = listRowPhotoFailureKey(entry);
+        if (!(rowFailureKey && failedPhotoKeys.has(rowFailureKey))) {
+            credits.push(resolved.credit);
+            photoCount += 1;
+        }
+
+        // The first entry's hero can render twice on this surface: once as the
+        // header cover and once as its AA row thumbnail. Track the instances
+        // independently so either load failure updates grammar exactly.
+        if (index === 0) {
+            const coverFailureKey = listCoverPhotoFailureKey(entries);
+            if (!(coverFailureKey && failedPhotoKeys.has(coverFailureKey))) {
+                credits.push(resolved.credit);
+                photoCount += 1;
+            }
+        }
+    });
+    return { credits, photoCount };
 }
 
 /**

@@ -93,6 +93,11 @@ import { queryKeys } from '@/lib/queryKeys';
 import { todaysHoursLine } from '@/lib/restaurantHours';
 import { AddToListSheet } from '@/components/lists/AddToListSheet';
 import {
+    PlacesCredit,
+    resolveSourcedPhoto,
+    type PlacesPhotoCredit,
+} from '@/components/ui/PlacesCredit';
+import {
     chooseCollectionCamera,
     CITY_DELTA,
     CREAM,
@@ -1521,26 +1526,16 @@ function PeekMediaTile({
                         style={[styles.peekMediaOutline, { borderColor: palette.imageOutline }]}
                     />
                     {candidate.kind === 'places' ? (
-                        <>
-                            <View
-                                pointerEvents="none"
-                                style={[
-                                    StyleSheet.absoluteFill,
-                                    {
-                                        backgroundColor: palette.placesOverlayTint,
-                                        opacity: palette.placesOverlayOpacity,
-                                    },
-                                ]}
-                            />
-                            <Text
-                                pointerEvents="none"
-                                maxFontSizeMultiplier={1}
-                                numberOfLines={1}
-                                style={[styles.peekAttribution, { color: palette.textOnImage }]}
-                            >
-                                {`Photo · ${candidate.attribution ?? 'Google'}`}
-                            </Text>
-                        </>
+                        <View
+                            pointerEvents="none"
+                            style={[
+                                StyleSheet.absoluteFill,
+                                {
+                                    backgroundColor: palette.placesOverlayTint,
+                                    opacity: palette.placesOverlayOpacity,
+                                },
+                            ]}
+                        />
                     ) : null}
                 </>
             ) : (
@@ -1565,6 +1560,22 @@ function PeekMediaTile({
             )}
         </View>
     );
+}
+
+function resolvePeekMediaCandidate(
+    candidate: PeekCardMediaCandidate,
+    restaurantName: string,
+): { candidate: PeekCardMediaCandidate; credit: PlacesPhotoCredit | null } | null {
+    if (candidate.kind !== 'places') return { candidate, credit: null };
+    const resolved = resolveSourcedPhoto({
+        url: candidate.url,
+        photoSource: candidate.photo_source,
+        attributionHtml: candidate.attribution,
+        restaurantName,
+    });
+    return resolved.url && resolved.credit
+        ? { candidate: { ...candidate, url: resolved.url }, credit: resolved.credit }
+        : null;
 }
 
 function actionLabel(action: PeekActionId, saved: boolean | undefined): string {
@@ -1726,11 +1737,17 @@ function PeekCardBody({
         context,
         isSelected,
     });
-    const media = enrichment?.media ?? [];
-    const mediaIdentity = `${contextToken}:${media.map((candidate) => `${candidate.kind}:${candidate.url}`).join('|')}`;
+    const media = useMemo(
+        () => (enrichment?.media ?? [])
+            .map((candidate) => resolvePeekMediaCandidate(candidate, item.name))
+            .filter((value): value is NonNullable<typeof value> => value != null),
+        [enrichment?.media, item.name],
+    );
+    const mediaIdentity = `${contextToken}:${media.map(({ candidate }) => `${candidate.kind}:${candidate.url}`).join('|')}`;
     const [mediaIndex, setMediaIndex] = useState(0);
     useEffect(() => setMediaIndex(0), [mediaIdentity]);
-    const mediaCandidate = media[mediaIndex];
+    const selectedMedia = media[mediaIndex];
+    const mediaCandidate = selectedMedia?.candidate;
 
     // Neighbor cards render from the already-loaded personal wishlist and never
     // issue a check. Selection enables one precise freshness request; cache and
@@ -1905,12 +1922,24 @@ function PeekCardBody({
                     opensReview ? `Open ${authorName}'s review of ${item.name}` : `Open ${item.name}`
                 }
             >
-                <PeekMediaTile
-                    item={item}
-                    candidate={mediaCandidate}
-                    palette={palette}
-                    onError={() => setMediaIndex((index) => Math.min(index + 1, media.length))}
-                />
+                <View style={styles.peekMediaColumn}>
+                    <PeekMediaTile
+                        item={item}
+                        candidate={mediaCandidate}
+                        palette={palette}
+                        onError={() => setMediaIndex((index) => Math.min(index + 1, media.length))}
+                    />
+                    <View style={[styles.peekMediaCreditSlot, { height: auxiliaryLineHeight }]}>
+                        {selectedMedia?.credit ? (
+                            <PlacesCredit
+                                credits={[selectedMedia.credit]}
+                                photoCount={1}
+                                testID="map-peek-places-credit"
+                                interactive={false}
+                            />
+                        ) : null}
+                    </View>
+                </View>
 
                 <View style={styles.peekContent}>
                     <View style={[styles.peekNameRow, { height: nameLineHeight }]}>
@@ -2348,9 +2377,12 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 10,
     },
-    peekMedia: {
+    peekMediaColumn: {
         width: 108,
         alignSelf: 'stretch',
+    },
+    peekMedia: {
+        flex: 1,
         borderRadius: Radius.md,
         alignItems: 'center',
         justifyContent: 'center',
@@ -2361,17 +2393,9 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderRadius: Radius.md,
     },
-    peekAttribution: {
-        position: 'absolute',
-        left: 6,
-        right: 6,
-        bottom: 5,
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
-        letterSpacing: 0.1,
-        textShadowColor: 'rgba(28,28,25,0.52)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3,
+    peekMediaCreditSlot: {
+        justifyContent: 'flex-end',
+        paddingHorizontal: 2,
     },
     peekPlateInset: {
         position: 'absolute',

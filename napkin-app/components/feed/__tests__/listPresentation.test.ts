@@ -21,14 +21,23 @@ function list(id: string, overrides: Partial<PublicListResult> = {}): PublicList
 
 describe('arrangePublicLists', () => {
     it('keeps a thin, recent list in the rail rather than presenting it as a feature', () => {
-        const thin = list('thin', { entry_count: 1, cover_photo_url: 'https://example.test/a.jpg' });
+        const thin = list('thin', {
+            entry_count: 1,
+            cover_photo_url: 'https://example.test/a.jpg',
+            photo_source: 'places',
+            attribution_html: 'Jane',
+        });
 
         expect(arrangePublicLists([thin])).toEqual({ showcase: null, rail: [thin] });
     });
 
     it('promotes the first substantial list with a real cover and keeps the rest in the rail', () => {
         const plain = list('plain');
-        const substantial = list('substantial', { cover_photo_url: 'https://example.test/b.jpg' });
+        const substantial = list('substantial', {
+            cover_photo_url: 'https://example.test/b.jpg',
+            photo_source: 'places',
+            attribution_html: 'Jane',
+        });
 
         expect(arrangePublicLists([plain, substantial])).toEqual({
             showcase: substantial,
@@ -36,8 +45,24 @@ describe('arrangePublicLists', () => {
         });
     });
 
+    it('does not promote a cover that must be suppressed for missing attribution', () => {
+        const malformed = list('malformed', {
+            cover_photo_url: 'https://example.test/b.jpg',
+            photo_source: 'places',
+            attribution_html: null,
+        });
+
+        expect(arrangePublicLists([malformed])).toEqual({ showcase: null, rail: [malformed] });
+    });
+
     it('filters placeholders and empty lists before either presentation path', () => {
-        const placeholder = list('placeholder', { title: ' ', entry_count: 4, cover_photo_url: 'https://example.test/c.jpg' });
+        const placeholder = list('placeholder', {
+            title: ' ',
+            entry_count: 4,
+            cover_photo_url: 'https://example.test/c.jpg',
+            photo_source: 'places',
+            attribution_html: 'Jane',
+        });
         const empty = list('empty', { entry_count: 0 });
 
         expect(arrangePublicLists([placeholder, empty])).toEqual({ showcase: null, rail: [] });

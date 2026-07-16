@@ -57,6 +57,7 @@ import { InlineStars } from '@/components/feed/InlineStars';
 import { usePostInteractions, usePostInteractionsRealtime, effectiveCommentCount } from '@/hooks/posts';
 import { CommentThread } from '@/components/posts';
 import { FeedActionRow } from '@/components/feed';
+import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 type Palette = typeof Colors.light;
 
@@ -253,6 +254,7 @@ export default function TableNightDetailScreen() {
     const previousGroupAvg = restaurantHistory?.last_visit?.rating ?? null;
 
     const [lightboxPhoto, setLightboxPhoto] = useState<PoolPhoto | null>(null);
+    const [failedHeroPhotoUrl, setFailedHeroPhotoUrl] = useState<string | null>(null);
 
     if (isLoading || !nightStatus) {
         return (
@@ -292,8 +294,17 @@ export default function TableNightDetailScreen() {
         month: 'short',
     });
 
-    const heroPhotoUrl = nightStatus.restaurants?.photo_url ?? null;
     const restaurantName = nightStatus.restaurants?.name ?? 'Round';
+    const resolvedRestaurantPhoto = resolveSourcedPhoto({
+        url: nightStatus.restaurants?.photo_url,
+        photoSource: nightStatus.restaurants?.photo_source,
+        attributionHtml: nightStatus.restaurants?.places_photo_attribution_html,
+        restaurantName,
+    });
+    const heroPhotoUrl = resolvedRestaurantPhoto.url === failedHeroPhotoUrl
+        ? null
+        : resolvedRestaurantPhoto.url;
+    const heroPhotoCredit = heroPhotoUrl ? resolvedRestaurantPhoto.credit : null;
     const citySub = [
         nightStatus.restaurants?.city,
         (nightStatus.restaurants as { cuisine?: string | null } | null)?.cuisine,
@@ -347,12 +358,13 @@ export default function TableNightDetailScreen() {
 
                     {/* ── Hero photo w/ rating chip (WF6) ── */}
                     <Pressable onPress={goToRestaurant} disabled={!goToRestaurant}>
-                        <View style={styles.hero}>
+                        <View style={[styles.hero, heroPhotoCredit && styles.heroWithCredit]}>
                             {heroPhotoUrl ? (
                                 <Image
                                     source={{ uri: heroPhotoUrl }}
                                     style={StyleSheet.absoluteFillObject}
                                     resizeMode="cover"
+                                    onError={() => setFailedHeroPhotoUrl(heroPhotoUrl)}
                                 />
                             ) : (
                                 <View
@@ -410,6 +422,11 @@ export default function TableNightDetailScreen() {
                             </View>
                         </View>
                     </Pressable>
+                    <PlacesCredit
+                        credits={[heroPhotoCredit]}
+                        photoCount={1}
+                        style={styles.heroCredit}
+                    />
 
                     {/* Delta vs last table visit (subtle, directly under hero) */}
                     {overallAvg != null && previousGroupAvg != null && (
@@ -1066,6 +1083,13 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         backgroundColor: Colors.light.primary,
         position: 'relative',
+    },
+    heroWithCredit: {
+        marginBottom: 4,
+    },
+    heroCredit: {
+        marginHorizontal: 22,
+        marginBottom: 16,
     },
     heroScrim: {
         position: 'absolute',

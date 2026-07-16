@@ -30,6 +30,8 @@ function wishItem(
             city: overrides.city ?? 'New York',
             country: null,
             photo_url: overrides.photo_url ?? null,
+            photo_source: overrides.photo_source ?? null,
+            places_photo_attribution_html: overrides.places_photo_attribution_html ?? null,
             cuisine: overrides.cuisine ?? null,
             google_rating: null,
             price_level: null,
@@ -113,6 +115,8 @@ describe('selectNearbyPinned', () => {
             city: 'Soho',
             cuisine: 'Levantine',
             photo_url: 'https://p.example/1.jpg',
+            photo_source: 'places',
+            places_photo_attribution_html: '<a href="https://maps.example/donia">Donia</a>',
             external_id: 'place-123',
             lat: ORIGIN.latitude + 0.004, // ≈ 0.28 mi
         });
@@ -125,6 +129,8 @@ describe('selectNearbyPinned', () => {
             city: 'Soho',
             cuisine: 'Levantine',
             photoUrl: 'https://p.example/1.jpg',
+            photoSource: 'places',
+            photoAttributionHtml: '<a href="https://maps.example/donia">Donia</a>',
             tier: 'onNapkin',
         });
         expect(row.distanceLabel).toBe('0.3 mi');

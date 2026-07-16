@@ -48,6 +48,8 @@ interface ClaimedCity {
             name: string;
             city: string | null;
             photo_url: string | null;
+            photo_source: string | null;
+            places_photo_attribution_html: string | null;
         };
     }>;
 }
@@ -159,12 +161,19 @@ async function buildGetPayload(
 
     // Fetch restaurant rows for all pick restaurant_ids
     const restaurantIds = [...new Set((allPicks ?? []).map((p: { restaurant_id: string }) => p.restaurant_id))];
-    let restaurantMap: Map<string, { id: string; name: string; city: string | null; photo_url: string | null }> = new Map();
+    let restaurantMap: Map<string, {
+        id: string;
+        name: string;
+        city: string | null;
+        photo_url: string | null;
+        photo_source: string | null;
+        places_photo_attribution_html: string | null;
+    }> = new Map();
 
     if (restaurantIds.length > 0) {
         const { data: rests, error: restsErr } = await supabase
             .from('restaurants')
-            .select('id, name, city, photo_url')
+            .select('id, name, city, photo_url, photo_source, places_photo_attribution_html')
             .in('id', restaurantIds);
         if (restsErr) throw new Error(restsErr.message);
         for (const r of (rests ?? [])) {
@@ -398,7 +407,7 @@ serve(async (req) => {
                 // [ARCH-10] Return all — no cap.
                 const { data: cityRestaurants, error: cityRestErr } = await supabase
                     .from('restaurants')
-                    .select('id, name, photo_url, city')
+                    .select('id, name, photo_url, photo_source, places_photo_attribution_html, city')
                     .eq('city', city);
 
                 if (cityRestErr) {
@@ -445,7 +454,14 @@ serve(async (req) => {
                     }
                 }
 
-                const restMap = new Map(cityRestaurants.map((r: { id: string; name: string; photo_url: string | null; city: string | null }) => [r.id, r]));
+                const restMap = new Map(cityRestaurants.map((r: {
+                    id: string;
+                    name: string;
+                    photo_url: string | null;
+                    photo_source: string | null;
+                    places_photo_attribution_html: string | null;
+                    city: string | null;
+                }) => [r.id, r]));
 
                 const result = Array.from(aggMap.entries())
                     .map(([restaurant_id, agg]) => {
@@ -455,6 +471,8 @@ serve(async (req) => {
                             restaurant_id,
                             name: r.name,
                             photo_url: r.photo_url,
+                            photo_source: r.photo_source,
+                            places_photo_attribution_html: r.places_photo_attribution_html,
                             city: r.city,
                             last_logged_at: agg.last_logged_at,
                             best_rating: agg.best_rating,
@@ -501,12 +519,19 @@ serve(async (req) => {
                 const rids = Array.from(aggMap.keys());
                 const { data: rests, error: restErr } = await supabase
                     .from('restaurants')
-                    .select('id, name, photo_url, city')
+                    .select('id, name, photo_url, photo_source, places_photo_attribution_html, city')
                     .in('id', rids);
                 if (restErr) return errResponse('DB_ERROR', restErr.message, 500);
 
                 const restMap = new Map(
-                    (rests ?? []).map((r: { id: string; name: string; photo_url: string | null; city: string | null }) => [r.id, r]),
+                    (rests ?? []).map((r: {
+                        id: string;
+                        name: string;
+                        photo_url: string | null;
+                        photo_source: string | null;
+                        places_photo_attribution_html: string | null;
+                        city: string | null;
+                    }) => [r.id, r]),
                 );
                 const result = Array.from(aggMap.entries())
                     .map(([restaurant_id, agg]) => {
@@ -516,6 +541,8 @@ serve(async (req) => {
                             restaurant_id,
                             name: r.name,
                             photo_url: r.photo_url,
+                            photo_source: r.photo_source,
+                            places_photo_attribution_html: r.places_photo_attribution_html,
                             city: r.city,
                             last_logged_at: agg.last_logged_at,
                             best_rating: agg.best_rating,

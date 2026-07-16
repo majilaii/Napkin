@@ -59,6 +59,8 @@ import {
     filterListsByQuery,
 } from '@/components/search';
 import type { SearchMode } from '@/components/search';
+import { PlacesCredit } from '@/components/ui/PlacesCredit';
+import { deriveSearchPlacesCredits } from '@/components/search/searchPhotoPresentation';
 
 type Palette = typeof Colors.light;
 
@@ -227,6 +229,16 @@ export default function SearchScreen() {
         () => mergeUnified(results, debouncedQuery),
         [results, debouncedQuery],
     );
+    const [failedSearchPhotoKeys, setFailedSearchPhotoKeys] = useState<Set<string>>(
+        () => new Set(),
+    );
+    const handleSearchPhotoError = useCallback((failureKey: string) => {
+        setFailedSearchPhotoKeys((current) => new Set(current).add(failureKey));
+    }, []);
+    const placesCredit = useMemo(
+        () => deriveSearchPlacesCredits(mergedResults, failedSearchPhotoKeys),
+        [failedSearchPhotoKeys, mergedResults],
+    );
 
     const hasQuery = immediateQuery.trim().length > 0;
     const hasResults = mergedResults.length > 0;
@@ -303,9 +315,21 @@ export default function SearchScreen() {
             if (item._type === 'list') {
                 return <ListRow list={item.list} onPress={handleListPress} />;
             }
-            return <SearchResultRow item={item.row} onPress={handleResultPress} />;
+            return (
+                <SearchResultRow
+                    item={item.row}
+                    onPress={handleResultPress}
+                    failedPhotoKeys={failedSearchPhotoKeys}
+                    onPhotoError={handleSearchPhotoError}
+                />
+            );
         },
-        [handleResultPress, handleListPress],
+        [
+            failedSearchPhotoKeys,
+            handleListPress,
+            handleResultPress,
+            handleSearchPhotoError,
+        ],
     );
 
     return (
@@ -411,6 +435,15 @@ export default function SearchScreen() {
                             styles.listContent,
                             { paddingBottom: insets.bottom + Spacing.lg },
                         ]}
+                        ListHeaderComponent={placesCredit.credits.length > 0 ? (
+                            <View style={styles.placesCredit}>
+                                <PlacesCredit
+                                    credits={placesCredit.credits}
+                                    photoCount={placesCredit.photoCount}
+                                    testID="search-results-places-credit"
+                                />
+                            </View>
+                        ) : null}
                         ListEmptyComponent={
                             !isLoading ? (
                                 <View style={styles.centeredState}>
@@ -473,6 +506,11 @@ const styles = StyleSheet.create({
     },
     listContent: {
         flexGrow: 1,
+    },
+    placesCredit: {
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.xs,
+        paddingBottom: Spacing.xs,
     },
     errorBanner: {
         flexDirection: 'row',

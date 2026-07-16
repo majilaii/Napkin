@@ -25,8 +25,12 @@ export type ProfileQuickTake = {
     name: string;
     city: string | null;
     cuisine: string | null;
-    /** Public-safe Places photo only; the profile API returns null for every other source. */
+    /** Public-safe, attributed Places photo only; the profile API returns null otherwise. */
     photo_url: string | null;
+    /** Optional for stale profile payloads; ambiguous provenance fails closed. */
+    photo_source?: 'places' | null;
+    /** Optional for stale profile payloads; without it, the Places photo fails closed. */
+    places_photo_attribution_html?: string | null;
     note: string | null;
 };
 
