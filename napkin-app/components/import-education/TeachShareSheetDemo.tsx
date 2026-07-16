@@ -76,7 +76,9 @@ const NEARBY_RECIPIENTS = [
     { name: 'Family', icon: 'people-outline' as IconName, badge: '#2dcc62' },
 ] as const;
 
-const SAVED_PLACES = ['Lita', 'Donia', 'Berenjak'] as const;
+// Derived from the imports-beat copy so the approved rows always show the
+// same spots the user just reviewed - continuity is the point of this arc.
+const SAVED_PLACES = TEACH_COPY.importsNames.split(' · ');
 
 export function TeachShareSheetDemo({
     palette,
