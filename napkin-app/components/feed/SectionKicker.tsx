@@ -2,7 +2,7 @@
 import React from 'react';
 import { Text, StyleSheet } from 'react-native';
 
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export function SectionKicker({ children }: { children: React.ReactNode }) {
@@ -11,7 +11,7 @@ export function SectionKicker({ children }: { children: React.ReactNode }) {
 
     return (
         <Text
-            style={[styles.kicker, { color: palette.text }]}
+            style={[styles.kicker, { color: palette.secondary }]}
             accessibilityRole="header"
             maxFontSizeMultiplier={1.8}
         >
@@ -22,9 +22,9 @@ export function SectionKicker({ children }: { children: React.ReactNode }) {
 
 const styles = StyleSheet.create({
     kicker: {
-        ...Type.sectionTitle,
-        paddingHorizontal: Spacing.lg,
-        marginTop: 22,
-        marginBottom: 10,
+        ...Type.feedSectionKicker,
+        paddingHorizontal: 20,
+        marginTop: 26,
+        marginBottom: 12,
     },
 });

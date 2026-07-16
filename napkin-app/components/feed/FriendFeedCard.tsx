@@ -2,10 +2,10 @@
  * FriendFeedCard — TICKET-103 note-card / ledger-line router for the friends feed.
  *
  * The ONE routing rule (isNoteCard): an entry with prose or photos renders as a
- * white NOTE CARD (byline whispers · amber-cream rating chip · 21px italic
- * restaurant display line · em-dash pull-quote leads · photos below · engagement
- * as muted metadata). A bare rating collapses to a one-line LEDGER ROW (22px
- * avatar · name + lowercase verb + italic restaurant · amber numeral + ★ right).
+ * white NOTE CARD (34px avatar · one-line byline · upright restaurant with
+ * a bare amber rating · italic pull-quote · photos · quiet engagement).
+ * A bare rating collapses to a one-line LEDGER ROW (first name · amber numeral
+ * · upright restaurant · relative time).
  * No thresholds, no engagement scoring — the author's own effort decides how loud
  * their entry is.
  *
@@ -15,17 +15,15 @@
  * the plain owner view for own entries.
  */
 import React, { useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { Avatar } from './Avatar';
 import { isNoteCard } from './feedRouting';
-import { feedByline } from './feedDates';
 import type { FriendFeedRow } from '@/hooks/feed/useFriendsFeed';
 import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
@@ -114,7 +112,12 @@ function NoteCard({ row, onLongPress }: Props) {
     const restaurantName = row.restaurant?.name ?? 'somewhere';
     const hasContent = !!row.content && row.content.trim().length > 0;
     const photos = row.photos.slice(0, 3);
-    const time = feedByline(row.sort_date);
+    const likeLabel = row.reaction_count > 0
+        ? `${row.reaction_count} ${row.reaction_count === 1 ? 'like' : 'likes'}`
+        : 'like';
+    const replyLabel = row.comment_count > 0
+        ? `${row.comment_count} ${row.comment_count === 1 ? 'reply' : 'replies'}`
+        : null;
 
     return (
         <Pressable
@@ -122,44 +125,32 @@ function NoteCard({ row, onLongPress }: Props) {
             onLongPress={onLongPress}
             delayLongPress={350}
             style={({ pressed }) => [
-                {
-                    backgroundColor: palette.surfaceNote,
-                    borderRadius: Radius.xl,
-                    borderWidth: 1,
-                    borderColor: palette.dividerSoft,
-                    paddingHorizontal: 18,
-                    paddingTop: 18,
-                    paddingBottom: 16,
-                    opacity: pressed ? 0.9 : 1,
-                },
-                Shadow.note,
+                styles.noteCard,
+                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.9 : 1 },
+                Shadow.ambient,
             ]}
         >
-            {/* Byline: avatar · name + verb·time · rating chip */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Avatar name={row.author.display_name} url={row.author.avatar_url} size={32} palette={palette} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ fontFamily: 'Manrope_600SemiBold', fontSize: 13.5, color: palette.text }}>
-                        {row.author.display_name}
-                    </Text>
-                    <Text style={{ fontFamily: 'Manrope_400Regular', fontSize: 10.5, color: palette.textMuted, marginTop: 1 }}>
-                        {rating > 0 ? 'tried' : 'noted'} · {time}
-                    </Text>
-                </View>
-                {rating > 0 && <RatingChip rating={rating} palette={palette} />}
+            <View style={styles.byline}>
+                <Avatar name={row.author.display_name} url={row.author.avatar_url} size={34} palette={palette} />
+                <Text numberOfLines={1} style={[styles.bylineText, { color: palette.textMuted }]}>
+                    <Text style={[styles.bylineName, { color: palette.text }]}>{row.author.display_name}</Text>
+                    {' · noted'}
+                </Text>
             </View>
 
-            {/* Restaurant display line — the star of the card finally gets billing */}
-            <Text style={{ fontFamily: 'Newsreader_400Regular_Italic', fontSize: 21, lineHeight: 24, color: palette.text, marginTop: 12 }}>
-                {restaurantName}
-                {/* neighborhood trails when a value exists — none in the feed payload today */}
-            </Text>
+            <View style={styles.noteHead}>
+                <Text numberOfLines={1} style={[styles.restaurantName, { color: palette.text }]}>
+                    {restaurantName}
+                </Text>
+                {rating > 0 && (
+                    <Text style={[styles.noteRating, { color: palette.star }]}>{rating.toFixed(1)}</Text>
+                )}
+            </View>
 
-            {/* Words lead — em-dash pull-quote above the photos (Poster doctrine) */}
             {hasContent && (
                 <Text
                     numberOfLines={4}
-                    style={{ fontFamily: 'Newsreader_400Regular', fontSize: 15.5, lineHeight: 23, color: palette.text, marginTop: 8 }}
+                    style={[styles.quote, { color: palette.textSoft }]}
                 >
                     {'— '}
                     {row.content}
@@ -168,39 +159,24 @@ function NoteCard({ row, onLongPress }: Props) {
 
             {/* Photos follow */}
             {photos.length > 0 && (
-                <View style={{ marginTop: 12 }}>
+                <View style={[styles.photoBlock, !hasContent && styles.photoBlockWithoutQuote]}>
                     <PhotoGrid photos={photos} total={row.photos.length} />
                 </View>
             )}
 
-            {/* Engagement is metadata, not buttons — the whole card is the tap target */}
-            <View style={{ flexDirection: 'row', gap: 16, marginTop: 13, alignItems: 'center' }}>
+            <View style={[styles.noteFoot, !photos.length && styles.noteFootWithoutPhotos]}>
                 <Pressable
                     onPress={handleToggleLike}
-                    hitSlop={10}
+                    hitSlop={12}
                     accessibilityRole="button"
                     accessibilityLabel={liked ? 'Unlike' : 'Like'}
-                    style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 4, opacity: pressed ? 0.55 : 1 })}
+                    style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
                 >
-                    <Ionicons
-                        name={liked ? 'heart' : 'heart-outline'}
-                        size={13}
-                        color={liked ? palette.primary : palette.textMuted}
-                    />
-                    {row.reaction_count > 0 && (
-                        <Text style={{ fontSize: 10.5, color: palette.textMuted, fontFamily: 'Manrope_400Regular' }}>
-                            {row.reaction_count}
-                        </Text>
-                    )}
+                    <Text style={[styles.footText, { color: palette.textFaint }]}>{likeLabel}</Text>
                 </Pressable>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Ionicons name="chatbubble-outline" size={12} color={palette.textMuted} />
-                    <Text style={{ fontSize: 10.5, color: palette.textMuted, fontFamily: 'Manrope_400Regular' }}>
-                        {row.comment_count > 0
-                            ? `${row.comment_count} ${row.comment_count === 1 ? 'reply' : 'replies'}`
-                            : 'reply'}
-                    </Text>
-                </View>
+                {replyLabel && (
+                    <Text style={[styles.footText, { color: palette.textFaint }]}>{` · ${replyLabel}`}</Text>
+                )}
             </View>
         </Pressable>
     );
@@ -214,64 +190,36 @@ function LedgerRow({ row, onLongPress }: Props) {
     const { rating, onPress } = useRowNav(row);
 
     const restaurantName = row.restaurant?.name ?? 'somewhere';
+    const firstName = row.author.display_name.trim().split(/\s+/)[0] || row.author.display_name;
+    const time = relativeFeedTime(row.sort_date);
 
     return (
         <Pressable
             onPress={onPress}
             onLongPress={onLongPress}
             delayLongPress={350}
-            style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 9,
-                paddingHorizontal: 4,
-                opacity: pressed ? 0.7 : 1,
-            })}
+            style={({ pressed }) => [styles.ledgerRow, { opacity: pressed ? 0.7 : 1 }]}
         >
-            <Avatar name={row.author.display_name} url={row.author.avatar_url} size={22} palette={palette} />
-            <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: palette.textMuted, fontFamily: 'Manrope_400Regular' }}>
-                <Text style={{ fontFamily: 'Manrope_600SemiBold', color: palette.text }}>{row.author.display_name}</Text>
-                {rating > 0 ? ' tried ' : ' noted '}
-                <Text style={{ fontFamily: 'Newsreader_400Regular_Italic', fontSize: 14, color: palette.text }}>
-                    {restaurantName}
-                </Text>
-            </Text>
+            <Text numberOfLines={1} style={[styles.ledgerWho, { color: palette.text }]}>{firstName}</Text>
             {rating > 0 && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-                    <Text style={{ fontFamily: 'Newsreader_400Regular_Italic', fontSize: 14, color: palette.tertiary }}>
-                        {rating.toFixed(1)}
-                    </Text>
-                    <Text style={{ fontSize: 10, color: palette.star }}>★</Text>
-                </View>
+                <Text style={[styles.ledgerRating, { color: palette.star }]}>{rating.toFixed(1)}</Text>
             )}
+            <Text numberOfLines={1} style={[styles.ledgerRestaurant, { color: palette.text }]}>{restaurantName}</Text>
+            <Text style={[styles.ledgerTime, { color: palette.textFaint }]}>{time}</Text>
         </Pressable>
     );
 }
 
-// ── Rating chip — amber-cream fill, brand numeral (never grey stars) ────────────
+// ── Relative ledger stamp ───────────────────────────────────────────────────────────────
 
-function RatingChip({ rating, palette }: { rating: number; palette: typeof Colors.light }) {
-    return (
-        <View
-            style={{
-                marginLeft: 'auto',
-                backgroundColor: palette.tertiaryFixed,
-                borderRadius: Radius.full,
-                paddingHorizontal: 12,
-                paddingTop: 4,
-                paddingBottom: 5,
-                flexDirection: 'row',
-                alignItems: 'baseline',
-                gap: 3,
-                flexShrink: 0,
-            }}
-        >
-            <Text style={{ fontFamily: 'Newsreader_400Regular_Italic', fontSize: 15, color: palette.tertiary }}>
-                {rating.toFixed(1)}
-            </Text>
-            <Text style={{ fontSize: 9, color: palette.tertiary }}>★</Text>
-        </View>
-    );
+function relativeFeedTime(iso: string, now: Date = new Date()): string {
+    const then = new Date(iso);
+    const elapsedMs = Math.max(0, now.getTime() - then.getTime());
+    const elapsedMinutes = Math.floor(elapsedMs / 60_000);
+
+    if (elapsedMinutes < 60) return `${Math.max(1, elapsedMinutes)}m`;
+    if (elapsedMinutes < 1_440) return `${Math.floor(elapsedMinutes / 60)}h`;
+    return then.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
 }
 
 // ── Photo grid — restyled to Radius.md corners, sits after the quote block ──────
@@ -298,12 +246,12 @@ function PhotoGrid({ photos, total }: { photos: string[]; total: number }) {
 
     if (photos.length === 2) {
         return (
-            <View style={{ flexDirection: 'row', gap: 6 }}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
                 {photos.map((p, i) => (
                     <Image
                         key={i}
                         source={{ uri: p }}
-                        style={{ flex: 1, aspectRatio: 1, borderRadius: Radius.md }}
+                        style={{ flex: 1, height: 110, borderRadius: Radius.md }}
                         contentFit="cover"
                         transition={200}
                     />
@@ -351,7 +299,7 @@ function PhotoGrid({ photos, total }: { photos: string[]; total: number }) {
                         >
                             <Text
                                 style={{
-                                    fontFamily: 'Newsreader_400Regular_Italic',
+                                    fontFamily: 'Manrope_600SemiBold',
                                     fontSize: 16,
                                     color: palette.textOnImage,
                                 }}
@@ -365,3 +313,107 @@ function PhotoGrid({ photos, total }: { photos: string[]; total: number }) {
         </View>
     );
 }
+
+const styles = StyleSheet.create({
+    noteCard: {
+        borderRadius: 18,
+        paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 13,
+    },
+    byline: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: 10,
+    },
+    bylineText: {
+        flex: 1,
+        minWidth: 0,
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 13,
+        lineHeight: 19,
+    },
+    bylineName: {
+        fontFamily: 'Manrope_700Bold',
+    },
+    noteHead: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        gap: 12,
+        marginBottom: 6,
+    },
+    restaurantName: {
+        flex: 1,
+        minWidth: 0,
+        fontFamily: 'Newsreader_500Medium',
+        fontSize: 19,
+        lineHeight: 23,
+    },
+    noteRating: {
+        flexShrink: 0,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 19,
+        lineHeight: 23,
+        fontVariant: ['tabular-nums'],
+    },
+    quote: {
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 16,
+        lineHeight: 23,
+        marginTop: 2,
+    },
+    photoBlock: {
+        marginTop: 12,
+        marginBottom: 11,
+    },
+    photoBlockWithoutQuote: {
+        marginTop: 2,
+    },
+    noteFoot: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    noteFootWithoutPhotos: {
+        marginTop: 10,
+    },
+    footText: {
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 13,
+        lineHeight: 19,
+    },
+    ledgerRow: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 8,
+        paddingHorizontal: 2,
+        paddingVertical: 4,
+    },
+    ledgerWho: {
+        flexShrink: 0,
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+        lineHeight: 19,
+    },
+    ledgerRating: {
+        flexShrink: 0,
+        fontFamily: 'Newsreader_400Regular_Italic',
+        fontSize: 15,
+        lineHeight: 19,
+        fontVariant: ['tabular-nums'],
+    },
+    ledgerRestaurant: {
+        flex: 1,
+        minWidth: 0,
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 15,
+        lineHeight: 19,
+    },
+    ledgerTime: {
+        flexShrink: 0,
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 13,
+        lineHeight: 19,
+    },
+});

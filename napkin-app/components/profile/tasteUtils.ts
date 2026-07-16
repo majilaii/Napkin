@@ -21,6 +21,7 @@ export const JUNK_VENUE_TYPES = new Set([
     'resort hotel',
     'meal takeaway',
     'meal delivery',
+    'association or organization',
     'point of interest',
     'establishment',
     'store',

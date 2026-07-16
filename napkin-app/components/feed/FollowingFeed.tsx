@@ -35,9 +35,8 @@ type FeedListItem =
 
 /**
  * Interleave a date-section header before the first row of each day boundary.
- * Consecutive ledger rows stack tight (13px — they're the mortar); everything
- * else gets 16px. The header carries its own top margin, so trailing spacing
- * is harmless below a section break.
+ * Note cards and ledger rows carry the mock's 14px and 12px rhythm. The header
+ * carries its own top margin, so trailing spacing is harmless below a boundary.
  */
 function buildFeedList(rows: FriendFeedRow[]): FeedListItem[] {
     const items: FeedListItem[] = [];
@@ -51,18 +50,11 @@ function buildFeedList(rows: FriendFeedRow[]): FeedListItem[] {
             items.push({ _type: 'header', key: `header-${row.id}`, label });
             lastLabel = label;
         }
-        // Tight 13px gap only between two adjacent ledger rows on the same day.
-        const next = rows[i + 1];
-        const bothLedger =
-            !!next &&
-            !isNoteCard(row) &&
-            !isNoteCard(next) &&
-            feedSectionLabel(next.sort_date) === label;
         items.push({
             _type: 'row',
             key: `row-${row.id}`,
             row,
-            marginBottom: bothLedger ? 13 : 16,
+            marginBottom: isNoteCard(row) ? 14 : 12,
         });
     }
     return items;
@@ -106,7 +98,7 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
         ({ item }: { item: FeedListItem }) => {
             if (item._type === 'header') {
                 return (
-                    <Text style={[styles.dateHeader, { color: palette.textMuted }]}>{item.label}</Text>
+                    <Text style={[styles.dateHeader, { color: palette.textFaint }]}>{item.label}</Text>
                 );
             }
             return (
@@ -160,14 +152,15 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
 const styles = StyleSheet.create({
     dateHeader: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.8,
+        fontSize: 11,
+        lineHeight: 15,
+        letterSpacing: 1.54,
         textTransform: 'uppercase',
-        paddingHorizontal: Spacing.lg,
-        marginTop: 22,
-        marginBottom: 12,
+        paddingHorizontal: 20,
+        marginTop: 24,
+        marginBottom: 10,
     },
     rowSlot: {
-        paddingHorizontal: Spacing.lg,
+        paddingHorizontal: 20,
     },
 });

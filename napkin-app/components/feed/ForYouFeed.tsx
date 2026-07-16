@@ -6,10 +6,10 @@
  * of community-scoped modules —
  *
  *   1. on socials    — most-saved-from-TikTok/IG clips (flag FOR_YOU_SOCIALS)
- *   2. public lists  — image-led cards for authored collections (viewer's own
- *                      excluded server-side)
- *   3. people        — co-diners (+ recently-active publics behind
+ *   2. people        — co-diners (+ recently-active publics behind
  *                      FOR_YOU_PEOPLE_V2), avatar rail with follow
+ *   3. public lists  — image-led cards for authored collections (viewer's own
+ *                      excluded server-side)
  *
  * Trending is gone from the stack (§5 — merged into socials; the
  * feed-trending backend stays intact for future staged modules).
@@ -143,7 +143,6 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
             data={blocks}
             keyExtractor={(item) => item._type}
             renderItem={renderItem}
-            ItemSeparatorComponent={BlockSeparator}
             ListHeaderComponent={ListHeaderComponent}
             ListEmptyComponent={
                 // Zero visible modules — branch the whole-surface state (§6).
@@ -156,13 +155,9 @@ export function ForYouFeed({ ListHeaderComponent }: Props) {
                 )
             }
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingTop: Spacing.md, paddingBottom: insets.bottom + 100 }}
+            contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
         />
     );
-}
-
-function BlockSeparator() {
-    return <View style={styles.separator} />;
 }
 
 /**
@@ -232,9 +227,6 @@ function ForYouEmpty() {
 }
 
 const styles = StyleSheet.create({
-    separator: {
-        height: 34,
-    },
     emptyWrap: {
         alignItems: 'center',
         paddingHorizontal: Spacing.lg,

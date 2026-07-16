@@ -1,6 +1,6 @@
 /**
  * DateSectionHeader — sticky section header for the feed SectionList.
- * Newsreader italic, textMuted, 1px divider bottom border.
+ * Manrope uppercase, textMuted, ghosted divider.
  */
 
 import React from 'react';
@@ -47,9 +47,11 @@ const styles = StyleSheet.create({
         paddingBottom: Spacing.xs,
     },
     label: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 13,
-        lineHeight: 18,
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 11,
+        lineHeight: 15,
+        letterSpacing: 1.54,
+        textTransform: 'uppercase',
         marginBottom: Spacing.xs,
     },
     rule: {

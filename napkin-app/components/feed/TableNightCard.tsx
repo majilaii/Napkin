@@ -6,7 +6,7 @@
  *   [Receipt whisper — merged rounds only, above the card (TICKET-044)]
  *   [Photo 200px with dark "Round · {date}" pill top-left + unseen dot top-right]
  *   [Content 14/16:
- *     Row: Name (italic serif 28pt) + sub (11pt muted)   Rating (24pt amber italic) + "N / N VOICES"
+ *     Row: Name (upright serif 28pt) + sub (11pt muted)  Rating (24pt amber italic) + "N / N VOICES"
  *     FeedActionRow (after reveal; always shown for merged rounds)
  *   ]
  *
@@ -49,7 +49,7 @@ interface Props {
      * TICKET-044: receipt whisper text for merged rounds.
      * e.g. "you and Clara's entries became a round."
      *      "Thomas and Clara's entries became a round."
-     * Rendered directly above the card in italic Newsreader.
+     * Rendered directly above the card in quiet functional type.
      * Supply from the parent feed renderer — computed once per ActivityItem.
      * Permanent label, not a dismissible toast.
      */
@@ -80,7 +80,7 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
     return (
         <View>
             {/* TICKET-044: Receipt whisper — permanent label for merged rounds.
-                "became a round." — lowercase past-tense, italic Newsreader, no emoji.
+                "became a round." — lowercase past-tense, quiet Manrope, no emoji.
                 Data, not a toast: renders every time the card renders.
                 Only shown when isMerged and receiptWhisper is set by the parent. */}
             {isMerged && !!receiptWhisper && (
@@ -226,7 +226,7 @@ export function TableNightCard({ item, palette, tableId, lastSeenAt, chips = [],
 
 const styles = StyleSheet.create({
     receiptWhisper: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Manrope_500Medium',
         fontSize: 13,
         lineHeight: 18,
         letterSpacing: -0.1,
@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
         minWidth: 0,
     },
     name: {
-        fontFamily: 'Newsreader_400Regular_Italic',
+        fontFamily: 'Newsreader_500Medium',
         fontSize: 28,
         fontWeight: '500',
         lineHeight: 32,

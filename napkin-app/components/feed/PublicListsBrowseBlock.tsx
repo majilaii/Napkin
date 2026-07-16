@@ -20,10 +20,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     PlacesCredit,
@@ -58,21 +57,15 @@ function resolveCover(list: PublicListResult) {
     });
 }
 
-function imageOutline(scheme: 'light' | 'dark') {
-    return scheme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
-}
-
 function ListFeature({
     list,
     palette,
-    scheme,
     onPress,
     cover,
     onCoverError,
 }: {
     list: PublicListResult;
     palette: Palette;
-    scheme: 'light' | 'dark';
     onPress: (list: PublicListResult) => void;
     cover: ResolvedSourcedPhoto;
     onCoverError: () => void;
@@ -82,16 +75,24 @@ function ListFeature({
     return (
         <PressableScale
             onPress={() => onPress(list)}
-            style={styles.featurePressable}
+            style={[
+                styles.featurePressable,
+                { backgroundColor: chipTint(list.id, palette) },
+                Shadow.ambient,
+            ]}
             haptic="light"
             accessibilityRole="button"
             accessibilityLabel={`Open ${list.title}`}
+            testID="public-list-feature"
         >
             <View
                 style={[
                     styles.featureClip,
                     { backgroundColor: chipTint(list.id, palette) },
-                    hasCover && { borderWidth: StyleSheet.hairlineWidth, borderColor: imageOutline(scheme) },
+                    hasCover && {
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: palette.imageOutline,
+                    },
                 ]}
             >
                 {hasCover && (
@@ -111,23 +112,22 @@ function ListFeature({
                     />
                 )}
                 <View style={styles.featureCopy}>
-                    <Text style={[styles.featureMeta, { color: hasCover ? palette.textOnImage : palette.textMuted }]}>
-                        {spotLabel(list)} · {authorName(list)}
-                    </Text>
                     <Text
                         style={[styles.featureTitle, { color: hasCover ? palette.textOnImage : palette.text }]}
                         numberOfLines={2}
+                        testID="public-list-title"
                     >
                         {list.title}
                     </Text>
-                    {!!list.description && (
-                        <Text
-                            style={[styles.featureDescription, { color: hasCover ? palette.textOnImage : palette.textSecondary }]}
-                            numberOfLines={2}
-                        >
-                            — {list.description}
-                        </Text>
-                    )}
+                    <Text
+                        style={[
+                            styles.featureMeta,
+                            { color: hasCover ? palette.textOnImage : palette.textMuted },
+                        ]}
+                        numberOfLines={1}
+                    >
+                        {spotLabel(list)} · by {authorName(list)}
+                    </Text>
                 </View>
             </View>
         </PressableScale>
@@ -137,14 +137,12 @@ function ListFeature({
 function ListRailCard({
     list,
     palette,
-    scheme,
     onPress,
     cover,
     onCoverError,
 }: {
     list: PublicListResult;
     palette: Palette;
-    scheme: 'light' | 'dark';
     onPress: (list: PublicListResult) => void;
     cover: ResolvedSourcedPhoto;
     onCoverError: () => void;
@@ -154,37 +152,47 @@ function ListRailCard({
     return (
         <PressableScale
             onPress={() => onPress(list)}
-            style={[styles.railCard, { backgroundColor: palette.card }, Shadow.note]}
+            style={[styles.railCard, { backgroundColor: palette.card }, Shadow.ambient]}
             haptic="light"
             accessibilityRole="button"
             accessibilityLabel={`Open ${list.title}`}
+            testID="public-list-rail-card"
         >
-            <View
-                style={[
-                    styles.railImage,
-                    { backgroundColor: chipTint(list.id, palette) },
-                    hasCover && { borderWidth: StyleSheet.hairlineWidth, borderColor: imageOutline(scheme) },
-                ]}
-            >
-                {hasCover ? (
-                    <Image
-                        source={{ uri: cover.url! }}
-                        style={StyleSheet.absoluteFillObject}
-                        contentFit="cover"
-                        transition={180}
-                        onError={onCoverError}
-                    />
-                ) : list.emoji ? (
-                    <Text style={styles.emoji}>{list.emoji}</Text>
-                ) : null}
-            </View>
-            <View style={styles.railCopy}>
-                <Text style={[styles.railTitle, { color: palette.text }]} numberOfLines={2}>
-                    {list.title}
-                </Text>
-                <Text style={[styles.railMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                    {spotLabel(list)} · {authorName(list)}
-                </Text>
+            <View style={[styles.railCardSurface, { backgroundColor: palette.card }]}>
+                <View
+                    style={[
+                        styles.railImage,
+                        { backgroundColor: chipTint(list.id, palette) },
+                        hasCover && {
+                            borderWidth: StyleSheet.hairlineWidth,
+                            borderColor: palette.imageOutline,
+                        },
+                    ]}
+                >
+                    {hasCover ? (
+                        <Image
+                            source={{ uri: cover.url! }}
+                            style={StyleSheet.absoluteFillObject}
+                            contentFit="cover"
+                            transition={180}
+                            onError={onCoverError}
+                        />
+                    ) : list.emoji ? (
+                        <Text style={styles.emoji}>{list.emoji}</Text>
+                    ) : null}
+                </View>
+                <View style={styles.railCopy}>
+                    <Text
+                        style={[styles.railTitle, { color: palette.text }]}
+                        numberOfLines={2}
+                        testID="public-list-title"
+                    >
+                        {list.title}
+                    </Text>
+                    <Text style={[styles.railMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                        {spotLabel(list)} · by {authorName(list)}
+                    </Text>
+                </View>
             </View>
         </PressableScale>
     );
@@ -232,7 +240,6 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
                 <ListFeature
                     list={showcase}
                     palette={palette}
-                    scheme={scheme}
                     onPress={handlePress}
                     cover={coversById.get(showcase.id)!}
                     onCoverError={() => {
@@ -252,7 +259,6 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
                             key={list.id}
                             list={list}
                             palette={palette}
-                            scheme={scheme}
                             onPress={handlePress}
                             cover={coversById.get(list.id)!}
                             onCoverError={() => {
@@ -277,7 +283,6 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
                 accessibilityLabel="Browse all public lists"
             >
                 <Text style={[styles.browseAllText, { color: palette.primary }]}>browse all lists</Text>
-                <Ionicons name="arrow-forward" size={16} color={palette.primary} />
             </PressableScale>
         </View>
     );
@@ -285,57 +290,58 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
 
 const styles = StyleSheet.create({
     featurePressable: {
-        marginHorizontal: Spacing.lg,
-        borderRadius: Radius.xxl,
+        height: 200,
+        marginHorizontal: 20,
+        borderRadius: 18,
     },
     featureClip: {
-        height: 282,
+        height: 200,
         overflow: 'hidden',
-        borderRadius: Radius.xxl,
-        padding: Spacing.md,
+        borderRadius: 18,
+        paddingHorizontal: 18,
+        paddingVertical: 16,
     },
     featureCopy: {
         flex: 1,
         justifyContent: 'flex-end',
     },
     featureMeta: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 10,
-        lineHeight: 14,
-        marginBottom: 6,
+        fontFamily: 'Manrope_400Regular',
+        fontSize: 13,
+        lineHeight: 18,
+        marginTop: 3,
     },
     featureTitle: {
-        fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 29,
-        lineHeight: 32,
-    },
-    featureDescription: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 14,
-        lineHeight: 19,
-        marginTop: 7,
+        fontFamily: 'Newsreader_500Medium',
+        fontSize: 21,
+        fontWeight: '500',
+        lineHeight: 25,
     },
     aggregateCredit: {
-        marginHorizontal: Spacing.lg,
+        marginHorizontal: 20,
         marginTop: 6,
     },
     railContent: {
-        paddingHorizontal: Spacing.lg,
+        paddingHorizontal: 20,
         gap: 12,
     },
     railAfterFeature: {
         paddingTop: 12,
     },
     railCard: {
-        width: 186,
-        minHeight: 224,
-        borderRadius: Radius.xl,
-        padding: 6,
+        width: 172,
+        height: 165,
+        borderRadius: 16,
+    },
+    railCardSurface: {
+        width: 172,
+        height: 165,
+        borderRadius: 16,
+        overflow: 'hidden',
     },
     railImage: {
-        height: 122,
+        height: 84,
         overflow: 'hidden',
-        borderRadius: Radius.lg,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -343,33 +349,35 @@ const styles = StyleSheet.create({
         fontSize: 30,
     },
     railCopy: {
-        paddingHorizontal: 6,
-        paddingTop: 9,
-        paddingBottom: 4,
+        paddingHorizontal: 12,
+        paddingTop: 10,
+        paddingBottom: 12,
     },
     railTitle: {
-        fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 17,
-        lineHeight: 21,
+        fontFamily: 'Newsreader_500Medium',
+        fontSize: 15,
+        fontWeight: '500',
+        lineHeight: 19,
+        height: 38,
     },
     railMeta: {
         fontFamily: 'Manrope_400Regular',
-        fontSize: 9.5,
-        lineHeight: 14,
-        marginTop: 5,
+        fontSize: 13,
+        lineHeight: 18,
+        marginTop: 3,
     },
     browseAll: {
-        alignSelf: 'flex-start',
+        alignSelf: 'stretch',
         minHeight: 44,
-        flexDirection: 'row',
         alignItems: 'center',
-        gap: 5,
-        marginLeft: Spacing.lg,
-        marginTop: 5,
-        paddingRight: Spacing.sm,
+        justifyContent: 'center',
+        marginTop: 4,
     },
     browseAllText: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
+        fontFamily: 'Manrope_700Bold',
+        fontSize: 13,
+        fontWeight: '700',
+        lineHeight: 18,
+        letterSpacing: 0.26,
     },
 });

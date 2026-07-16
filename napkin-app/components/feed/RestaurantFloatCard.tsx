@@ -8,7 +8,7 @@
  * Only shown to Table members; privacy bound enforced server-side (fn_compute_table_float).
  * Shows count AND avatars of the members who saved it (H3 resolution).
  *
- * Heirloom Journal: lowercase, italic restaurant name, terracotta CTA, no emoji in chrome.
+ * Heirloom Journal: lowercase, upright restaurant name, terracotta CTA, no emoji in chrome.
  */
 import React, { useCallback } from 'react';
 import {
@@ -113,7 +113,7 @@ export function RestaurantFloatCard({
                 <View style={[styles.headerText, { marginLeft: visibleMembers.length * 16 + 8 }]}>
                     <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
                         {headerText}
-                        <Text style={[Type.headlineItalic, { fontSize: 13, color: palette.text }]}>
+                        <Text style={[styles.restaurantName, { color: palette.text }]}>
                             {restaurant.name ?? 'a restaurant'}
                         </Text>
                     </Text>
@@ -184,6 +184,12 @@ const styles = StyleSheet.create({
     },
     headerText: {
         flex: 1,
+    },
+    restaurantName: {
+        fontFamily: 'Newsreader_500Medium',
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: '500',
     },
     dismissButton: {
         padding: Spacing.xs,

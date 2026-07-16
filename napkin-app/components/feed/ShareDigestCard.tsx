@@ -299,10 +299,11 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     rowName: {
-        ...Type.headlineItalic,
+        fontFamily: 'Newsreader_500Medium',
+        fontWeight: '500',
         fontSize: 16,
         lineHeight: 21,
-    } as any,
+    },
     rowReply: {
         flexDirection: 'row',
         alignItems: 'center',

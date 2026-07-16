@@ -32,15 +32,22 @@ export const Colors = {
     // Text
     text: '#1c1c19',                 // on-surface (never pure black)
     textSecondary: '#5c614d',        // olive secondary
+    textSoft: '#55534b',             // editorial supporting copy (feed mock --ink-soft)
     // Warm taupe metadata. Dark enough to clear 4.5:1 on every paper layer and
     // Top-4 plate tint used by normal-size text in light mode.
     textMuted: '#765e58',
+    textFaint: '#98917f',            // datelines + quiet ledger metadata
     textInverse: '#ffffff',
 
     // Brand — terracotta family
     primary: '#a03f28',              // terracotta
     primaryContainer: '#c0573e',     // lighter terracotta
     primaryMuted: 'rgba(160, 63, 40, 0.08)',
+    // Compact map-caption actions. These are deliberately separate from
+    // primaryMuted: the founder-approved peek uses a precise 9% CTA wash and a
+    // quieter 6% selected-heart wash without changing other surfaces.
+    mapPeekPrimaryWash: 'rgba(160, 63, 40, 0.09)',
+    mapPeekSavedWash: 'rgba(160, 63, 40, 0.06)',
     terracottaWarm: '#c0573e',       // --terracotta-warm
     terracottaDeep: '#7c2d12',       // --terracotta-deep
     terracottaInk: '#9a3412',        // --terracotta-ink (nib-stroke)
@@ -97,6 +104,7 @@ export const Colors = {
     outline: '#8a726c',
     outlineVariant: '#ddc0ba',
     divider: 'rgba(221, 192, 186, 0.15)', // warm rule (pale rose)
+    ghostRule: 'rgba(28, 28, 25, 0.09)',  // feed masthead/tail rule
     dividerSoft: 'rgba(221, 192, 186, 0.30)', // softer variant (feed row dividers)
     imageOutline: 'rgba(0, 0, 0, 0.10)', // neutral inset edge on photography
     ruleWarmNib: 'rgba(221, 192, 186, 1)',  // full pale-rose rule
@@ -131,12 +139,16 @@ export const Colors = {
 
     text: '#f3f0eb',
     textSecondary: '#c4c9b1',
+    textSoft: '#d0cbc1',
     textMuted: '#a09888',
+    textFaint: '#8e8779',
     textInverse: '#1a1816',
 
     primary: '#ffb4a3',
     primaryContainer: '#812914',
     primaryMuted: 'rgba(255, 180, 163, 0.12)',
+    mapPeekPrimaryWash: 'rgba(255, 180, 163, 0.12)',
+    mapPeekSavedWash: 'rgba(255, 180, 163, 0.09)',
     terracottaWarm: '#d4766a',
     terracottaDeep: '#ff7a5a',
     terracottaInk: '#ff967d',
@@ -184,6 +196,7 @@ export const Colors = {
     outline: '#a09888',
     outlineVariant: '#56423d',
     divider: 'rgba(86, 66, 61, 0.3)',
+    ghostRule: 'rgba(243, 240, 235, 0.09)',
     dividerSoft: 'rgba(86, 66, 61, 0.45)',
     imageOutline: 'rgba(255, 255, 255, 0.10)', // neutral inset edge on photography
     ruleWarmNib: 'rgba(86, 66, 61, 1)',
@@ -334,6 +347,14 @@ export const Type = {
     letterSpacing: -0.2,
     lineHeight: 26,
   } as TextStyle,
+  /** Founder-approved compact map-caption restaurant name. */
+  mapPeekName: {
+    fontSize: 21,
+    fontWeight: '600' as const,
+    fontFamily: 'Newsreader_600SemiBold',
+    letterSpacing: -0.28,
+    lineHeight: 24,
+  } as TextStyle,
   editorialBody: {
     fontSize: 17,
     fontWeight: '400' as const,
@@ -366,11 +387,47 @@ export const Type = {
     lineHeight: 15,
     textTransform: 'uppercase' as const,
   } as TextStyle,
+  feedSectionKicker: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1.54,
+    lineHeight: 15,
+    textTransform: 'uppercase' as const,
+  } as TextStyle,
+  dateline: {
+    fontSize: 11,
+    fontWeight: '400' as const,
+    fontFamily: 'Manrope_400Regular',
+    letterSpacing: 1.54,
+    lineHeight: 15,
+    textTransform: 'uppercase' as const,
+  } as TextStyle,
   metadata: {
     fontSize: 13,
     fontWeight: '500' as const,
     fontFamily: 'Manrope_500Medium',
     lineHeight: 19,
+  } as TextStyle,
+  /** Compact map-caption metadata and relationship line. */
+  mapPeekMeta: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    fontFamily: 'Manrope_600SemiBold',
+    lineHeight: 18,
+  } as TextStyle,
+  mapPeekDetailStrong: {
+    fontSize: 13,
+    fontWeight: '800' as const,
+    fontFamily: 'Manrope_800ExtraBold',
+    lineHeight: 18,
+  } as TextStyle,
+  mapPeekAction: {
+    fontSize: 13,
+    fontWeight: '800' as const,
+    fontFamily: 'Manrope_800ExtraBold',
+    lineHeight: 18,
+    letterSpacing: 0.05,
   } as TextStyle,
 
   // Titles — Manrope for functional
@@ -386,6 +443,13 @@ export const Type = {
     fontWeight: '700' as const,
     fontFamily: 'Manrope_700Bold',
     letterSpacing: -0.3,
+  } as TextStyle,
+  feedTitle: {
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: -0.26,
   } as TextStyle,
   titleLarge: {
     fontSize: 19,
