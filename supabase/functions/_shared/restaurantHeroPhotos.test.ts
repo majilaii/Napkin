@@ -10,7 +10,7 @@
  *   - weighted SKU budget fail-closed: denied OR rpc-error → zero Google calls
  *   - photoless attestation → terminal photo_source='none' under null guards
  *   - transient Details failure (404/500/network) → NO write (NULL, retryable)
- *   - success → exact frozen Pro mask, attestation + media single-flight claims,
+ *   - success → exact frozen Enterprise mask, attestation + media single-flight claims,
  *     weighted Details/photo debits, reference-derived Storage key, exact-URL CAS
  *   - input ids deduplicated → one attestation claim per distinct row
  *   - buildPhotoAttributionHtml synthesis + escaping (places-search contract)
@@ -581,7 +581,7 @@ Deno.test("acquireAndMirrorHeroPhotos (TICKET-187)", async (t) => {
   );
 
   await t.step(
-    "success → frozen Pro mask, weighted claims/debits, sha1 key, exact-URL CAS",
+    "success → frozen Enterprise mask, weighted claims/debits, sha1 key, exact-URL CAS",
     async () => {
       const externalId = "ChIJ-success";
       const photoName = "places/ChIJ-success/photos/photoref-XYZ";
@@ -626,8 +626,8 @@ Deno.test("acquireAndMirrorHeroPhotos (TICKET-187)", async (t) => {
       );
       assertEquals(
         detailsCall.fieldMask,
-        "displayName,location,addressComponents,formattedAddress,photos.name,photos.authorAttributions",
-        "all callers share the frozen minimal Details Pro projection",
+        "displayName,location,addressComponents,formattedAddress,photos.name,photos.authorAttributions,rating,userRatingCount,priceLevel,types,primaryType,websiteUri,googleMapsUri,nationalPhoneNumber,regularOpeningHours",
+        "all callers share the frozen Enterprise Details projection",
       );
 
       const charges = rpcs(calls, "fn_charge_sku_budget");

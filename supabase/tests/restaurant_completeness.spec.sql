@@ -424,12 +424,14 @@ begin
     ), 'FAIL: rejected attestation consumed its live cache lease';
     assert public.fn_commit_place_attestation(
         'ChIJ195Cache','19500000-1000-4000-8000-000000000001',
-        '{"display_name":"Cache Cafe","formatted_address":"1 Test St","address_components":[{"longText":"London","types":["locality"]}],"lat":51.51,"lng":-0.11,"photo_reference":"places/ChIJ195Cache/photos/a","photo_attribution_html":"<a>Author</a>"}'::jsonb
+        '{"display_name":"Cache Cafe","formatted_address":"1 Test St","address_components":[{"longText":"London","types":["locality"]}],"lat":51.51,"lng":-0.11,"photo_reference":"places/ChIJ195Cache/photos/a","photo_attribution_html":"<a>Author</a>","google_rating":4.6,"google_rating_count":287,"price_level":2,"types":["restaurant","georgian_restaurant"],"primary_type":"georgian_restaurant","website":"https://cache-cafe.example","phone":"+44 20 7946 0958","google_maps_uri":"https://maps.google.test/cache-cafe","opening_hours":{"weekdayDescriptions":["Monday: 12:00 PM – 10:00 PM"]}}'::jsonb
     ), 'FAIL: attestation commit lost its live claim';
     select * into v_claim from public.fn_claim_place_attestation(
         'ChIJ195Cache','19500000-1000-4000-8000-000000000002',120
     );
     assert v_claim.outcome = 'hit', 'FAIL: fresh 24h attestation was not reused';
+    assert v_claim.projection @> '{"google_rating":4.6,"google_rating_count":287,"price_level":2,"types":["restaurant","georgian_restaurant"],"primary_type":"georgian_restaurant","website":"https://cache-cafe.example","phone":"+44 20 7946 0958","google_maps_uri":"https://maps.google.test/cache-cafe","opening_hours":{"weekdayDescriptions":["Monday: 12:00 PM – 10:00 PM"]}}'::jsonb,
+        'FAIL: attestation metadata did not round-trip through the 24h cache';
 
     insert into public.import_resolutions(
         user_id,import_nonce,candidate_evidence,decision,matched_external_id,scores
@@ -1138,10 +1140,45 @@ begin
     end;
     assert v_failed, 'FAIL: projection place_id escaped the leased resolution binding';
 
+    perform public.fn_apply_restaurant_attestation(
+        v_claim.id,v_claim.lease_token,v_restaurant_id,v_version,
+        '{"place_id":"ChIJ195KnownRetry","display_name":"Known Retry","formatted_address":"1 Retry Road","address_components":[{"longText":"London","types":["locality"]}],"lat":51.51,"lng":-0.11,"google_rating":4.6,"google_rating_count":287,"price_level":2,"types":["restaurant","georgian_restaurant"],"primary_type":"georgian_restaurant","website":"https://known-retry.example","phone":"+44 20 7946 0958","google_maps_uri":"https://maps.google.test/known-retry","opening_hours":{"weekdayDescriptions":["Monday: 12:00 PM – 10:00 PM"]}}'::jsonb
+    );
+    assert (
+        select google_rating = 4.6 and google_rating_count = 287
+           and price_level = 2
+           and place_types = array['restaurant','georgian_restaurant']::text[]
+           and cuisine = 'Georgian'
+           and website = 'https://known-retry.example'
+           and phone = '+44 20 7946 0958'
+           and google_maps_uri = 'https://maps.google.test/known-retry'
+           and hours = '{"weekdayDescriptions":["Monday: 12:00 PM – 10:00 PM"]}'::jsonb
+           and places_synced_at is not null
+        from public.restaurants where id = v_restaurant_id
+    ), 'FAIL: worker attestation did not persist Places product metadata';
+
+    select completeness_version into v_version
+    from public.restaurants where id = v_restaurant_id;
+    perform public.fn_apply_restaurant_attestation(
+        v_claim.id,v_claim.lease_token,v_restaurant_id,v_version,
+        '{"place_id":"ChIJ195KnownRetry","display_name":"Known Retry","address_components":[],"lat":51.51,"lng":-0.11}'::jsonb
+    );
+    assert (
+        select google_rating = 4.6 and google_rating_count = 287
+           and price_level = 2
+           and place_types = array['restaurant','georgian_restaurant']::text[]
+           and cuisine = 'Georgian'
+           and website = 'https://known-retry.example'
+           and phone = '+44 20 7946 0958'
+           and google_maps_uri = 'https://maps.google.test/known-retry'
+           and hours = '{"weekdayDescriptions":["Monday: 12:00 PM – 10:00 PM"]}'::jsonb
+        from public.restaurants where id = v_restaurant_id
+    ), 'FAIL: sparse worker attestation clobbered existing Places metadata';
+
     -- Simulate a manual repair winning after canonicalization. Pass the new
     -- version deliberately so this proves identity binding, not only CAS.
     update public.restaurants
-    set external_id = 'ChIJ195RepairWon'
+    set external_id = 'ChIJ195RepairWon', lat = null, lng = null
     where id = v_restaurant_id;
     select completeness_version into v_version
     from public.restaurants where id = v_restaurant_id;

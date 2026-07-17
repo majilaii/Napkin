@@ -68,6 +68,17 @@ const PROJECTION: PlaceAttestationProjection = {
   country: "United Kingdom",
   lat: 51.45,
   lng: -0.07,
+  google_rating: 4.6,
+  google_rating_count: 287,
+  price_level: 2,
+  types: ["restaurant", "georgian_restaurant"],
+  primary_type: "georgian_restaurant",
+  website: "https://kartuli.example",
+  phone: "+44 20 7946 0958",
+  google_maps_uri: "https://maps.google.test/?cid=kartuli",
+  opening_hours: {
+    weekdayDescriptions: ["Monday: 12:00 PM – 10:00 PM"],
+  },
   photo_reference: "places/ChIJ-place/photos/ref",
   photo_attribution_html:
     '<a href="https://maps.google.test/author">Author</a>',

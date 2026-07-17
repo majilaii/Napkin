@@ -327,10 +327,10 @@ export default function RestaurantScreen() {
     // `missingMetadata = external_id && !phone && !hours` predicate stayed TRUE
     // forever for places that legitimately have no phone/hours, so every page
     // mount / cold start re-hit Place Details (real Google $). Once a row has been
-    // synced, we do NOT re-fetch for 30 days even when phone/hours are absent —
-    // the upsert stamps places_synced_at = now() on every Places write.
-    // city/photo staleness still trigger (they heal pre-metadata rows on first view,
-    // and that same upsert stamps the sentinel).
+    // synced, we do NOT re-fetch for 30 days merely because phone/hours are absent.
+    // Rating absence deliberately overrides that sentinel so rows written by the
+    // skinny attestation regression heal on view; the 24h attestation cache bounds
+    // paid Details cost. City/photo staleness still trigger as before.
     const persistedRow = pageData?.restaurant ?? null;
     const SYNC_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
     const syncedAtMs = persistedRow?.places_synced_at
@@ -342,6 +342,7 @@ export default function RestaurantScreen() {
         && !!persistedRow.external_id
         && (!persistedRow.city
             || (!persistedRow.photo_url && persistedRow.photo_source !== 'none')
+            || persistedRow.google_rating == null
             || syncIsStale);
     useLazyBackfillRestaurant({
         enabled: isStale,

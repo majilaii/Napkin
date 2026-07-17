@@ -18,6 +18,7 @@ import {
   CompletenessPaidPathError,
   CompletenessProvider,
 } from "./completenessProvider.ts";
+import { projectionToPlace } from "../places-search/utils.ts";
 
 const OWNER = "00000000-0000-4000-8000-000000000001";
 const CLAIMANT = "00000000-0000-4000-8000-000000000002";
@@ -32,6 +33,21 @@ const DETAILS_BODY = {
     { longText: "London", types: ["locality"] },
     { longText: "United Kingdom", types: ["country"] },
   ],
+  rating: 4.6,
+  userRatingCount: 287,
+  priceLevel: "PRICE_LEVEL_MODERATE",
+  types: ["restaurant", "georgian_restaurant"],
+  primaryType: "georgian_restaurant",
+  websiteUri: "https://kartuli.example/menu",
+  googleMapsUri: "https://maps.google.test/?cid=kartuli",
+  nationalPhoneNumber: "+44 20 7946 0958",
+  regularOpeningHours: {
+    openNow: true,
+    weekdayDescriptions: [
+      "Monday: 12:00 PM – 10:00 PM",
+      "Tuesday: 12:00 PM – 10:00 PM",
+    ],
+  },
   photos: [{
     name: "places/ChIJ-kartuli/photos/ref-1",
     authorAttributions: [{
@@ -41,7 +57,56 @@ const DETAILS_BODY = {
   }],
 };
 
-Deno.test("attestation miss couples exact Pro endpoint/mask to winner-only Details debit", async () => {
+Deno.test("attestation metadata is optional and never invalidates the base projection", () => {
+  const projection = parsePlaceAttestation("ChIJ-skinny", {
+    displayName: { text: "Skinny Place" },
+    location: { latitude: 51.5, longitude: -0.1 },
+  });
+  assertEquals(projection, {
+    place_id: "ChIJ-skinny",
+    display_name: "Skinny Place",
+    formatted_address: null,
+    address_components: [],
+    city: null,
+    country: null,
+    lat: 51.5,
+    lng: -0.1,
+    google_rating: null,
+    google_rating_count: null,
+    price_level: null,
+    types: null,
+    primary_type: null,
+    website: null,
+    phone: null,
+    google_maps_uri: null,
+    opening_hours: null,
+    photo_reference: null,
+    photo_attribution_html: null,
+  });
+});
+
+Deno.test("attestation maps Google product metadata without retaining openNow", () => {
+  const projection = parsePlaceAttestation("ChIJ-kartuli", DETAILS_BODY)!;
+  assertEquals(projection.google_rating, 4.6);
+  assertEquals(projection.google_rating_count, 287);
+  assertEquals(projection.price_level, 2);
+  assertEquals(projection.types, ["restaurant", "georgian_restaurant"]);
+  assertEquals(projection.primary_type, "georgian_restaurant");
+  assertEquals(projection.website, "https://kartuli.example/menu");
+  assertEquals(projection.phone, "+44 20 7946 0958");
+  assertEquals(
+    projection.google_maps_uri,
+    "https://maps.google.test/?cid=kartuli",
+  );
+  assertEquals(projection.opening_hours, {
+    weekdayDescriptions: [
+      "Monday: 12:00 PM – 10:00 PM",
+      "Tuesday: 12:00 PM – 10:00 PM",
+    ],
+  });
+});
+
+Deno.test("attestation miss couples Enterprise Details mask to the legacy Details debit", async () => {
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
   const supabase = {
@@ -84,6 +149,180 @@ Deno.test("attestation miss couples exact Pro endpoint/mask to winner-only Detai
       ["fn_commit_place_attestation", null],
     ],
   );
+});
+
+Deno.test("metadata round-trips through attest, projectionToPlace, and persistence", async () => {
+  let committedProjection: unknown = null;
+  let insertedRow: Record<string, unknown> | null = null;
+  const supabase = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      if (name === "fn_claim_place_attestation") {
+        return {
+          data: [{ outcome: "claimed", projection: null }],
+          error: null,
+        };
+      }
+      if (name === "fn_charge_sku_budget") {
+        return { data: true, error: null };
+      }
+      if (name === "fn_commit_place_attestation") {
+        committedProjection = args.p_projection;
+        return { data: true, error: null };
+      }
+      throw new Error(`Unexpected RPC ${name}`);
+    },
+    from: (table: string) => {
+      if (table !== "restaurants") throw new Error(`Unexpected table ${table}`);
+      return {
+        select: () => {
+          const chain: Record<string, unknown> = {};
+          chain.eq = () => chain;
+          chain.is = () => chain;
+          chain.maybeSingle = async () => ({ data: null, error: null });
+          return chain;
+        },
+        insert: (row: Record<string, unknown>) => {
+          insertedRow = row;
+          return {
+            select: () => ({
+              single: async () => ({ data: { id: RESTAURANT }, error: null }),
+            }),
+          };
+        },
+      };
+    },
+  };
+  const provider = new CompletenessProvider(supabase, {
+    googleApiKey: "google-key",
+    fetchImpl: async () => Response.json(DETAILS_BODY),
+  });
+
+  const projection = await provider.attest(
+    OWNER,
+    "ChIJ-kartuli",
+    CLAIMANT,
+  );
+  const place = projectionToPlace(projection);
+  assertEquals(place.googleRating, 4.6);
+  assertEquals(place.googleRatingCount, 287);
+  assertEquals(place.priceLevel, 2);
+  assertEquals(place.categories, ["restaurant", "georgian_restaurant"]);
+  assertEquals(place.cuisine, "Georgian");
+  assertEquals(place.website, "https://kartuli.example/menu");
+  assertEquals(place.phone, "+44 20 7946 0958");
+  assertEquals(place.link, "https://maps.google.test/?cid=kartuli");
+  assertEquals(place.google_maps_uri, place.link);
+  assertEquals(place.hours, projection.opening_hours);
+
+  const persisted = await provider.persistAttestedRestaurant(
+    OWNER,
+    null,
+    projection,
+    CLAIMANT,
+    false,
+  );
+  assertEquals(persisted.restaurant_id, RESTAURANT);
+  assertEquals(committedProjection, projection);
+  assertEquals(insertedRow?.google_rating, 4.6);
+  assertEquals(insertedRow?.google_rating_count, 287);
+  assertEquals(insertedRow?.price_level, 2);
+  assertEquals(insertedRow?.place_types, [
+    "restaurant",
+    "georgian_restaurant",
+  ]);
+  assertEquals(insertedRow?.cuisine, "Georgian");
+  assertEquals(insertedRow?.website, "https://kartuli.example/menu");
+  assertEquals(insertedRow?.phone, "+44 20 7946 0958");
+  assertEquals(
+    insertedRow?.google_maps_uri,
+    "https://maps.google.test/?cid=kartuli",
+  );
+  assertEquals(insertedRow?.hours, projection.opening_hours);
+  assertEquals(
+    Number.isNaN(Date.parse(String(insertedRow?.places_synced_at))),
+    false,
+  );
+});
+
+Deno.test("null attestation metadata is omitted from an existing-row CAS update", async () => {
+  const sparseProjection = parsePlaceAttestation("ChIJ-kartuli", {
+    displayName: { text: "Kartuli" },
+    location: { latitude: 51.45, longitude: -0.07 },
+  })!;
+  const state = {
+    id: RESTAURANT,
+    external_id: "ChIJ-kartuli",
+    verification: "verified",
+    merged_into: null,
+    completeness_version: 4,
+    lat: 51.45,
+    lng: -0.07,
+    photo_url: null,
+    photo_reference: null,
+    photo_source: null,
+    places_photo_attribution_html: null,
+    created_by: OWNER,
+  };
+  const updateRows: Array<Record<string, unknown>> = [];
+  const supabase = {
+    rpc: async (name: string) => {
+      if (name === "fn_resolve_canonical" || name === "fn_canonicalize_ghost") {
+        return { data: RESTAURANT, error: null };
+      }
+      throw new Error(`Unexpected RPC ${name}`);
+    },
+    from: (table: string) => {
+      if (table !== "restaurants") throw new Error(`Unexpected table ${table}`);
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: state, error: null }),
+          }),
+        }),
+        update: (row: Record<string, unknown>) => {
+          updateRows.push(row);
+          const chain: Record<string, unknown> = { error: null };
+          chain.eq = () => chain;
+          chain.is = () => chain;
+          chain.select = () => chain;
+          chain.maybeSingle = async () => ({
+            data: { id: RESTAURANT },
+            error: null,
+          });
+          return chain;
+        },
+      };
+    },
+  };
+  const provider = new CompletenessProvider(supabase, {
+    googleApiKey: "google-key",
+  });
+
+  await provider.persistAttestedRestaurant(
+    OWNER,
+    RESTAURANT,
+    sparseProjection,
+    CLAIMANT,
+    false,
+  );
+
+  const projectionUpdate = updateRows[0];
+  for (
+    const key of [
+      "google_rating",
+      "google_rating_count",
+      "price_level",
+      "place_types",
+      "cuisine",
+      "website",
+      "phone",
+      "google_maps_uri",
+      "hours",
+    ]
+  ) {
+    assertEquals(key in projectionUpdate, false, `${key} must be sparse`);
+  }
+  assertEquals(typeof projectionUpdate.places_synced_at, "string");
 });
 
 Deno.test("fresh attestation cache hit performs no debit and no fetch", async () => {
