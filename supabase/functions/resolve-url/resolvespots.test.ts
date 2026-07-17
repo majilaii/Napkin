@@ -18,6 +18,7 @@ import {
     listOnlySaveKind,
     isGhostOnlyMode,
     IMPORT_PLACE_TYPE_ALLOWLIST,
+    hasAllowedImportPlaceType,
     resolveImportPlaceSearch,
     buildUnattemptedResolveSpotResult,
     buildResolveSpotDecisionResult,
@@ -267,6 +268,37 @@ Deno.test('failed Details evidence preserves only a provider-safe attempted id',
 });
 
 // ── 5. TICKET-195 import-only Places type backstop ───────────────────────────
+
+Deno.test('hasAllowedImportPlaceType: real market payloads are accepted', () => {
+    const marketPayloads = [
+        {
+            name: 'Barnes Farmers Market',
+            categories: ['farmers_market', 'market', 'point_of_interest', 'establishment'],
+        },
+        {
+            name: 'Borough Market',
+            categories: ['farmers_market', 'tourist_attraction', 'market', 'point_of_interest'],
+        },
+    ];
+
+    for (const { name, categories } of marketPayloads) {
+        assertEquals(hasAllowedImportPlaceType(categories), true, `${name}: accepted`);
+    }
+});
+
+Deno.test('hasAllowedImportPlaceType: real noise payloads remain rejected', () => {
+    const noisePayloads = [
+        ['thrift_store', 'womens_clothing_store', 'non_profit_organization'],
+        ['association_or_organization', 'point_of_interest', 'establishment'],
+        ['pharmacy', 'drugstore', 'consultant'],
+        ['clothing_store', 'point_of_interest', 'store'],
+        ['premise', 'street_address'],
+    ];
+
+    for (const categories of noisePayloads) {
+        assertEquals(hasAllowedImportPlaceType(categories), false, `${categories.join(', ')}: rejected`);
+    }
+});
 
 Deno.test('resolveImportPlaceSearch: every food/drink allowlist type accepts the top result', async () => {
     for (const category of IMPORT_PLACE_TYPE_ALLOWLIST) {
