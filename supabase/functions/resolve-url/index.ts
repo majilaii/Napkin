@@ -55,6 +55,7 @@ import {
   extractFromTextMulti,
   extractFromVision,
   extractFromVisionMulti,
+  LISTICLE_CANDIDATE_CAP,
   type PhotoExtractionContext,
   validPhotoSlideCount,
 } from "../_shared/visionExtract.ts";
@@ -3536,11 +3537,10 @@ async function handleVideoText(
 ): Promise<Response> {
   const sourceType: SourceType = "video";
   const notePrefill = caption ? captionToNote(caption) : "";
-  // TICKET-195: a valid photo carousel uses its exact slide count across the
-  // prompt, response parser, and dedupe cap. Missing/invalid context preserves
-  // the established video 12-cap byte-for-byte.
+  // Photo and video listicles share one numeric ceiling. A validated photo slide
+  // count remains prompt/cache context only; it never truncates candidates.
   const photoSlideCount = validPhotoSlideCount(photoContext);
-  const CAP = photoSlideCount ?? 12;
+  const CAP = LISTICLE_CANDIDATE_CAP;
 
   // Caption (hashtags/handle → city hints) joins the on-device text. The cheap
   // tier (TICKET-164 fast path) sends caption=desc + extracted_text=transcript,
@@ -3557,13 +3557,13 @@ async function handleVideoText(
   const listCountRaw = detectListMarker(caption || fullText).countRaw;
 
   // Content hash for cache + stable candidate ids (re-importing a clip is free).
-  // Namespace photo rows by mode + validated count: an app update may have sent
-  // sectioned slide text to an older server before the photo prompt deployed,
-  // and that generic cached extraction must not bypass the new photo rules.
-  // No photo context keeps the historical `video:${fullText}` identity exactly.
+  // Namespace photo rows by mode + validated count + candidate-cap contract.
+  // Including the cap invalidates TICKET-195 rows that were already truncated to
+  // slide count; otherwise a repeat import would bypass this fix via cache. No
+  // photo context keeps the historical `video:${fullText}` identity exactly.
   const cacheNamespace = photoSlideCount === null
     ? "video"
-    : `photo:${photoSlideCount}`;
+    : `photo:listicle-${CAP}:${photoSlideCount}`;
   const hashBuf = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(`${cacheNamespace}:${fullText}`)
@@ -3610,8 +3610,8 @@ async function handleVideoText(
     }
   }
 
-  // Video stays at 12; photo uses the exact validated slide count. The default
-  // dedupeAndRank cap is 6 (right for the URL path), so both paths pass theirs.
+  // Video and photo listicles stay at 12. dedupeAndRank's default cap is 6
+  // (right for the URL path), so this path passes the listicle cap explicitly.
   const staged = dedupeAndRank(textCandidates ?? [], [], CAP);
   if (staged.length === 0) {
     return jsonResponse({
