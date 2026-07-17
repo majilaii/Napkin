@@ -12,6 +12,8 @@ import {
   FROZEN_DEFERRED_TEXT_SEARCH_FIELD_MASK,
   type GoogleTextCandidate,
   hasCompleteRestaurantHero,
+  humanizeCuisine,
+  mapRegularOpeningHours,
   parsePlaceAttestation,
   parseTextSearchCandidates,
   PHOTO_SKU,
@@ -103,6 +105,10 @@ function cleanError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).slice(0, 500);
 }
 
+function trimmedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
 function normalizeProjection(
   placeId: string,
   value: unknown,
@@ -132,6 +138,12 @@ function normalizeProjection(
   const components = Array.isArray(record.address_components)
     ? record.address_components
     : [];
+  const rating = record.google_rating;
+  const ratingCount = record.google_rating_count;
+  const priceLevel = record.price_level;
+  const types = Array.isArray(record.types)
+    ? record.types.filter((type): type is string => typeof type === "string")
+    : null;
   return {
     place_id: placeId,
     display_name: name.trim(),
@@ -151,6 +163,24 @@ function normalizeProjection(
       : addressComponent(components, ["country"]),
     lat,
     lng,
+    google_rating: typeof rating === "number" && Number.isFinite(rating)
+      ? rating
+      : null,
+    google_rating_count: typeof ratingCount === "number" &&
+        Number.isInteger(ratingCount) && ratingCount >= 0 &&
+        ratingCount <= 2_147_483_647
+      ? ratingCount
+      : null,
+    price_level: typeof priceLevel === "number" &&
+        Number.isInteger(priceLevel) && priceLevel >= 0 && priceLevel <= 4
+      ? priceLevel
+      : null,
+    types,
+    primary_type: trimmedString(record.primary_type),
+    website: trimmedString(record.website),
+    phone: trimmedString(record.phone),
+    google_maps_uri: trimmedString(record.google_maps_uri),
+    opening_hours: mapRegularOpeningHours(record.opening_hours),
     photo_reference: reference && attribution ? reference : null,
     photo_attribution_html: reference && attribution ? attribution : null,
   };
@@ -597,9 +627,9 @@ export class CompletenessProvider {
   }
 
   /**
-   * Persist only the attested minimal projection, preserving all existing
-   * non-null metadata outside it. With persistHero=true the same shared media
-   * claim is used before any paid download.
+   * Persist the attested projection while preserving existing metadata for
+   * every nullable field Google omitted. With persistHero=true the same shared
+   * media claim is used before any paid download.
    */
   async persistAttestedRestaurant(
     ownerId: string,
@@ -657,6 +687,29 @@ export class CompletenessProvider {
     }
     if (city) row.city = city;
     if (country) row.country = country;
+    if (projection.google_rating !== null) {
+      row.google_rating = projection.google_rating;
+    }
+    if (projection.google_rating_count !== null) {
+      row.google_rating_count = projection.google_rating_count;
+    }
+    if (projection.price_level !== null) {
+      row.price_level = projection.price_level;
+    }
+    if (projection.types !== null) row.place_types = projection.types;
+    const cuisine = humanizeCuisine(projection.primary_type);
+    if (cuisine !== null) row.cuisine = cuisine;
+    if (projection.website !== null) row.website = projection.website;
+    if (projection.phone !== null) row.phone = projection.phone;
+    if (projection.google_maps_uri !== null) {
+      row.google_maps_uri = projection.google_maps_uri;
+    }
+    if (projection.opening_hours !== null) {
+      row.hours = projection.opening_hours;
+    }
+    // The Details call itself is a successful sync even when optional
+    // metadata is absent; this prevents repeatedly paying to confirm absence.
+    row.places_synced_at = new Date().toISOString();
 
     if (targetId) {
       // Canonicalization and projection persistence are separate writes.

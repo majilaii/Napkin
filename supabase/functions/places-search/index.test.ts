@@ -6,6 +6,10 @@
 
 import { assertEquals } from '../_shared/test-utils.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import {
+    mapRegularOpeningHours,
+    parsePlaceAttestation,
+} from '../_shared/completeness.ts';
 
 // Import from utils.ts (doesn't trigger serve())
 import {
@@ -13,7 +17,7 @@ import {
     clamp,
     expectedSearchOwnerDecision,
     firstNumber,
-    mapRegularOpeningHours,
+    projectionToPlace,
 } from './utils.ts';
 
 Deno.test('places-search utility functions', async (t) => {
@@ -120,6 +124,42 @@ Deno.test('mapRegularOpeningHours (TICKET-081)', async (t) => {
             weekdayDescriptions: ['Monday: 9–5'],
         });
         assertEquals(result, { weekdayDescriptions: ['Monday: 9–5'] });
+    });
+});
+
+Deno.test('projectionToPlace exposes attested product metadata', () => {
+    const projection = parsePlaceAttestation('ChIJ-ramen', {
+        displayName: { text: 'Ramen Moto' },
+        location: { latitude: 51.51, longitude: -0.12 },
+        addressComponents: [
+            { longText: 'London', types: ['locality'] },
+            { longText: 'United Kingdom', types: ['country'] },
+        ],
+        rating: 4.7,
+        userRatingCount: 842,
+        priceLevel: 'PRICE_LEVEL_INEXPENSIVE',
+        types: ['ramen_restaurant', 'restaurant'],
+        primaryType: 'ramen_restaurant',
+        websiteUri: 'https://ramen-moto.example',
+        nationalPhoneNumber: '+44 20 7000 0000',
+        googleMapsUri: 'https://maps.google.test/ramen-moto',
+        regularOpeningHours: {
+            weekdayDescriptions: ['Monday: 12:00 PM – 10:00 PM'],
+        },
+    })!;
+
+    const place = projectionToPlace(projection);
+    assertEquals(place.googleRating, 4.7);
+    assertEquals(place.googleRatingCount, 842);
+    assertEquals(place.priceLevel, 1);
+    assertEquals(place.categories, ['ramen_restaurant', 'restaurant']);
+    assertEquals(place.cuisine, 'Ramen');
+    assertEquals(place.website, 'https://ramen-moto.example');
+    assertEquals(place.phone, '+44 20 7000 0000');
+    assertEquals(place.link, 'https://maps.google.test/ramen-moto');
+    assertEquals(place.google_maps_uri, place.link);
+    assertEquals(place.hours, {
+        weekdayDescriptions: ['Monday: 12:00 PM – 10:00 PM'],
     });
 });
 

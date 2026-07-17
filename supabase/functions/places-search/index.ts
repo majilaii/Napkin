@@ -6,7 +6,7 @@ import {
     parsePayload,
     clamp,
     expectedSearchOwnerDecision,
-    mapRegularOpeningHours,
+    projectionToPlace,
     type SearchPayload,
 } from './utils.ts';
 import {
@@ -14,9 +14,10 @@ import {
     CompletenessProvider,
 } from '../_shared/completenessProvider.ts';
 import {
-    addressComponent,
     type GoogleTextCandidate,
-    type PlaceAttestationProjection,
+    humanizeCuisine,
+    mapGooglePriceLevel,
+    mapRegularOpeningHours,
 } from '../_shared/completeness.ts';
 
 const GOOGLE_PLACES_API_KEY = Deno.env.get('GOOGLE_PLACES_API_KEY');
@@ -55,19 +56,6 @@ function escapeHtml(s: string): string {
         .replace(/'/g, '&#39;');
 }
 
-function humanizeCuisine(raw: unknown): string | null {
-    if (typeof raw !== 'string' || !raw) return null;
-    // Drop the generic "_restaurant" suffix Google attaches to most cuisines
-    // (e.g. "indian_restaurant" → "indian"). Leave non-restaurant types alone
-    // ("bar", "bakery", "cafe") so they still render meaningfully.
-    const stripped = raw.replace(/_restaurant$/i, '');
-    if (!stripped) return null;
-    return stripped
-        .split('_')
-        .map(part => part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : '')
-        .join(' ');
-}
-
 function sanitizePlace(place: any) {
     let city: string | null = null;
     let country: string | null = null;
@@ -83,16 +71,7 @@ function sanitizePlace(place: any) {
         }
     }
 
-    const priceLevelMap: Record<string, number> = {
-        PRICE_LEVEL_FREE: 0,
-        PRICE_LEVEL_INEXPENSIVE: 1,
-        PRICE_LEVEL_MODERATE: 2,
-        PRICE_LEVEL_EXPENSIVE: 3,
-        PRICE_LEVEL_VERY_EXPENSIVE: 4,
-    };
-    const priceLevel = place.priceLevel
-        ? (priceLevelMap[place.priceLevel] ?? null)
-        : null;
+    const priceLevel = mapGooglePriceLevel(place.priceLevel);
 
     // Google returns primaryType as a raw enum like "indian_restaurant",
     // "italian_restaurant", "bar", "bakery", "meal_takeaway". Strip the
@@ -148,32 +127,6 @@ function sanitizePlace(place: any) {
         phone: place.nationalPhoneNumber ?? null,
         google_maps_uri: place.googleMapsUri ?? null,
         hours: mapRegularOpeningHours(place.regularOpeningHours),
-    };
-}
-
-function projectionToPlace(projection: PlaceAttestationProjection) {
-    return {
-        id: projection.place_id,
-        name: projection.display_name,
-        formattedAddress: projection.formatted_address,
-        city: addressComponent(projection.address_components, [
-            'locality', 'postal_town', 'administrative_area_level_2',
-        ]),
-        country: addressComponent(projection.address_components, ['country']),
-        latitude: projection.lat,
-        longitude: projection.lng,
-        categories: [],
-        cuisine: null,
-        googleRating: null,
-        googleRatingCount: null,
-        priceLevel: null,
-        photoReference: projection.photo_reference,
-        photoAttributionHtml: projection.photo_attribution_html,
-        website: null,
-        link: null,
-        phone: null,
-        google_maps_uri: null,
-        hours: null,
     };
 }
 
@@ -378,7 +331,7 @@ serve(async req => {
 
         const ownsResolution = req.headers.get('x-candidate-consumer') !== 'resolve-url';
 
-        // ── Branch A: lookup by place_id (minimal Pro attestation) ────────
+        // ── Branch A: lookup by place_id (Enterprise Details attestation) ──
         if (placeId) {
             const projection = await provider.attest(ownerId, placeId, claimant);
             const sanitized = projectionToPlace(projection);

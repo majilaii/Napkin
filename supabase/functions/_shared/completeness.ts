@@ -8,12 +8,14 @@
 
 import { escapeAttr } from "./htmlEscape.ts";
 
+// Legacy internal ledger key: the widened Details mask is Enterprise-tier,
+// but renaming this key would orphan existing budget configuration rows.
 export const DETAILS_PRO_SKU = "places_details_pro" as const;
 export const TEXT_SEARCH_SKU = "places_text_search" as const;
 export const PHOTO_SKU = "places_photo" as const;
 
 export const FROZEN_ATTESTATION_FIELD_MASK =
-  "displayName,location,addressComponents,formattedAddress,photos.name,photos.authorAttributions";
+  "displayName,location,addressComponents,formattedAddress,photos.name,photos.authorAttributions,rating,userRatingCount,priceLevel,types,primaryType,websiteUri,googleMapsUri,nationalPhoneNumber,regularOpeningHours";
 
 // Text Search returns only the evidence required by the deferred scorer. Hero
 // metadata and coordinates are deliberately re-derived at the Details choke
@@ -35,8 +37,22 @@ export interface PlaceAttestationProjection {
   country: string | null;
   lat: number;
   lng: number;
+  google_rating: number | null;
+  google_rating_count: number | null;
+  price_level: number | null;
+  types: string[] | null;
+  primary_type: string | null;
+  website: string | null;
+  phone: string | null;
+  google_maps_uri: string | null;
+  opening_hours: PlaceHours | null;
   photo_reference: string | null;
   photo_attribution_html: string | null;
+}
+
+/** Persisted Places opening-hours shape. Point-in-time openNow is omitted. */
+export interface PlaceHours {
+  weekdayDescriptions: string[];
 }
 
 export interface GoogleTextCandidate {
@@ -111,6 +127,47 @@ function displayNameText(value: unknown): string | null {
   return nonEmptyString(record?.text);
 }
 
+/** Map the Places v1 PRICE_LEVEL_* enum to the restaurants smallint scale. */
+export function mapGooglePriceLevel(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const priceLevelMap: Record<string, number> = {
+    PRICE_LEVEL_FREE: 0,
+    PRICE_LEVEL_INEXPENSIVE: 1,
+    PRICE_LEVEL_MODERATE: 2,
+    PRICE_LEVEL_EXPENSIVE: 3,
+    PRICE_LEVEL_VERY_EXPENSIVE: 4,
+  };
+  return priceLevelMap[value] ?? null;
+}
+
+/** Render a Places primaryType as the restaurant hero cuisine label. */
+export function humanizeCuisine(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw) return null;
+  const stripped = raw.replace(/_restaurant$/i, "");
+  if (!stripped) return null;
+  return stripped
+    .split("_")
+    .map((part) =>
+      part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : ""
+    )
+    .join(" ");
+}
+
+/**
+ * Normalize Places hours for durable caching. `openNow` is point-in-time and
+ * deliberately omitted; the client derives today's hours from the descriptions.
+ */
+export function mapRegularOpeningHours(raw: unknown): PlaceHours | null {
+  const record = asRecord(raw);
+  if (!record) return null;
+  const descriptions = Array.isArray(record.weekdayDescriptions)
+    ? record.weekdayDescriptions.filter((description): description is string =>
+      typeof description === "string" && description.trim() !== ""
+    )
+    : [];
+  return descriptions.length > 0 ? { weekdayDescriptions: descriptions } : null;
+}
+
 /** Sanitize the first Google author attribution and keep reference+credit paired. */
 export function sanitizedPhotoPair(
   value: unknown,
@@ -175,6 +232,11 @@ export function parsePlaceAttestation(
   const components = Array.isArray(body?.addressComponents)
     ? body!.addressComponents as unknown[]
     : [];
+  const types = Array.isArray(body?.types)
+    ? body.types.filter((type): type is string => typeof type === "string")
+    : null;
+  const rating = body?.rating;
+  const ratingCount = body?.userRatingCount;
   const photo = sanitizedPhotoPair(body?.photos);
   return {
     place_id: placeId,
@@ -189,6 +251,21 @@ export function parsePlaceAttestation(
     country: addressComponent(components, ["country"]),
     lat,
     lng,
+    google_rating: typeof rating === "number" && Number.isFinite(rating)
+      ? rating
+      : null,
+    google_rating_count: typeof ratingCount === "number" &&
+        Number.isInteger(ratingCount) && ratingCount >= 0 &&
+        ratingCount <= 2_147_483_647
+      ? ratingCount
+      : null,
+    price_level: mapGooglePriceLevel(body?.priceLevel),
+    types,
+    primary_type: nonEmptyString(body?.primaryType),
+    website: nonEmptyString(body?.websiteUri),
+    phone: nonEmptyString(body?.nationalPhoneNumber),
+    google_maps_uri: nonEmptyString(body?.googleMapsUri),
+    opening_hours: mapRegularOpeningHours(body?.regularOpeningHours),
     // Missing credit suppresses the reference atomically. The worker then
     // stamps photo_source='none' without downloading uncredited media.
     photo_reference: photo?.reference ?? null,
