@@ -1,31 +1,24 @@
 /**
- * VoicesStream — trust-ring-ordered voice list for Visits tab.
+ * VoicesStream — the restaurant page's compact REVIEWS section.
  *
- * Order: You → Your tablemates → dashed divider → Public Napkin users
- * Each row: avatar · name · rating (italic terracotta) · date · italic note
- *
- * Avatar styles:
- *  - self: olive gradient
- *  - tablemate: terracotta gradient
- *  - public: ghosted surface with ink border
+ * Order: self/tablemate visit rows → match filter → one featured public review
+ * → one compact public review → the all-reviews doorway.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
-import { Colors, Radius, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { PageVisit, PublicReviewCard } from '@/hooks/restaurants/useRestaurantPage';
 
 interface VoiceRowProps {
-    kind: 'self' | 'tablemate' | 'followee' | 'public';
+    kind: 'self' | 'tablemate';
     initial: string;
     name: string;
     rating: number | null;
     date: string;
     note?: string | null;
-    /** Integer % taste match — appended to line1 for public rows only. null/undefined hides. */
-    matchPct?: number | null;
     onPress?: () => void;
     palette: typeof Colors.light;
 }
@@ -34,44 +27,37 @@ interface Props {
     selfVisits: PageVisit[];
     tablemateVisits: PageVisit[];
     publicReviews: PublicReviewCard[];
-    /** TICKET-168: total public reviews (page payload `public_reviews_total`) —
-     * the all-reviews affordance carries it when > 0 ("all reviews · 12 →"). */
+    /** Total public reviews from `public_reviews_total`. */
     reviewCount?: number | null;
-    /** Authenticated viewer's id — suppresses calibration chip on their own public rows. */
+    /** Used to suppress self-comparison detail in public-review accessibility copy. */
     viewerUserId?: string | null;
-    /** Controlled filter state for "matches mine" toggle pill (TICKET-022 Surface C). */
+    /** Controlled filter state for the existing "matches mine" toggle. */
     matchFilterOn?: boolean;
     onToggleMatchFilter?: () => void;
     onVisitPress?: (visit: PageVisit) => void;
-    /** Tap handler for a public review row — routes to /entry-detail?viewAs=public. */
     onPublicReviewPress?: (entry_id: string) => void;
-    /**
-     * Restaurant name threaded for reading-oriented empty state copy.
-     * When provided, zero-voices state reads "— no one's written about {name} yet."
-     */
     restaurantName?: string | null;
-    /** TICKET-154: opens the all-reviews page. Renders the "all reviews" affordance
-     * beneath the section header when set and there are public reviews to expand. */
+    /** Opens the all-reviews page. */
     onSeeAllReviews?: () => void;
 }
 
-// Calibration filter thresholds (locked for v1 per TICKET-022 AC)
 const MATCH_MIN_PCT = 70;
 const MATCH_MIN_OVERLAP = 5;
 const FILTER_PILL_MIN_QUALIFYING = 3;
 
-function reviewQualifiesForMatchFilter(r: PublicReviewCard): boolean {
-    const cal = r.calibration;
-    if (!cal) return false;
-    return cal.match_pct >= MATCH_MIN_PCT && cal.overlap_n >= MATCH_MIN_OVERLAP;
+function reviewQualifiesForMatchFilter(review: PublicReviewCard): boolean {
+    const calibration = review.calibration;
+    if (!calibration) return false;
+    return calibration.match_pct >= MATCH_MIN_PCT
+        && calibration.overlap_n >= MATCH_MIN_OVERLAP;
 }
 
 type Palette = typeof Colors.light;
 
 function formatDate(iso: string): string {
     try {
-        const d = new Date(iso);
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const date = new Date(iso);
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     } catch {
         return iso;
     }
@@ -81,60 +67,46 @@ function getInitial(name: string): string {
     return (name ?? '?')[0]?.toUpperCase() ?? '?';
 }
 
+function publicReviewAccessibilityLabel(
+    review: PublicReviewCard,
+    viewerUserId?: string | null,
+): string {
+    const parts = [
+        `${review.display_name} review`,
+        `${Number(review.rating).toFixed(1)} rating`,
+        `noted ${formatDate(review.created_at)}`,
+    ];
+    if (viewerUserId !== review.user_id && review.calibration) {
+        parts.push(`${review.calibration.match_pct} percent taste match`);
+    }
+    return parts.join(', ');
+}
+
 const CREAM = '#f6ecd9';
 const RULE_COLOR = 'rgba(221, 192, 186, 0.4)';
-const DIVIDER_COLOR = 'rgba(138, 114, 108, 0.3)';
 
-function VoiceRow({ kind, initial, name, rating, date, note, matchPct, onPress, palette }: VoiceRowProps) {
-    const avatarContent = (
-        <Text style={[styles.avText, kind === 'public' && { color: palette.textSecondary }]}>
-            {initial}
-        </Text>
+/** Existing compact self/tablemate row. Keep its rendering unchanged. */
+function VoiceRow({ kind, initial, name, rating, date, note, onPress, palette }: VoiceRowProps) {
+    const avatarContent = <Text style={styles.avText}>{initial}</Text>;
+    const avatarEl = kind === 'self' ? (
+        <LinearGradient
+            colors={['#a8995f', '#6b7c3a']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.av}
+        >
+            {avatarContent}
+        </LinearGradient>
+    ) : (
+        <LinearGradient
+            colors={['#c97557', '#a03f28']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.av}
+        >
+            {avatarContent}
+        </LinearGradient>
     );
-
-    const avatarEl =
-        kind === 'self' ? (
-            <LinearGradient
-                colors={['#a8995f', '#6b7c3a']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.av}
-            >
-                {avatarContent}
-            </LinearGradient>
-        ) : kind === 'tablemate' ? (
-            <LinearGradient
-                colors={['#c97557', '#a03f28']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.av}
-            >
-                {avatarContent}
-            </LinearGradient>
-        ) : kind === 'followee' ? (
-            // people you follow — amber→olive, distinct from self/tablemate/public
-            <LinearGradient
-                colors={['#cda43f', '#6b7c3a']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.av}
-            >
-                {avatarContent}
-            </LinearGradient>
-        ) : (
-            <View
-                style={[
-                    styles.av,
-                    {
-                        backgroundColor: palette.surfaceContainerLow,
-                        borderWidth: 1,
-                        borderColor: DIVIDER_COLOR,
-                    },
-                ]}
-            >
-                {avatarContent}
-            </View>
-        );
 
     return (
         <Pressable
@@ -158,18 +130,6 @@ function VoiceRow({ kind, initial, name, rating, date, note, matchPct, onPress, 
                     ) : null}
                     <Text style={[styles.dot, { color: palette.textMuted }]}>·</Text>
                     <Text style={[styles.dateText, { color: palette.textMuted }]}>{formatDate(date)}</Text>
-                    {kind === 'public' && matchPct != null ? (
-                        <>
-                            <Text style={[styles.dot, { color: palette.textMuted }]}>·</Text>
-                            <Text
-                                style={[styles.matchNumeral, { color: palette.text }]}
-                                accessibilityLabel={`${matchPct} percent taste match with this review's author`}
-                            >
-                                {matchPct}%
-                            </Text>
-                            <Text style={[styles.matchTail, { color: palette.textSecondary }]}>match</Text>
-                        </>
-                    ) : null}
                 </View>
                 {note ? (
                     <Text style={[styles.noteText, { color: palette.textSecondary }]} numberOfLines={2}>
@@ -181,44 +141,163 @@ function VoiceRow({ kind, initial, name, rating, date, note, matchPct, onPress, 
     );
 }
 
-export function VoicesStream({
-    selfVisits,
-    tablemateVisits,
-    publicReviews,
-    reviewCount,
+function ReviewInitialPlate({ name, palette }: { name: string; palette: Palette }) {
+    return (
+        <View
+            style={[
+                styles.reviewPlate,
+                {
+                    backgroundColor: palette.surfaceContainerLow,
+                    borderColor: palette.ruleInkSoft,
+                },
+            ]}
+        >
+            <Text style={[styles.reviewPlateText, { color: palette.textSecondary }]}>
+                {getInitial(name)}
+            </Text>
+        </View>
+    );
+}
+
+function FeaturedReview({
+    review,
     viewerUserId,
-    matchFilterOn = false,
-    onToggleMatchFilter,
-    onVisitPress,
-    onPublicReviewPress,
-    restaurantName,
-    onSeeAllReviews,
-}: Props) {
+    onPress,
+    palette,
+}: {
+    review: PublicReviewCard;
+    viewerUserId?: string | null;
+    onPress?: () => void;
+    palette: Palette;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            accessibilityRole={onPress ? 'button' : undefined}
+            accessibilityLabel={publicReviewAccessibilityLabel(review, viewerUserId)}
+            style={({ pressed }) => [
+                styles.featuredCard,
+                { backgroundColor: palette.card },
+                Shadow.ambient,
+                pressed && styles.pressed,
+            ]}
+        >
+            <Text style={[styles.featuredQuote, { color: palette.text }]} numberOfLines={4}>
+                {`— ${review.note_excerpt}`}
+            </Text>
+            <View style={styles.featuredByline}>
+                <ReviewInitialPlate name={review.display_name} palette={palette} />
+                <View style={styles.featuredIdentity}>
+                    <Text
+                        style={[styles.featuredName, { color: palette.text }]}
+                        numberOfLines={1}
+                    >
+                        {review.display_name}
+                    </Text>
+                    <Text style={[styles.reviewMeta, { color: palette.textMuted }]}>
+                        {`noted ${formatDate(review.created_at)}`}
+                    </Text>
+                </View>
+                <View style={styles.featuredRight}>
+                    <Text style={[styles.featuredRating, { color: palette.text }]}>
+                        {Number(review.rating).toFixed(1)}
+                    </Text>
+                    {review.public_reaction_count > 0 ? (
+                        <Text style={[styles.heartCount, { color: palette.textMuted }]}>
+                            {`♥ ${review.public_reaction_count}`}
+                        </Text>
+                    ) : null}
+                </View>
+            </View>
+        </Pressable>
+    );
+}
+
+function CompactPublicReview({
+    review,
+    viewerUserId,
+    onPress,
+    palette,
+}: {
+    review: PublicReviewCard;
+    viewerUserId?: string | null;
+    onPress?: () => void;
+    palette: Palette;
+}) {
+    return (
+        <Pressable
+            onPress={onPress}
+            accessibilityRole={onPress ? 'button' : undefined}
+            accessibilityLabel={publicReviewAccessibilityLabel(review, viewerUserId)}
+            style={({ pressed }) => [
+                styles.compactReview,
+                { borderBottomColor: palette.ruleInkSoft },
+                pressed && styles.pressed,
+            ]}
+        >
+            <ReviewInitialPlate name={review.display_name} palette={palette} />
+            <View style={styles.compactBody}>
+                <View style={styles.compactHeader}>
+                    <Text
+                        style={[styles.compactName, { color: palette.text }]}
+                        numberOfLines={1}
+                    >
+                        {review.display_name}
+                    </Text>
+                    <Text style={[styles.compactDot, { color: palette.textMuted }]}>·</Text>
+                    <Text style={[styles.reviewMeta, { color: palette.textMuted }]}>
+                        {formatDate(review.created_at)}
+                    </Text>
+                </View>
+                <Text
+                    style={[styles.compactNote, { color: palette.textSecondary }]}
+                    numberOfLines={2}
+                >
+                    {`— ${review.note_excerpt}`}
+                </Text>
+            </View>
+            <Text style={[styles.compactRating, { color: palette.text }]}>
+                {Number(review.rating).toFixed(1)}
+            </Text>
+        </Pressable>
+    );
+}
+
+export function VoicesStream(props: Props) {
+    const {
+        selfVisits,
+        tablemateVisits,
+        publicReviews,
+        reviewCount,
+        matchFilterOn = false,
+        onToggleMatchFilter,
+        onVisitPress,
+        onPublicReviewPress,
+        restaurantName,
+        onSeeAllReviews,
+    } = props;
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
 
-    // Letterboxd "from people you follow" — lift followees into their own tier
-    // (above the ring divider) so the public/strangers list never buries them.
-    const followeeReviews = React.useMemo(
-        () =>
-            publicReviews
-                .filter((r) => r.is_followee)
-                .slice()
-                .sort((a, b) => (b.created_at > a.created_at ? 1 : -1)),
-        [publicReviews],
-    );
     const strangerReviews = React.useMemo(
-        () => publicReviews.filter((r) => !r.is_followee),
+        () => publicReviews.filter((review) => !review.is_followee),
         [publicReviews],
     );
-
     const qualifyingPublicCount = strangerReviews.filter(reviewQualifiesForMatchFilter).length;
     const showFilterPill =
         onToggleMatchFilter != null && qualifyingPublicCount >= FILTER_PILL_MIN_QUALIFYING;
 
     const visiblePublic = React.useMemo(() => {
-        if (!matchFilterOn) return strangerReviews;
-        return strangerReviews
+        // Followee-first (stable, recency preserved within each group) so a
+        // friend's review is never buried behind the doorway by a stranger's.
+        if (!matchFilterOn) {
+            return [...publicReviews].sort(
+                (a, b) => Number(b.is_followee) - Number(a.is_followee),
+            );
+        }
+
+        const followees = publicReviews.filter((review) => review.is_followee);
+        const matchingStrangers = strangerReviews
             .filter(reviewQualifiesForMatchFilter)
             .slice()
             .sort((a, b) => {
@@ -227,12 +306,13 @@ export function VoicesStream({
                 if (bMatch !== aMatch) return bMatch - aMatch;
                 return b.created_at > a.created_at ? 1 : -1;
             });
-    }, [strangerReviews, matchFilterOn]);
+        return [...followees, ...matchingStrangers];
+    }, [publicReviews, strangerReviews, matchFilterOn]);
 
-    const hasPrivateVoices =
-        selfVisits.length > 0 || tablemateVisits.length > 0 || followeeReviews.length > 0;
-    const total =
-        selfVisits.length + tablemateVisits.length + followeeReviews.length + visiblePublic.length;
+    const inlinePublic = visiblePublic.slice(0, 2);
+    const hasPrivateVoices = selfVisits.length > 0 || tablemateVisits.length > 0;
+    const total = selfVisits.length + tablemateVisits.length + visiblePublic.length;
+    const publicReviewTotal = Math.max(0, reviewCount ?? publicReviews.length);
 
     if (!hasPrivateVoices && publicReviews.length === 0) {
         const emptyLine = restaurantName
@@ -249,109 +329,46 @@ export function VoicesStream({
 
     return (
         <View style={styles.wrap}>
-            {/* Section header: hairline · "VOICES" · hairline */}
             <View style={styles.headerRow}>
                 <View style={[styles.headerRule, { backgroundColor: palette.ruleInkSoft }]} />
                 <Text
                     style={[styles.headerLabel, { color: palette.textMuted }]}
                     accessibilityRole="header"
+                    accessibilityLabel="reviews"
                 >
-                    VOICES
+                    REVIEWS
                 </Text>
                 <View style={[styles.headerRule, { backgroundColor: palette.ruleInkSoft }]} />
             </View>
 
-            {/* TICKET-168: always reachable on persisted restaurants — the
-                page withholds the handler for ghosts; zero public reviews
-                lands on the reader's invitation state, not a hidden feature. */}
-            {onSeeAllReviews ? (
-                <Pressable
-                    onPress={onSeeAllReviews}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                    accessibilityLabel="all reviews"
-                    style={({ pressed }) => [styles.seeAll, { opacity: pressed ? 0.6 : 1 }]}
-                >
-                    <Text style={[styles.seeAllText, { color: palette.textSecondary }]}>
-                        {reviewCount && reviewCount > 0
-                            ? `all reviews · ${reviewCount} →`
-                            : 'all reviews →'}
-                    </Text>
-                </Pressable>
-            ) : (
-                <Text
-                    style={[styles.seeAllText, styles.voiceCount, { color: palette.textSecondary }]}
-                >
-                    {total}
-                </Text>
-            )}
-
-            {/* Self */}
-            {selfVisits.map((v) => (
+            {selfVisits.map((visit) => (
                 <VoiceRow
-                    key={`self-${v.id}`}
+                    key={`self-${visit.id}`}
                     kind="self"
-                    initial={getInitial(v.user_display_names[0] ?? 'You')}
+                    initial={getInitial(visit.user_display_names[0] ?? 'You')}
                     name="You"
-                    rating={v.rating}
-                    date={v.date}
-                    note={v.note}
-                    onPress={onVisitPress ? () => onVisitPress(v) : undefined}
+                    rating={visit.rating}
+                    date={visit.date}
+                    note={visit.note}
+                    onPress={onVisitPress ? () => onVisitPress(visit) : undefined}
                     palette={palette}
                 />
             ))}
 
-            {/* Tablemates */}
-            {tablemateVisits.map((v) => (
+            {tablemateVisits.map((visit) => (
                 <VoiceRow
-                    key={`tm-${v.id}`}
+                    key={`tm-${visit.id}`}
                     kind="tablemate"
-                    initial={getInitial(v.user_display_names[0] ?? 'M')}
-                    name={v.user_display_names[0] ?? 'Tablemate'}
-                    rating={v.rating}
-                    date={v.date}
-                    note={v.note}
-                    onPress={onVisitPress ? () => onVisitPress(v) : undefined}
+                    initial={getInitial(visit.user_display_names[0] ?? 'M')}
+                    name={visit.user_display_names[0] ?? 'Tablemate'}
+                    rating={visit.rating}
+                    date={visit.date}
+                    note={visit.note}
+                    onPress={onVisitPress ? () => onVisitPress(visit) : undefined}
                     palette={palette}
                 />
             ))}
 
-            {/* People you follow (Letterboxd-style) — own tier above the divider */}
-            {followeeReviews.length > 0 ? (
-                <>
-                    <View style={styles.tierRow}>
-                        <Text style={[styles.tierLabel, { color: palette.textSecondary }]}>
-                            FROM PEOPLE YOU FOLLOW
-                        </Text>
-                    </View>
-                    {followeeReviews.map((r) => (
-                        <VoiceRow
-                            key={`fol-${r.entry_id}`}
-                            kind="followee"
-                            initial={getInitial(r.display_name)}
-                            name={r.display_name}
-                            rating={r.rating}
-                            date={r.created_at}
-                            note={r.note_excerpt}
-                            onPress={onPublicReviewPress ? () => onPublicReviewPress(r.entry_id) : undefined}
-                            palette={palette}
-                        />
-                    ))}
-                </>
-            ) : null}
-
-            {/* Ring divider — dashed line + italic murmur (inner voices → strangers).
-                Gated on visiblePublic (what's rendered below) so the divider never
-                floats above an empty/match-filtered stranger list. */}
-            {hasPrivateVoices && visiblePublic.length > 0 ? (
-                <View style={[styles.ringDivider, { borderTopColor: DIVIDER_COLOR }]}>
-                    <Text style={[styles.ringDividerText, { color: palette.textMuted }]}>
-                        — from outside your circle
-                    </Text>
-                </View>
-            ) : null}
-
-            {/* "matches mine" filter pill (TICKET-022 Surface C) */}
             {showFilterPill ? (
                 <Pressable
                     onPress={onToggleMatchFilter}
@@ -369,7 +386,7 @@ export function VoicesStream({
                     <Text
                         style={[
                             styles.filterPillText,
-                            { color: matchFilterOn ? '#ffffff' : palette.textSecondary },
+                            { color: matchFilterOn ? palette.textInverse : palette.textSecondary },
                         ]}
                     >
                         show reviews from people whose taste matches mine
@@ -377,26 +394,66 @@ export function VoicesStream({
                 </Pressable>
             ) : null}
 
-            {/* Public */}
-            {visiblePublic.map((r) => {
-                const suppressChip = viewerUserId != null && r.user_id === viewerUserId;
-                const matchPct =
-                    !suppressChip && r.calibration ? r.calibration.match_pct : null;
-                return (
-                    <VoiceRow
-                        key={`pub-${r.entry_id}`}
-                        kind="public"
-                        initial={getInitial(r.display_name)}
-                        name={r.display_name}
-                        rating={r.rating}
-                        date={r.created_at}
-                        note={r.note_excerpt}
-                        matchPct={matchPct}
-                        onPress={onPublicReviewPress ? () => onPublicReviewPress(r.entry_id) : undefined}
-                        palette={palette}
-                    />
-                );
-            })}
+            {inlinePublic[0] ? (
+                <FeaturedReview
+                    review={inlinePublic[0]}
+                    viewerUserId={props.viewerUserId}
+                    onPress={onPublicReviewPress
+                        ? () => onPublicReviewPress(inlinePublic[0].entry_id)
+                        : undefined}
+                    palette={palette}
+                />
+            ) : null}
+
+            {inlinePublic[1] ? (
+                <CompactPublicReview
+                    review={inlinePublic[1]}
+                    viewerUserId={props.viewerUserId}
+                    onPress={onPublicReviewPress
+                        ? () => onPublicReviewPress(inlinePublic[1].entry_id)
+                        : undefined}
+                    palette={palette}
+                />
+            ) : null}
+
+            {onSeeAllReviews ? (
+                publicReviewTotal > 0 ? (
+                    <Pressable
+                        onPress={onSeeAllReviews}
+                        accessibilityRole="button"
+                        accessibilityLabel="all reviews"
+                        style={({ pressed }) => [
+                            styles.folioCard,
+                            { backgroundColor: palette.card },
+                            Shadow.ambient,
+                            pressed && styles.folioPressed,
+                        ]}
+                    >
+                        <Text style={[styles.folioText, { color: palette.text }]}>
+                            {`all ${publicReviewTotal} review${publicReviewTotal === 1 ? '' : 's'}`}
+                        </Text>
+                        <Text style={[styles.folioArrow, { color: palette.primary }]}>→</Text>
+                    </Pressable>
+                ) : (
+                    <Pressable
+                        onPress={onSeeAllReviews}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel="all reviews"
+                        style={({ pressed }) => [styles.seeAll, { opacity: pressed ? 0.6 : 1 }]}
+                    >
+                        <Text style={[styles.seeAllText, { color: palette.textSecondary }]}>
+                            all reviews →
+                        </Text>
+                    </Pressable>
+                )
+            ) : (
+                <Text
+                    style={[styles.seeAllText, styles.voiceCount, { color: palette.textSecondary }]}
+                >
+                    {total}
+                </Text>
+            )}
         </View>
     );
 }
@@ -404,13 +461,15 @@ export function VoicesStream({
 const styles = StyleSheet.create({
     wrap: {
         paddingHorizontal: 22,
-        paddingTop: 4,
+        paddingTop: Spacing.xs,
+        paddingBottom: Spacing.md,
     },
     headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.sm,
         paddingTop: Spacing.md,
+        marginBottom: Spacing.xs,
     },
     headerRule: {
         flex: 1,
@@ -424,30 +483,19 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
     },
     seeAllText: {
+        ...Type.metadata,
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-        lineHeight: 18,
         letterSpacing: 0.2,
     },
     seeAll: {
         alignSelf: 'flex-end',
         paddingVertical: Spacing.xs,
-        marginBottom: Spacing.xs,
+        marginTop: Spacing.sm,
     },
     voiceCount: {
         alignSelf: 'flex-end',
         paddingVertical: Spacing.xs,
-        marginBottom: Spacing.xs,
-    },
-    tierRow: {
-        marginTop: 16,
-        marginBottom: 6,
-    },
-    tierLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.4,
-        textTransform: 'uppercase',
+        marginTop: Spacing.sm,
     },
     voice: {
         flexDirection: 'row',
@@ -501,36 +549,137 @@ const styles = StyleSheet.create({
         fontSize: 13,
         lineHeight: 19,
     },
-    ringDivider: {
-        marginTop: 16,
-        paddingTop: 12,
-        borderTopWidth: 1,
-        marginBottom: 4,
-    },
-    ringDividerText: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 11.5,
-    },
     filterPill: {
         alignSelf: 'flex-start',
         borderRadius: Radius.full,
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.xs + 2,
-        marginTop: Spacing.xs,
+        marginTop: Spacing.sm,
         marginBottom: Spacing.sm,
     },
     filterPillText: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        lineHeight: 17,
+        ...Type.metadata,
     },
-    matchNumeral: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12,
+    featuredCard: {
+        borderRadius: Radius.md,
+        padding: Spacing.md + 2,
+        marginTop: Spacing.md,
     },
-    matchTail: {
+    featuredQuote: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 19,
+        lineHeight: 25,
+    },
+    featuredByline: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginTop: Spacing.md,
+    },
+    reviewPlate: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
+    reviewPlateText: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 14,
+        lineHeight: 18,
+    },
+    featuredIdentity: {
+        flex: 1,
+        minWidth: 0,
+    },
+    featuredName: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 16,
+        lineHeight: 20,
+    },
+    reviewMeta: {
+        ...Type.metadata,
+    },
+    featuredRight: {
+        alignItems: 'flex-end',
+        marginLeft: Spacing.sm,
+    },
+    featuredRating: {
+        ...Type.ratingCompact,
+        fontSize: 20,
+        lineHeight: 24,
+        textAlign: 'right',
+    },
+    heartCount: {
+        ...Type.metadata,
+        marginTop: 2,
+    },
+    compactReview: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 11,
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+    },
+    compactBody: {
+        flex: 1,
+        minWidth: 0,
+    },
+    compactHeader: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 7,
+        marginBottom: Spacing.xs,
+    },
+    compactName: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 16,
+        lineHeight: 20,
+        flexShrink: 1,
+    },
+    compactDot: {
+        ...Type.metadata,
+    },
+    compactNote: {
+        fontFamily: 'Newsreader_400Regular',
+        fontSize: 16,
+        lineHeight: 22,
+    },
+    compactRating: {
+        ...Type.ratingCompact,
+        fontSize: 19,
+        lineHeight: 24,
+        minWidth: 42,
+        textAlign: 'right',
+    },
+    folioCard: {
+        minHeight: 60,
+        borderRadius: Radius.md,
+        paddingLeft: Spacing.md + 2,
+        paddingRight: Spacing.md,
+        paddingVertical: Spacing.sm,
+        marginTop: Spacing.md,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    folioText: {
+        ...Type.headlineMedium,
+        flex: 1,
+    },
+    folioArrow: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 10.5,
+        fontSize: 20,
+        lineHeight: 24,
+        marginLeft: Spacing.md,
+    },
+    pressed: {
+        opacity: 0.75,
+    },
+    folioPressed: {
+        opacity: 0.7,
     },
     empty: {
         paddingHorizontal: 22,
