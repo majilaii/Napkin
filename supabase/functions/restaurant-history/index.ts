@@ -16,6 +16,7 @@
  *   GET  ?action=page&restaurant_id=X[&table_id=Y]
  *   GET  ?action=reserve_link&restaurant_id=X   (TICKET-149 booking-page resolver)
  *   POST ?action=reviews  { restaurant_id, cursor?, limit? }   (TICKET-154 all-reviews page)
+ *   POST ?action=featured_lists  { restaurant_id }
  *
  * Both filter to data the requesting user is entitled to see. Table history
  * verifies the caller is a member of the table; user history is trivially
@@ -273,6 +274,7 @@ serve(async (req) => {
             req.method === 'POST'
             && action !== 'reviews'
             && action !== 'social_clippings'
+            && action !== 'featured_lists'
             && action !== 'peek_card'
         ) {
             return fail('Method not allowed', 405);
@@ -651,6 +653,51 @@ serve(async (req) => {
             });
 
             return json({ data: { rows } });
+        }
+
+        // ── Featured in lists ────────────────────────────────────────────────
+        // Body-POST action: MUST remain above the global restaurantId guard.
+        // The RPC is service-role-only; p_viewer is the JWT-validated caller.
+        if (action === 'featured_lists') {
+            const body = await req.json().catch(() => ({}));
+            const rid = (body?.restaurant_id ?? restaurantId) as string | null;
+            if (!rid) return fail('restaurant_id is required');
+
+            const resolvedId = await resolveRestaurantLookupId(supabase, rid);
+            if (!resolvedId) return fail('restaurant not found', 404);
+
+            const { data: featuredRows, error: rpcErr } = await supabase.rpc(
+                'fn_restaurant_featured_lists',
+                {
+                    p_viewer: user.id,
+                    p_restaurant_id: resolvedId,
+                    p_limit: 3,
+                },
+            );
+            if (rpcErr) {
+                const code = (rpcErr as { code?: string }).code ?? '';
+                if (code === '42883' || code === 'PGRST202') {
+                    console.warn('featured_lists: fn_restaurant_featured_lists absent — returning empty band');
+                    return json({ data: { rows: [], total: 0 } });
+                }
+                reportError(rpcErr, { fn: 'restaurant-history', action: 'featured_lists' });
+                throw rpcErr;
+            }
+
+            const rawRows = (featuredRows ?? []) as any[];
+            const rows = rawRows.map((row) => ({
+                id: row.id as string,
+                title: row.title as string,
+                emoji: (row.emoji as string | null) ?? null,
+                entry_count: Number(row.entry_count ?? 0),
+                owner_display_name: (row.owner_display_name as string | null) ?? null,
+                owner_username: (row.owner_username as string | null) ?? null,
+            }));
+            const total = rawRows.length > 0
+                ? Number(rawRows[0].total_count ?? 0)
+                : 0;
+
+            return json({ data: { rows, total } });
         }
 
         // ── Map pin peek-card enrichment (TICKET-190) ────────────────────────
