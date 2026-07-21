@@ -1065,8 +1065,9 @@ const styles = StyleSheet.create({
     // is absent. Functional text = Manrope, never decorative italic.
     allReviewsQuiet: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
-        letterSpacing: 0.3,
+        fontSize: 13,
+        lineHeight: 18,
+        letterSpacing: 0.2,
         textAlign: 'center',
         marginTop: 8,
         paddingHorizontal: 20,
