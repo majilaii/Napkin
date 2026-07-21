@@ -112,20 +112,28 @@ export default function TableMapScreen() {
     // Saved source (already carries lat/lng after TICKET-138's list_table change).
     const { data: tableWishlist } = useTableWishlist(user?.id, tableId);
     const { data: myLists } = useMyLists(user?.id);
+    // Every list the viewer has, like the Places map picker (founder feedback
+    // 2026-07-22 — the old table_id filter hid personal lists entirely). This
+    // table's lists lead, then personal, then other tables'; the stable sort
+    // keeps updated_at DESC within each group. ownerLabel badges table lists.
     const tableListOptions = useMemo<WishlistMapListOption[]>(
-        () =>
-            (myLists ?? [])
-                .filter((list) => list.table_id === tableId)
+        () => {
+            const rank = (tid: string | null | undefined) =>
+                tid === tableId ? 0 : tid == null ? 1 : 2;
+            return [...(myLists ?? [])]
+                .sort((a, b) => rank(a.table_id) - rank(b.table_id))
                 .map((list) => ({
                     id: list.id,
                     title: list.title,
                     emoji: list.emoji,
                     entryCount: list.entry_count,
-                })),
+                    ownerLabel: list.table_name ?? null,
+                }));
+        },
         [myLists, tableId],
     );
     // `useList` is keyed only by list id. Validate the stateful selection against
-    // this viewer's current-Table list set before touching that cache, otherwise
+    // this viewer's current option set before touching that cache, otherwise
     // an in-place auth/Table switch could briefly reuse private detail from the
     // previous context.
     const effectiveSelectedListId = useMemo(
