@@ -32,7 +32,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Type, Shadow } from '@/constants/theme';
+import { Colors, Spacing, Radius, IconSize, Type, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import {
@@ -408,6 +408,21 @@ export default function WishlistScreen() {
 
     // ── Wishlist Redesign: Pinned ↔ Lists segmented tab ──────────────────────
     const [activeTab, setActiveTab] = useState<'pinned' | 'lists'>('pinned');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
+    useEffect(() => {
+        const timeout = setTimeout(() => {
+            setDebouncedSearchQuery(searchQuery.trim());
+        }, 200);
+        return () => clearTimeout(timeout);
+    }, [searchQuery]);
+
+    const clearSearch = useCallback(() => {
+        setSearchQuery('');
+        setDebouncedSearchQuery('');
+    }, []);
+    const hasSearchQuery = searchQuery.trim().length > 0;
 
     // ── Filters: Cuisine · Price · Area · Sort (one tabbed FilterTabsSheet) ──
     // Open-now / walk-time are deliberately omitted — the wishlist payload carries
@@ -604,7 +619,8 @@ export default function WishlistScreen() {
         setCuisineFilter(null);
         setPriceFilter(null);
         setCityFilter(null);
-    }, []);
+        clearSearch();
+    }, [clearSearch]);
 
     const hasActiveFilters = !!cuisineFilter || !!priceFilter || !!cityFilter;
 
@@ -621,6 +637,13 @@ export default function WishlistScreen() {
         if (priceFilter) {
             rows = rows.filter((i) => String(i.restaurant?.price_level ?? '') === priceFilter);
         }
+        const normalizedSearchQuery = debouncedSearchQuery.toLowerCase();
+        if (normalizedSearchQuery) {
+            rows = rows.filter((i) => (
+                [i.restaurant?.name, i.restaurant?.city, i.restaurant?.cuisine]
+                    .some((value) => value?.toLowerCase().includes(normalizedSearchQuery) ?? false)
+            ));
+        }
         const nearActive = sortMode === 'near' && !!coords;
         const decorated = rows.map((item) => {
             const r = item.restaurant;
@@ -634,7 +657,21 @@ export default function WishlistScreen() {
             decorated.sort((a, b) => a.dist - b.dist); // nearest first; no-coord items (Infinity) sink
         }
         return decorated;
-    }, [pinnedRows, cityFilter, cuisineFilter, priceFilter, sortMode, coords]);
+    }, [pinnedRows, cityFilter, cuisineFilter, priceFilter, debouncedSearchQuery, sortMode, coords]);
+
+    // Search must cover the full cursor-paged wishlist, not only pages already
+    // loaded. Fetch one page at a time; each completed page re-runs this effect
+    // until the query reports that no next page remains.
+    useEffect(() => {
+        if (
+            viewMode !== 'list'
+            || activeTab !== 'pinned'
+            || !debouncedSearchQuery
+            || !hasNextPage
+            || isFetchingNextPage
+        ) return;
+        void fetchNextPage();
+    }, [activeTab, debouncedSearchQuery, fetchNextPage, hasNextPage, isFetchingNextPage, viewMode]);
 
     // Default Your map is explicit personal context: Wishlist + Been. Lists no
     // longer leak every authored collection into this layer; the Lists picker
@@ -1050,6 +1087,17 @@ export default function WishlistScreen() {
                                 <View style={[styles.listBarDot, { backgroundColor: palette.primary }]} />
                             ) : null}
                         </Pressable>
+                        {activeTab === 'pinned' && totalPinned > 0 ? (
+                            <Pressable
+                                onPress={() => setShareTarget({ count: totalPinned })}
+                                hitSlop={8}
+                                style={styles.listBarIcon}
+                                accessibilityRole="button"
+                                accessibilityLabel="share saved places"
+                            >
+                                <Ionicons name="share-outline" size={19} color={palette.textSecondary} />
+                            </Pressable>
+                        ) : null}
                         <Pressable
                             onPress={() => setImportSheetVisible(true)}
                             hitSlop={8}
@@ -1062,11 +1110,41 @@ export default function WishlistScreen() {
                     </View>
 
                     {activeTab === 'pinned' ? (
+                        <View style={[styles.listSearch, { backgroundColor: palette.surfaceContainerLow }]}>
+                            <Ionicons name="search-outline" size={IconSize.sm} color={palette.textMuted} />
+                            <TextInput
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                style={[Type.body, styles.listSearchInput, { color: palette.text }]}
+                                placeholder="search your spots"
+                                placeholderTextColor={palette.textMuted}
+                                autoFocus={false}
+                                autoCorrect={false}
+                                autoCapitalize="none"
+                                returnKeyType="search"
+                                clearButtonMode="never"
+                                accessibilityLabel="search saved places"
+                            />
+                            {searchQuery.length > 0 ? (
+                                <Pressable
+                                    onPress={clearSearch}
+                                    hitSlop={Spacing.sm}
+                                    style={styles.listSearchClear}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="clear search"
+                                >
+                                    <Ionicons name="close-circle" size={IconSize.sm} color={palette.textMuted} />
+                                </Pressable>
+                            ) : null}
+                        </View>
+                    ) : null}
+
+                    {activeTab === 'pinned' ? (
                         isLoading && allItems.length === 0 ? (
                             <View style={styles.loadingCenter}>
                                 <ActivityIndicator color={palette.primary} />
                             </View>
-                        ) : totalPinned === 0 && !hasActiveFilters ? (
+                        ) : totalPinned === 0 && !hasActiveFilters && !hasSearchQuery ? (
                             <WishlistEmptyState
                                 palette={palette}
                                 onImport={() => setImportSheetVisible(true)}
@@ -1096,7 +1174,7 @@ export default function WishlistScreen() {
                                 ]}
                                 showsVerticalScrollIndicator={false}
                                 onEndReached={() => {
-                                    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+                                    if (!hasSearchQuery && hasNextPage && !isFetchingNextPage) void fetchNextPage();
                                 }}
                                 onEndReachedThreshold={0.4}
                                 ListHeaderComponent={(
@@ -1133,42 +1211,28 @@ export default function WishlistScreen() {
                                             <Text
                                                 style={[
                                                     styles.rSpotsKicker,
-                                                    styles.rSpotsKickerFlex,
                                                     { color: palette.textMuted },
                                                 ]}
                                             >
                                                 {`${displayedRows.length} ${displayedRows.length === 1 ? 'spot' : 'spots'}${filterSuffix}`}
                                             </Text>
-                                            {totalPinned > 0 ? (
-                                                <Pressable
-                                                    onPress={() => setShareTarget({ count: totalPinned })}
-                                                    style={({ pressed }) => [
-                                                        styles.rShareButton,
-                                                        {
-                                                            backgroundColor: palette.surfaceJournalHi,
-                                                            opacity: pressed ? 0.78 : 1,
-                                                            transform: [{ scale: pressed ? 0.96 : 1 }],
-                                                        },
-                                                    ]}
-                                                    accessibilityRole="button"
-                                                    accessibilityLabel="share saved places"
-                                                >
-                                                    <Ionicons name="share-outline" size={16} color={palette.textSecondary} />
-                                                </Pressable>
-                                            ) : null}
                                         </View>
                                     </>
                                 )}
                                 ListEmptyComponent={(
                                     <View style={styles.rNoResults}>
                                         <Text style={[styles.rNoResultsTitle, { color: palette.text }]}>Nothing matches that</Text>
-                                        <Text style={[styles.rNoResultsHint, { color: palette.textMuted }]}>Try loosening a filter.</Text>
+                                        <Text style={[styles.rNoResultsHint, { color: palette.textMuted }]}>
+                                            {hasSearchQuery ? 'Try another search.' : 'Try loosening a filter.'}
+                                        </Text>
                                         <Pressable
                                             onPress={clearFilters}
                                             style={[styles.rClearBtn, { borderColor: palette.terracottaBorder }]}
                                             accessibilityRole="button"
                                         >
-                                            <Text style={[styles.rClearText, { color: palette.primary }]}>Clear filters</Text>
+                                            <Text style={[styles.rClearText, { color: palette.primary }]}>
+                                                {hasSearchQuery ? (hasActiveFilters ? 'Clear all' : 'Clear search') : 'Clear filters'}
+                                            </Text>
                                         </Pressable>
                                     </View>
                                 )}
@@ -1414,6 +1478,24 @@ const styles = StyleSheet.create({
         height: 6,
         borderRadius: 3,
     },
+    listSearch: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginHorizontal: Spacing.lg,
+        marginBottom: Spacing.xs,
+        paddingLeft: Spacing.md,
+        paddingRight: Spacing.xs,
+        paddingVertical: Spacing.sm,
+        borderRadius: Radius.full,
+    },
+    listSearchInput: {
+        flex: 1,
+        paddingVertical: 0,
+    },
+    listSearchClear: {
+        padding: Spacing.sm,
+    },
     // Map pill — frosted flip back to the map, bottom-right over the list.
     mapPill: {
         position: 'absolute',
@@ -1459,16 +1541,6 @@ const styles = StyleSheet.create({
     },
     rPlacesCredit: {
         marginBottom: Spacing.sm,
-    },
-    rSpotsKickerFlex: {
-        flex: 1,
-    },
-    rShareButton: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     rNoResults: {
         alignItems: 'center',
