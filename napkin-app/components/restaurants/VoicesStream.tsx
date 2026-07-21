@@ -35,7 +35,7 @@ interface Props {
     tablemateVisits: PageVisit[];
     publicReviews: PublicReviewCard[];
     /** TICKET-168: total public reviews (page payload `public_reviews_total`) —
-     * the ALL REVIEWS label carries it when > 0 ("ALL REVIEWS · 12 →"). */
+     * the all-reviews affordance carries it when > 0 ("all reviews · 12 →"). */
     reviewCount?: number | null;
     /** Authenticated viewer's id — suppresses calibration chip on their own public rows. */
     viewerUserId?: string | null;
@@ -51,7 +51,7 @@ interface Props {
      */
     restaurantName?: string | null;
     /** TICKET-154: opens the all-reviews page. Renders the "all reviews" affordance
-     * in the section header when set and there are public reviews to expand. */
+     * beneath the section header when set and there are public reviews to expand. */
     onSeeAllReviews?: () => void;
 }
 
@@ -249,30 +249,42 @@ export function VoicesStream({
 
     return (
         <View style={styles.wrap}>
-            {/* Section label */}
-            <View style={styles.secRow}>
-                <Text style={[styles.secLabel, { color: palette.textMuted }]}>VOICES</Text>
-                {/* TICKET-168: always reachable on persisted restaurants — the
-                    page withholds the handler for ghosts; zero public reviews
-                    lands on the reader's invitation state, not a hidden feature. */}
-                {onSeeAllReviews ? (
-                    <Pressable
-                        onPress={onSeeAllReviews}
-                        hitSlop={8}
-                        accessibilityRole="button"
-                        accessibilityLabel="all reviews"
-                        style={({ pressed }) => [styles.seeAll, { opacity: pressed ? 0.6 : 1 }]}
-                    >
-                        <Text style={[styles.secCount, { color: palette.textSecondary }]}>
-                            {reviewCount && reviewCount > 0
-                                ? `ALL REVIEWS · ${reviewCount} →`
-                                : 'ALL REVIEWS →'}
-                        </Text>
-                    </Pressable>
-                ) : (
-                    <Text style={[styles.secCount, { color: palette.textSecondary }]}>{total}</Text>
-                )}
+            {/* Section header: hairline · "VOICES" · hairline */}
+            <View style={styles.headerRow}>
+                <View style={[styles.headerRule, { backgroundColor: palette.ruleInkSoft }]} />
+                <Text
+                    style={[styles.headerLabel, { color: palette.textMuted }]}
+                    accessibilityRole="header"
+                >
+                    VOICES
+                </Text>
+                <View style={[styles.headerRule, { backgroundColor: palette.ruleInkSoft }]} />
             </View>
+
+            {/* TICKET-168: always reachable on persisted restaurants — the
+                page withholds the handler for ghosts; zero public reviews
+                lands on the reader's invitation state, not a hidden feature. */}
+            {onSeeAllReviews ? (
+                <Pressable
+                    onPress={onSeeAllReviews}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="all reviews"
+                    style={({ pressed }) => [styles.seeAll, { opacity: pressed ? 0.6 : 1 }]}
+                >
+                    <Text style={[styles.seeAllText, { color: palette.textSecondary }]}>
+                        {reviewCount && reviewCount > 0
+                            ? `all reviews · ${reviewCount} →`
+                            : 'all reviews →'}
+                    </Text>
+                </Pressable>
+            ) : (
+                <Text
+                    style={[styles.seeAllText, styles.voiceCount, { color: palette.textSecondary }]}
+                >
+                    {total}
+                </Text>
+            )}
 
             {/* Self */}
             {selfVisits.map((v) => (
@@ -394,26 +406,38 @@ const styles = StyleSheet.create({
         paddingHorizontal: 22,
         paddingTop: 4,
     },
-    secRow: {
+    headerRow: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'baseline',
-        marginBottom: 10,
-        paddingTop: 16,
+        alignItems: 'center',
+        gap: Spacing.sm,
+        paddingTop: Spacing.md,
     },
-    secLabel: {
+    headerRule: {
+        flex: 1,
+        height: 1,
+    },
+    headerLabel: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
-        letterSpacing: 1.4,
+        fontSize: 11,
+        lineHeight: 15,
+        letterSpacing: 1.5,
         textTransform: 'uppercase',
     },
-    secCount: {
+    seeAllText: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 9,
-        letterSpacing: 1,
+        fontSize: 13,
+        lineHeight: 18,
+        letterSpacing: 0.2,
     },
     seeAll: {
-        paddingVertical: 2,
+        alignSelf: 'flex-end',
+        paddingVertical: Spacing.xs,
+        marginBottom: Spacing.xs,
+    },
+    voiceCount: {
+        alignSelf: 'flex-end',
+        paddingVertical: Spacing.xs,
+        marginBottom: Spacing.xs,
     },
     tierRow: {
         marginTop: 16,

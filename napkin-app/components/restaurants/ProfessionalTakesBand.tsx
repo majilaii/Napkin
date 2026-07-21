@@ -109,7 +109,8 @@ const styles = StyleSheet.create({
     },
     headerLabel: {
         fontFamily: 'Manrope_700Bold',
-        fontSize: 9,
+        fontSize: 11,
+        lineHeight: 15,
         letterSpacing: 1.5,
         textTransform: 'uppercase',
     },
