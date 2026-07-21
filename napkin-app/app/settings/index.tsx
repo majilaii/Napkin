@@ -182,6 +182,9 @@ export default function SettingsScreen() {
     const updatePreviewOnLaunch = (value: boolean) => {
         setPreviewOnLaunch(value);
         void setPreviewOnboardingOnLaunch(value);
+        // Enter the preview immediately — the launch pref alone is invisible
+        // until a cold start, which iOS rarely gives a warm-resumed app.
+        if (value) router.push('/onboarding' as any);
     };
 
     // Two-step destructive confirm (guideline 5.1.1(v)) — unchanged from TICKET-090.
