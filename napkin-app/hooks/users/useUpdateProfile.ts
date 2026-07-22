@@ -1,5 +1,5 @@
 /**
- * useUpdateProfile — mutation for display_name, bio, avatar_url, username.
+ * useUpdateProfile — mutation for display_name, bio, avatar_url, and home_city.
  *
  * Partial payload: only include fields that changed.
  *
@@ -29,6 +29,7 @@ type UpdateProfilePayload = {
     display_name?: string;
     bio?: string | null;
     avatar_url?: string | null;
+    home_city?: string | null;
 };
 
 type MutationContext = {
