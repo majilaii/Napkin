@@ -161,7 +161,7 @@ async function handleFeedSocialsRequest(
         }
         const passRows = (Array.isArray(passRes.data) ? passRes.data : []) as ViewerPassRow[];
 
-        // ── Ladder + sort + cap (cap applies AFTER the viewer filtering) ─────
+        // ── Ladder + sort (dead-clip filtering + cap happen below) ───────────
         type Scored = { row: ViewerPassRow; ladder: SocialsLadderResolution };
         const scored: Scored[] = passRows.map((row) => ({
             row,
@@ -184,31 +184,46 @@ async function handleFeedSocialsRequest(
             return a.row.restaurant_id < b.row.restaurant_id ? -1 : 1;
         });
 
-        const capped = scored.slice(0, RAIL_CAP);
-
-        // ── Durable thumbs: content_key via videoUrlKey.ts, join clip_thumbs ─
+        // ── Durable thumbs + confirmed-dead filtering ────────────────────────
+        // Derive every candidate key before the cap so later live candidates
+        // backfill slots vacated by confirmed-gone representatives.
         const keyByRestaurant = new Map<string, string>();
-        for (const s of capped) {
+        for (const s of scored) {
             if (s.row.rep_url) {
                 keyByRestaurant.set(s.row.restaurant_id, await contentKey(s.row.rep_url));
             }
         }
         const thumbByKey = new Map<string, string>();
+        const goneKeys = new Set<string>();
         const wantKeys = [...new Set(keyByRestaurant.values())];
         if (wantKeys.length > 0) {
             const { data: thumbRows, error: thumbErr } = await supabase
                 .from('clip_thumbs')
-                .select('content_key, storage_path')
+                .select('content_key, storage_path, status')
                 .in('content_key', wantKeys)
-                .eq('status', 'cached');
+                .in('status', ['cached', 'gone']);
             if (thumbErr) {
                 reportError(thumbErr, { fn: 'feed-socials', action: 'clip_thumbs' });
                 throw thumbErr;
             }
-            for (const t of (thumbRows ?? []) as Array<{ content_key: string; storage_path: string | null }>) {
-                if (t.storage_path) thumbByKey.set(t.content_key, t.storage_path);
+            for (const t of (thumbRows ?? []) as Array<{
+                content_key: string;
+                storage_path: string | null;
+                status: 'cached' | 'gone';
+            }>) {
+                if (t.status === 'gone') goneKeys.add(t.content_key);
+                else if (t.storage_path) thumbByKey.set(t.content_key, t.storage_path);
             }
         }
+
+        // No thumb row is not evidence of death. Only explicit gone markers
+        // exclude URL-bearing cards; URL-less representatives always pass.
+        const capped = scored
+            .filter((s) => {
+                const key = keyByRestaurant.get(s.row.restaurant_id);
+                return !key || !goneKeys.has(key);
+            })
+            .slice(0, RAIL_CAP);
 
         // ── Restaurant hydration ─────────────────────────────────────────────
         const restaurantById = new Map<string, RestaurantRow>();

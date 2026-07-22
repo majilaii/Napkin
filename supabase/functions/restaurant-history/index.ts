@@ -620,23 +620,33 @@ serve(async (req) => {
                 a._rank - b._rank ||
                 (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
 
-            const capped = cards.slice(0, 12);
-
-            // Join durable thumbnails for the winners' keys (status='cached' only —
-            // a 'gone' row stays typographic). Never returns a provider URL.
-            const wantKeys = capped.map((c) => c._key).filter((k): k is string => !!k);
+            // Read every candidate key before the cap so confirmed-dead clips
+            // can be removed and later live candidates can backfill the rail.
+            const wantKeys = [...new Set(cards.map((c) => c._key).filter((k): k is string => !!k))];
             const thumbByKey = new Map<string, string>();
+            const goneKeys = new Set<string>();
             if (wantKeys.length > 0) {
                 const { data: thumbRows, error: thumbErr } = await supabase
                     .from('clip_thumbs')
-                    .select('content_key, storage_path')
+                    .select('content_key, storage_path, status')
                     .in('content_key', wantKeys)
-                    .eq('status', 'cached');
+                    .in('status', ['cached', 'gone']);
                 if (thumbErr) throw thumbErr;
-                for (const t of (thumbRows ?? []) as any[]) {
-                    if (t.storage_path) thumbByKey.set(t.content_key as string, t.storage_path as string);
+                for (const t of (thumbRows ?? []) as Array<{
+                    content_key: string;
+                    storage_path: string | null;
+                    status: 'cached' | 'gone';
+                }>) {
+                    if (t.status === 'gone') goneKeys.add(t.content_key);
+                    else if (t.storage_path) thumbByKey.set(t.content_key, t.storage_path);
                 }
             }
+
+            // Missing thumb rows remain eligible; only an explicit gone marker
+            // excludes a URL-bearing card. Keyless video cards always pass.
+            const capped = cards
+                .filter((c) => !c._key || !goneKeys.has(c._key))
+                .slice(0, 12);
 
             const rows = capped.map((c) => {
                 const storagePath = c._key ? thumbByKey.get(c._key) ?? null : null;
