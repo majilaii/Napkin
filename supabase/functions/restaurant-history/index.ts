@@ -643,10 +643,11 @@ serve(async (req) => {
             }
 
             // Missing thumb rows remain eligible; only an explicit gone marker
-            // excludes a URL-bearing card. Keyless video cards always pass.
+            // excludes a URL-bearing card. Keyless video cards always pass. Keep
+            // the rail footprint to four after the dead-clip filter.
             const capped = cards
                 .filter((c) => !c._key || !goneKeys.has(c._key))
-                .slice(0, 12);
+                .slice(0, 4);
 
             const rows = capped.map((c) => {
                 const storagePath = c._key ? thumbByKey.get(c._key) ?? null : null;
@@ -700,7 +701,9 @@ serve(async (req) => {
                 title: row.title as string,
                 emoji: (row.emoji as string | null) ?? null,
                 entry_count: Number(row.entry_count ?? 0),
-                owner_display_name: (row.owner_display_name as string | null) ?? null,
+                owner_display_name: row.owner_id === user.id
+                    ? 'you'
+                    : (row.owner_display_name as string | null) ?? null,
                 owner_username: (row.owner_username as string | null) ?? null,
             }));
             const total = rawRows.length > 0
