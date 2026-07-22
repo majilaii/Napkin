@@ -1698,7 +1698,11 @@ serve(async (req) => {
                 cooked_by: cooked_by ?? null,
                 value_profile: value_profile ?? null,
                 visited_at: visitedAtValue,
-                visibility: visibility ?? 'private',
+                // Founder order 2026-07-22: an omitted visibility on CREATE means
+                // the user made no privacy choice — default public-eligible
+                // ('friends'), not 'private'. Explicit 'private' still wins; the
+                // edit/merge and supper-take paths keep their own semantics.
+                visibility: visibility ?? 'friends',
                 ...(vibe_rating != null ? { vibe_rating } : {}),
                 ...(flavor_rating != null ? { flavor_rating } : {}),
                 ...(service_rating != null ? { service_rating } : {}),

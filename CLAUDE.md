@@ -47,10 +47,10 @@ Napkin is **"Letterboxd for restaurants, with a private supper club."** A mobile
 ### Privacy and the public layer (doctrine locked 2026-04-17)
 
 - **Profiles are PUBLIC BY DEFAULT** (updated 2026-04-20). When a user has a profile, it's world-browsable — Letterboxd-shaped. Opt-out via settings toggle. Do NOT gate behind opt-in.
-- **Logs default private.** Surface on public profile only when log has real review content AND profile is public (the default).
+- **Logs default PUBLIC-eligible (founder order 2026-07-22; supersedes "logs default private").** Solo logs default `visibility='friends'`, table-shared logs `'table'` — both publicly eligible via `is_entry_publicly_eligible` (public account + rating + ≥20-char note). `'private'` is an explicit choice, and account-level privacy in settings remains the blanket opt-out. Never re-default any log path to `'private'`.
 - **Tables are never public.** Whatever a user opts in to publicly does not include Table activity. The Table circle stays sacred regardless of account mode.
 - **Logs vs. lists have different defaults:**
-  - **Logs** (rating + note): private by default. Only surface publicly if the account is opted-in AND the log has real review content.
+  - **Logs** (rating + note): PUBLIC-eligible by default (2026-07-22, superseding private-default). Surface publicly when the account is public AND the log has real review content; `'private'` visibility is an explicit user choice that hides everywhere.
   - **Lists** (curatorial, themed): per-list public/private picker at creation; lists are made to share, so public per list is the expected default — but account-level privacy still gates world visibility.
 - **Saves (wishlist pins) are public-by-default signals** (2026-07-10, TICKET-155). A save is low-intimacy ("tempted"), not a diary entry — like a Letterboxd watchlist add. When the account is public (the default), a user's saves AND their source clipping (the TikTok/IG it came from) are visible to anyone, strangers included. **Private account → saves stay self + Table-mates only** (unchanged). Gated ONLY by `account_privacy` — **no per-item/per-save toggle** (consistent with the rejected per-log-toggle doctrine). **Clipping visible ⟺ save visible.** The read predicate is the `SECURITY DEFINER` `fn_restaurant_saves_visible` RPC — the both-direction block check MUST live in a definer, never an RLS `USING` clause (`blocked_users`' own RLS hides the saver→viewer block row and would fail open). Non-owners get a sanitized source allowlist `{type,url,author_handle,author_name,thumbnail_url}`; the owner gets the raw source. The `wishlist_items` SELECT policy is unchanged (owner + Table-mate) — legacy defence-in-depth, NOT the doctrine surface.
 - **Private accounts stay reachable, searchable, and followable** (2026-07-10, TICKET-155). A private profile is not a UX dead-end: it appears in search and stays followable, and tapping in shows a quiet **"their journal is private"** state — identity (name/avatar/username/bio) + follower/following counts + a working follow button, with ALL palate withheld. **NO follow-request/approve machinery** — follow always resolves immediately. Going private still means something (logs/palate stay hidden; saves drop to self + Table-mates); it just isn't a wall.
@@ -63,7 +63,7 @@ Napkin is **"Letterboxd for restaurants, with a private supper club."** A mobile
 
 **Rejected and superseded (do not re-open):**
 - Product A "Beli with trust" as the whole app (public-default, broad discovery as hero) — rejected. Tables remain the hero.
-- Public-by-default for logs — rejected. Causes self-censorship.
+- Public-by-default for logs — rejected 2026-04-17, REVERSED 2026-07-22 by founder order ("everything is public by default... unless you go to settings"). Solo logs now default `'friends'`.
 - Per-log privacy toggles — rejected. Account-level toggle only.
 - Private-by-default profiles (old 2026-04-17 stance) — superseded 2026-04-20. Profiles now public-default with opt-out.
 - "Path A — no public layer ever" — superseded. Public surfaces exist; Tables still never public.
