@@ -228,6 +228,11 @@ export class CompletenessProvider {
     return scalarBoolean(value);
   }
 
+  /**
+   * Runs Places Text Search for a restaurant identity. An optional coordinate
+   * pair adds a soft 50 km location bias while preserving global eligibility,
+   * the existing Text Search SKU, and the frozen response field mask.
+   */
   async searchText(
     ownerId: string,
     query: {
@@ -237,6 +242,7 @@ export class CompletenessProvider {
       address?: string | null;
     },
     _claimant?: string,
+    bias?: { lat: number; lng: number },
   ): Promise<GoogleTextCandidate[]> {
     if (!this.googleApiKey) {
       throw new CompletenessPaidPathError(
@@ -265,6 +271,19 @@ export class CompletenessProvider {
             .filter(Boolean)
             .join(", "),
           maxResultCount: 5,
+          ...(bias
+            ? {
+              locationBias: {
+                circle: {
+                  center: {
+                    latitude: bias.lat,
+                    longitude: bias.lng,
+                  },
+                  radius: 50000.0,
+                },
+              },
+            }
+            : {}),
         }),
       });
     } catch (error) {

@@ -30,13 +30,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing, Radius, IconSize, Type } from '@/constants/theme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
-import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { useMyLists, type MyList } from '@/hooks/lists/useMyLists';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import {
@@ -47,7 +47,6 @@ import {
 } from '@/hooks/search/useRestaurantSearch';
 import { searchCache } from '@/hooks/search/searchCache';
 import {
-    SearchInput,
     SearchResultRow,
     ListRow,
     SearchEmptyState,
@@ -63,6 +62,7 @@ import { PlacesCredit } from '@/components/ui/PlacesCredit';
 import { deriveSearchPlacesCredits } from '@/components/search/searchPhotoPresentation';
 
 type Palette = typeof Colors.light;
+const SEARCH_DEBOUNCE_MS = 250;
 
 // ── Module-scope state — preserved across tab mounts within the session ──────
 // Last query string — survives tab unmount so query is restored
@@ -160,16 +160,23 @@ export default function SearchScreen() {
     const inputRef = useRef<TextInput>(null);
     const listRef = useRef<FlatList<FlatItem>>(null);
     const didRestoreScrollRef = useRef(false);
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // ── Geolocation — silent, granted-only (TICKET-097) ──────────────────
     // Feeds the Places result bias AND the "Pinned near you" empty-state
-    // section. NEVER prompts from this tab: coords come only from a prior
-    // grant elsewhere (e.g. the wishlist "Nearest" sort). No grant → no bias,
-    // no section, no nag.
-    const { coords, requestIfGranted } = useNearbyLocation();
+    // section. The search hook checks existing permission once per mount and
+    // NEVER requests it. No prior grant → no bias, no section, no nag.
+    const { results, isLoading, isPlacesError, refetch, coords } = useRestaurantSearch(
+        debouncedQuery,
+        user?.id,
+        { grantedLocationBias: true },
+    );
+
     useEffect(() => {
-        void requestIfGranted();
-    }, [requestIfGranted]);
+        return () => {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+        };
+    }, []);
 
     // Sync module-scope lastQuery on unmount / query change
     useEffect(() => {
@@ -195,11 +202,6 @@ export default function SearchScreen() {
     // No autofocus: opening the Search tab should NOT raise the keyboard. The
     // user taps the field when they're ready to type (tester feedback).
 
-    const { results, isLoading, isPlacesError, refetch } = useRestaurantSearch(
-        debouncedQuery,
-        user?.id,
-        coords,
-    );
     const recentQueries = useRecentSearches();
 
     // ── Empty-state material (TICKET-097) — the user's OWN stuff ─────────
@@ -296,7 +298,20 @@ export default function SearchScreen() {
         [router],
     );
 
+    const handleQueryChange = useCallback((text: string) => {
+        setImmediateQuery(text);
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            debounceRef.current = null;
+            setDebouncedQuery(text);
+        }, SEARCH_DEBOUNCE_MS);
+    }, []);
+
     const handleClear = useCallback(() => {
+        if (debounceRef.current) {
+            clearTimeout(debounceRef.current);
+            debounceRef.current = null;
+        }
         setImmediateQuery('');
         setDebouncedQuery('');
     }, []);
@@ -356,13 +371,47 @@ export default function SearchScreen() {
                     onModeChange={handleModeChange}
                     hidePeople={FRIEND_TEST.hidePeopleSearch}
                 />
-                <SearchInput
-                    ref={inputRef}
-                    value={immediateQuery}
-                    onChangeImmediate={setImmediateQuery}
-                    onChangeDebounced={setDebouncedQuery}
-                    onClear={handleClear}
-                />
+                <View
+                    style={[
+                        styles.searchBar,
+                        { backgroundColor: palette.surfaceContainerLow },
+                    ]}
+                >
+                    <Ionicons
+                        name="search-outline"
+                        size={IconSize.sm}
+                        color={palette.textMuted}
+                    />
+                    <TextInput
+                        ref={inputRef}
+                        value={immediateQuery}
+                        onChangeText={handleQueryChange}
+                        style={[Type.body, styles.searchInput, { color: palette.text }]}
+                        placeholder="Search restaurants…"
+                        placeholderTextColor={palette.textMuted}
+                        autoFocus={false}
+                        autoCorrect={false}
+                        autoCapitalize="none"
+                        returnKeyType="search"
+                        clearButtonMode="never"
+                        accessibilityLabel="search restaurants"
+                    />
+                    {immediateQuery.length > 0 ? (
+                        <Pressable
+                            onPress={handleClear}
+                            hitSlop={Spacing.sm}
+                            style={styles.searchClear}
+                            accessibilityRole="button"
+                            accessibilityLabel="clear search"
+                        >
+                            <Ionicons
+                                name="close-circle"
+                                size={IconSize.sm}
+                                color={palette.textMuted}
+                            />
+                        </Pressable>
+                    ) : null}
+                </View>
             </View>
 
             {/* Lists tab (TICKET-106) — decoupled from hidePeopleSearch; always
@@ -493,6 +542,24 @@ const styles = StyleSheet.create({
         paddingTop: Spacing.sm,
         paddingBottom: 0,
         ...Type.screenTitle,
+    },
+    searchBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginHorizontal: Spacing.lg,
+        marginBottom: Spacing.xs,
+        paddingLeft: Spacing.md,
+        paddingRight: Spacing.xs,
+        paddingVertical: Spacing.sm,
+        borderRadius: Radius.full,
+    },
+    searchInput: {
+        flex: 1,
+        paddingVertical: 0,
+    },
+    searchClear: {
+        padding: Spacing.sm,
     },
     emptyContainer: {
         flex: 1,

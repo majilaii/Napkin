@@ -171,6 +171,26 @@ function response(body: unknown, status = 200) {
     });
 }
 
+type TextSearchBias = { lat: number; lng: number };
+
+function parseTextSearchBias(value: unknown): TextSearchBias | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const { lat, lng } = value as { lat?: unknown; lng?: unknown };
+    if (
+        typeof lat !== 'number' ||
+        !Number.isFinite(lat) ||
+        lat < -90 ||
+        lat > 90 ||
+        typeof lng !== 'number' ||
+        !Number.isFinite(lng) ||
+        lng < -180 ||
+        lng > 180
+    ) {
+        return undefined;
+    }
+    return { lat, lng };
+}
+
 serve(async req => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
@@ -188,7 +208,11 @@ serve(async req => {
         const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
         const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
+        const rawPayload = req.headers.get('content-type')?.includes('application/json')
+            ? await req.clone().json().catch(() => null)
+            : null;
         const payload: SearchPayload = await parsePayload(req);
+        const textSearchBias = parseTextSearchBias(rawPayload);
 
         // ── Internal-call path (TICKET-060 B2) ────────────────────────────
         // resolve-url's handleAsyncExtract calls places-search using the service-role
@@ -361,12 +385,26 @@ serve(async req => {
         }
 
         // ── Branch B: Text Search (separate endpoint/mask/debit) ──────────
+        let homeCity = '';
+        if (!textSearchBias) {
+            const { data: profile, error: profileError } = await supabase
+                .from('profiles')
+                .select('home_city')
+                .eq('user_id', ownerId)
+                .maybeSingle();
+            if (profileError) {
+                console.error('places-search home city lookup failed:', profileError);
+            } else if (typeof profile?.home_city === 'string') {
+                homeCity = profile.home_city.trim();
+            }
+        }
+
         const candidates = await provider.searchText(ownerId, {
             name: query!,
-            city: '',
+            city: homeCity,
             area: null,
             address: null,
-        }, claimant);
+        }, claimant, textSearchBias);
         const limited = candidates.slice(0, clamp(payload.limit ?? 5, 1, 5));
         const sanitized = await Promise.all(limited.map(async (candidate) => ({
             ...textCandidateToPlace(candidate),
