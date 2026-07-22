@@ -175,7 +175,16 @@ type TextSearchBias = { lat: number; lng: number };
 
 function parseTextSearchBias(value: unknown): TextSearchBias | undefined {
     if (!value || typeof value !== 'object') return undefined;
-    const { lat, lng } = value as { lat?: unknown; lng?: unknown };
+    const payload = value as {
+        lat?: unknown; lng?: unknown;
+        latitude?: unknown; longitude?: unknown;
+    };
+    // Builds ≤223 send `latitude`/`longitude` (the pre-#316 contract) — they
+    // MUST keep biasing. Google IP-localizes bare textQuery from the edge
+    // runtime's egress region, so an un-biased "the hero" finds nothing; the
+    // bias is load-bearing, not an optimization. Prefer the new names.
+    const lat = payload.lat ?? payload.latitude;
+    const lng = payload.lng ?? payload.longitude;
     if (
         typeof lat !== 'number' ||
         !Number.isFinite(lat) ||
