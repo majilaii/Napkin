@@ -1,8 +1,7 @@
 /**
  * Onboarding S3 — Home city (TICKET-107; v2 TICKET-126).
- * Plain free-text (places-search is a restaurant Text Search — no cheap
- * `(cities)` autocomplete, so per the spec we take the free-text fallback).
- * Stored as the free-text profiles.home_city on completion. Skippable.
+ * Curated city suggestions with a free-text fallback. Stored as the free-text
+ * profiles.home_city on completion. Skippable.
  *
  * Also the branch point for the conditional Follows step: co-diner candidates are
  * prefetched on entry (useCoDiners, 5-min stale) so that on Continue/Skip we can
@@ -14,7 +13,6 @@ import React, { useState } from 'react';
 import {
     View,
     Text,
-    TextInput,
     Pressable,
     ActivityIndicator,
     KeyboardAvoidingView,
@@ -27,6 +25,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCoDiners } from '@/hooks/feed/useCoDiners';
+import { CitySuggestField } from '@/components/onboarding/CitySuggestField';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
 import { useFinishOnboarding } from '@/hooks/onboarding/useFinishOnboarding';
@@ -97,9 +96,10 @@ export default function OnboardingCityScreen() {
                 <Text style={[s.brandLine, { color: palette.text }]}>your home city</Text>
 
                 <Text style={[s.label, { color: palette.textSecondary }]}>Home city</Text>
-                <TextInput
+                <CitySuggestField
                     value={city}
                     onChangeText={(t) => setCity(t.slice(0, 120))}
+                    maxLength={120}
                     placeholder="e.g. Hong Kong"
                     placeholderTextColor={palette.textMuted}
                     autoCapitalize="words"

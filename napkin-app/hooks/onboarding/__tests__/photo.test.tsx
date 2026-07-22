@@ -72,14 +72,16 @@ describe('mandatory onboarding photo', () => {
         mockDraft = { display_name: 'Jacky', avatar_url: null, home_city: null };
     });
 
-    it('has no Skip affordance and blocks Continue before approval', () => {
+    it('blocks Continue before approval but offers Skip (2026-07-22: a down moderation service must never wall onboarding)', () => {
         const screen = render(<OnboardingPhotoScreen />);
 
-        expect(screen.queryByText('Skip')).toBeNull();
         const continueButton = screen.getByLabelText('Continue');
         expect(continueButton.props.accessibilityState).toEqual({ disabled: true });
         fireEvent.press(continueButton);
         expect(mockPush).not.toHaveBeenCalled();
+
+        fireEvent.press(screen.getByText('Skip'));
+        expect(mockPush).toHaveBeenCalledWith('/onboarding/city');
     });
 
     it('allows the next step only with an approved URL in the draft', () => {

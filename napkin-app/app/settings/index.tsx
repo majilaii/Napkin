@@ -4,8 +4,8 @@
  * Reachable via the gear on own profile / Tables header. Route: /settings.
  *
  * Sections (each a `note`-card group with ghosted warm rules between rows):
- *   profile     — Photo · Name · Username · Bio → one dedicated editor each
- *                 (/settings/{photo,name,username,bio})
+ *   profile     — Photo · Name · Username · Bio · Home city → one editor each
+ *                 (/settings/{photo,name,username,bio,city})
  *   account     — Account visibility (Public/Private pill → /settings/privacy) ·
  *                 Email (read-only)
  *   privacy     — Blocked
@@ -148,6 +148,7 @@ export default function SettingsScreen() {
 
     const { data: result } = useUserProfile(user?.id);
     const profile = result?.data?.profile;
+    const homeCity = (profile as { home_city?: string | null } | undefined)?.home_city ?? null;
     const isPublic = (profile?.account_privacy ?? 'public') === 'public';
 
     // Real OS permission state — refreshed whenever the screen regains focus
@@ -273,6 +274,12 @@ export default function SettingsScreen() {
                         value={profile?.bio || '—'}
                         palette={palette}
                         onPress={() => router.push('/settings/bio')}
+                    />
+                    <Row
+                        label="Home city"
+                        value={homeCity || '—'}
+                        palette={palette}
+                        onPress={() => router.push('/settings/city')}
                         last
                     />
                 </Section>

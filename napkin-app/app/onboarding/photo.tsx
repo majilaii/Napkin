@@ -1,10 +1,10 @@
 /**
- * Onboarding S2 — mandatory moderated profile photo (TICKET-196 B-1).
+ * Onboarding S2 — skippable moderated profile photo (TICKET-196 B-1).
  *
  * Tap the circle to pick from the library; the picked image is square-cropped to
  * 512², privately staged, moderated, and its approved public URL is written to
- * the onboarding draft. Continue stays blocked until an approved photo exists.
- * Copy-economy: kicker + serif brandLine + one action; no prose.
+ * the onboarding draft. Continue stays blocked until an approved photo exists;
+ * Skip remains available when moderation is unavailable.
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
@@ -19,6 +19,16 @@ import { chooseAvatarAsset } from '@/lib/avatarPicker';
 import { isModerationRejected, stageAndModerate } from '@/lib/imageStaging';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
+
+function isVisionUnavailable(error: unknown): boolean {
+    let current: unknown = error;
+    for (let depth = 0; depth < 3 && current; depth += 1) {
+        const candidate = current as { code?: unknown; cause?: unknown };
+        if (candidate.code === 'VISION_UNAVAILABLE') return true;
+        current = candidate.cause;
+    }
+    return false;
+}
 
 export default function OnboardingPhotoScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -45,6 +55,10 @@ export default function OnboardingPhotoScreen() {
             const approved = await stageAndModerate(asset.uri, 'avatar');
             patch({ avatar_url: approved.approved_url });
         } catch (error) {
+            if (isVisionUnavailable(error)) {
+                Alert.alert('Photos are down right now', 'Skip for now — you can add one later.');
+                return;
+            }
             Alert.alert(
                 isModerationRejected(error) ? "That photo can't be used" : "Couldn't add that photo",
                 isModerationRejected(error) ? 'Choose another photo.' : 'Please try again.',
@@ -94,6 +108,15 @@ export default function OnboardingPhotoScreen() {
                         </Text>
                     </Pressable>
                 </View>
+
+                <Pressable
+                    onPress={() => router.push('/onboarding/city')}
+                    disabled={uploading}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                >
+                    <Text style={[s.skip, { color: palette.textMuted }]}>Skip</Text>
+                </Pressable>
             </View>
 
             <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>

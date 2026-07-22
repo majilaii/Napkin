@@ -11,7 +11,7 @@
  *   check_username  — uniqueness check for a candidate username
  *
  * Write actions:
- *   update_profile         — display_name, bio, avatar_url (partial update)
+ *   update_profile         — display_name, bio, avatar_url, home_city (partial update)
  *   update_username        — standalone username update (after first flip)
  *   update_privacy         — account_privacy flip; atomic with username on first public flip
  *   update_reply_permission — allow_public_replies boolean
@@ -63,6 +63,7 @@ type ProfileRow = {
     display_name: string;
     bio: string | null;
     avatar_url: string | null;
+    home_city: string | null;
     account_privacy: 'private' | 'public';
     allow_public_replies: boolean;
 };
@@ -214,12 +215,12 @@ async function resolveProfile(
     const { data, error } = isUuid
         ? await supabase
             .from('profiles')
-            .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies')
             .eq('user_id', identifier)
             .maybeSingle()
         : await supabase
             .from('profiles')
-            .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies')
             .ilike('username', identifier)
             .maybeSingle();
 
@@ -1175,6 +1176,18 @@ serve(async (req) => {
                 });
             }
 
+            // home_city is returned to the owner for settings, but it is not
+            // part of the public/private profile identity contract.
+            const profileIdentity = {
+                user_id: targetProfile.user_id,
+                username: targetProfile.username,
+                display_name: targetProfile.display_name,
+                bio: targetProfile.bio,
+                avatar_url: targetProfile.avatar_url,
+                account_privacy: targetProfile.account_privacy,
+                allow_public_replies: targetProfile.allow_public_replies,
+            };
+
             // 1b. Blocks trump everything (TICKET-090). Target-blocked-viewer
             // reads as not-found (no existence signal); viewer-blocked-target
             // returns a minimal stub so the client can offer "unblock".
@@ -1183,7 +1196,7 @@ serve(async (req) => {
             if (blockState === 'viewer_blocked_target') {
                 return json({
                     data: {
-                        profile: targetProfile,
+                        profile: profileIdentity,
                         stats: null,
                         public_lists: null,
                         recently_logged: null,
@@ -1240,7 +1253,7 @@ serve(async (req) => {
                             .eq('follower_id', targetId),
                     ]);
                 return json({
-                    data: buildPrivateProfileStub(targetProfile, {
+                    data: buildPrivateProfileStub(profileIdentity, {
                         isFollowingViewer: followRowRes.data !== null,
                         followsViewer: followsViewerRowRes.data !== null,
                         followersCount: followersRes.count ?? 0,
@@ -1287,7 +1300,7 @@ serve(async (req) => {
                 ]);
                 return json({
                     data: {
-                        profile: targetProfile,
+                        profile: profileIdentity,
                         // stats stays null (palate withheld); social counts ride
                         // a sibling field so the client can distinguish
                         // "counts present, palate withheld" from "palate present".
@@ -1350,7 +1363,7 @@ serve(async (req) => {
 
             return json({
                 data: {
-                    profile: targetProfile,
+                    profile: profileIdentity,
                     stats,
                     public_lists: publicLists,
                     recently_logged: recentlyLogged,
@@ -1737,6 +1750,11 @@ serve(async (req) => {
             if (body.bio !== undefined) {
                 updates.bio = body.bio ? String(body.bio).slice(0, 160) : null;
             }
+            if (body.home_city !== undefined) {
+                const homeCity = body.home_city == null ? '' : String(body.home_city).trim();
+                if (homeCity.length > 120) return fail('home_city must be at most 120 chars', 400);
+                updates.home_city = homeCity || null;
+            }
             if (hasAvatarUpdate && avatarUrl && avatarUrl.length > 500) {
                 return fail('avatar_url is too long', 400);
             }
@@ -1766,7 +1784,7 @@ serve(async (req) => {
 
             const { data: updated, error } = await supabase
                 .from('profiles')
-                .select('user_id, username, display_name, bio, avatar_url, account_privacy, allow_public_replies')
+                .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies')
                 .eq('user_id', user.id)
                 .single();
             if (error) throw error;
