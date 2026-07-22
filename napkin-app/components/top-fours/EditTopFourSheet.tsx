@@ -36,7 +36,7 @@ import { useUpdatePicks } from '@/hooks/top-fours/useUpdatePicks';
 import { EligibleRestaurantRow } from './EligibleRestaurantRow';
 import type { EligibleRestaurant } from '@/hooks/top-fours/useEligibleRestaurantsForCity';
 import type { TopFourPick } from '@/hooks/top-fours/useTopFours';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -266,7 +266,6 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
         const failureKey = `draft:${item.key}:${photo.url ?? ''}`;
         return [item.key, {
             url: photo.url && !failedPhotoKeys.has(failureKey) ? photo.url : null,
-            credit: photo.url && !failedPhotoKeys.has(failureKey) ? photo.credit : null,
             failureKey,
         }] as const;
     })), [draft, failedPhotoKeys]);
@@ -280,14 +279,9 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
         const failureKey = `eligible:${item.restaurant_id}:${photo.url ?? ''}`;
         return [item.restaurant_id, {
             url: photo.url && !failedPhotoKeys.has(failureKey) ? photo.url : null,
-            credit: photo.url && !failedPhotoKeys.has(failureKey) ? photo.credit : null,
             failureKey,
         }] as const;
     })), [eligible, failedPhotoKeys]);
-    const renderedPlacesPhotos = [
-        ...draftPhotos.values(),
-        ...eligiblePhotos.values(),
-    ].filter((photo) => photo.url && photo.credit);
 
     const markPhotoFailed = useCallback((failureKey: string) => {
         setFailedPhotoKeys((current) => new Set(current).add(failureKey));
@@ -359,15 +353,6 @@ export function EditTopFourSheet({ visible, onClose, city, isClaimed, currentPic
                         ? 'Drag to reorder. Tap + to swap.'
                         : 'Pick up to 4. You can always edit later.'}
                 </Text>
-
-                {renderedPlacesPhotos.length > 0 ? (
-                    <PlacesCredit
-                        credits={renderedPlacesPhotos.map((photo) => photo.credit)}
-                        photoCount={renderedPlacesPhotos.length}
-                        testID="regional-top-four-editor-places-credit"
-                        style={styles.placesCredit}
-                    />
-                ) : null}
 
                 {/* Draft slots (draggable) */}
                 <View style={[styles.slotsSection, { borderBottomColor: palette.dividerSoft }]}>
@@ -483,10 +468,6 @@ const styles = StyleSheet.create({
         borderBottomWidth: StyleSheet.hairlineWidth,
         marginHorizontal: 22,
         paddingBottom: Spacing.xs,
-    },
-    placesCredit: {
-        marginHorizontal: 22,
-        marginBottom: Spacing.sm,
     },
     slotRow: {
         flexDirection: 'row',

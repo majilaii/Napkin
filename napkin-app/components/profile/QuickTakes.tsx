@@ -15,7 +15,7 @@ import {
     quickTakePromptLabel,
     type ProfileQuickTake,
 } from '@/lib/profileQuickTakes';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import { SectionHeader } from './SectionHeader';
 
@@ -194,14 +194,6 @@ function QuickTakeRow({
                                 ) : null}
                             </Pressable>
                         </View>
-                        {photoUrl ? (
-                            <PlacesCredit
-                                credits={[sourcedPhoto.credit]}
-                                photoCount={1}
-                                style={styles.placesCredit}
-                                testID="quick-take-places-credit"
-                            />
-                        ) : null}
                         {take.note ? (
                             <Text
                                 style={[styles.note, { color: palette.textSecondary }]}
@@ -358,7 +350,6 @@ const styles = StyleSheet.create({
         ...Type.quote,
         marginTop: Spacing.sm + Spacing.xs,
     },
-    placesCredit: { marginTop: Spacing.xs },
     art: {
         width: 76,
         height: 76,

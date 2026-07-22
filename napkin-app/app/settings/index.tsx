@@ -12,7 +12,7 @@
  *   permissions — Notifications · Location: real OS state (On/Off pill) →
  *                 Linking.openSettings()
  *   help        — Replay the import tutorial without mutating onboarding state
- *   about       — Support · Terms · Privacy (legal links)
+ *   about       — Places photo acknowledgment · Support · Terms · Privacy
  * Footer: SIGN OUT (terracotta) + quiet delete account.
  *
  * The My Wishlist / My Lists shortcut cards were cut — settings is not a junk
@@ -349,6 +349,11 @@ export default function SettingsScreen() {
                 </Section>
 
                 <Section title="about" palette={palette}>
+                    <Row
+                        label="place photos"
+                        value="Google Maps contributors"
+                        palette={palette}
+                    />
                     <Row
                         label="Support"
                         palette={palette}

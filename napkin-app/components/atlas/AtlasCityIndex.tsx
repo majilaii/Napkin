@@ -14,7 +14,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { CityCard } from './CityCard';
 import { AtlasEmptyState } from './AtlasEmptyState';
 import type { TableAtlasData } from '@/hooks/tables/useTableAtlas';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 const LEFT_HEIGHTS = [200, 175, 210, 185, 195];
 const RIGHT_HEIGHTS = [175, 200, 185, 210, 170];
@@ -65,8 +65,6 @@ export function AtlasCityIndex({
             failureKey,
         };
     }), [cities, failedHeroKeys]);
-    const renderedPlacesHeroes = resolvedCities.filter(({ hero }) => hero.url && hero.credit);
-
     // Stat line pieces
     const statParts = [
         `${stats.members} of us`,
@@ -162,14 +160,6 @@ export function AtlasCityIndex({
                     ))}
                 </View>
             </View>
-            {renderedPlacesHeroes.length > 0 ? (
-                <PlacesCredit
-                    credits={renderedPlacesHeroes.map(({ hero }) => hero.credit)}
-                    photoCount={renderedPlacesHeroes.length}
-                    testID="atlas-city-index-places-credit"
-                    style={styles.placesCredit}
-                />
-            ) : null}
         </ScrollView>
     );
 }
@@ -202,10 +192,6 @@ const styles = StyleSheet.create({
     },
     cardWrap: {
         // No extra style needed
-    },
-    placesCredit: {
-        marginHorizontal: 20,
-        marginBottom: Spacing.lg,
     },
 });
 

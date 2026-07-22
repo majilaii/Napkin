@@ -37,7 +37,7 @@ import {
     type RestaurantPickerPick,
 } from '@/components/search/RestaurantPickerScreen';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { SheetHeader } from '@/components/ui/SheetHeader';
 
 type Props = {
@@ -362,12 +362,6 @@ export function QuickTakesSheet({
             restaurantName: take.name,
         })]),
     ), [drafts]);
-    const renderedPlacesPhotos = useMemo(
-        () => [...resolvedPhotosByPrompt.values()].filter(
-            (photo) => !!photo.url && !failedPhotoUrls.has(photo.url),
-        ),
-        [failedPhotoUrls, resolvedPhotosByPrompt],
-    );
 
     const beginAdd = useCallback((promptKey?: QuickTakePromptKey) => {
         if (drafts.length >= MAX_PROFILE_QUICK_TAKES) return;
@@ -510,16 +504,9 @@ export function QuickTakesSheet({
                         keyExtractor={(item) => item.prompt_key}
                         onDragEnd={({ data }) => setDrafts(data.map((take, index) => ({ ...take, position: index + 1 })))}
                         contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + Spacing.xxl }]}
-                        ListHeaderComponent={drafts.length > 1 || renderedPlacesPhotos.length > 0 ? (
+                        ListHeaderComponent={drafts.length > 1 ? (
                             <View style={styles.listHeader}>
-                                {drafts.length > 1 ? (
-                                    <Text style={[Type.metadata, { color: palette.textMuted }]}>Hold ≡ to reorder.</Text>
-                                ) : null}
-                                <PlacesCredit
-                                    credits={renderedPlacesPhotos.map((photo) => photo.credit)}
-                                    photoCount={renderedPlacesPhotos.length}
-                                    testID="quick-takes-sheet-places-credit"
-                                />
+                                <Text style={[Type.metadata, { color: palette.textMuted }]}>Hold ≡ to reorder.</Text>
                             </View>
                         ) : null}
                         renderItem={(params) => {

@@ -15,9 +15,9 @@ export interface ListEntryRestaurant {
     country: string | null;
     photo_url: string | null;
     /**
-     * TICKET-194: the restaurant hero provenance + Places credit used by the
-     * list-detail cover. Optional for stale cached payloads; absent values
-     * deliberately fail closed to the list's tint/emoji plate.
+     * TICKET-194: the restaurant hero provenance + Places attribution used to
+     * source-gate the list-detail cover. Optional for stale cached payloads;
+     * absent values deliberately fail closed to the list's tint/emoji plate.
      */
     photo_source?: 'user' | 'table' | 'places' | 'none' | null;
     places_photo_attribution_html?: string | null;

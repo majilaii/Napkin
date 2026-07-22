@@ -33,7 +33,6 @@ import { ListEntryRow } from '@/components/lists/ListEntryRow';
 import {
     deriveContextLine,
     deriveCover,
-    deriveListPlacesCredits,
     deriveMetadataLine,
     listCoverPhotoFailureKey,
 } from '@/components/lists/listHeaderUtils';
@@ -177,10 +176,6 @@ export default function ListDetailScreen() {
     const visibleCoverUrl = coverFailureKey && failedListPhotoKeys.has(coverFailureKey)
         ? null
         : cover?.photoUrl ?? null;
-    const placesCredit = useMemo(
-        () => deriveListPlacesCredits(entries, failedListPhotoKeys),
-        [entries, failedListPhotoKeys],
-    );
     const metadata = list ? deriveMetadataLine(entries.length, saveCount, list.privacy, list.table_id) : '';
     const contextLine = useMemo(
         () => (list ? deriveContextLine(list, isOwner, ownerProfile) : null),
@@ -445,8 +440,6 @@ export default function ListDetailScreen() {
                                 list,
                                 ownerProfile,
                                 cover: visibleCoverUrl,
-                                placesCredits: placesCredit.credits,
-                                placesPhotoCount: placesCredit.photoCount,
                                 onCoverError: () => {
                                     if (coverFailureKey) handleListPhotoError(coverFailureKey);
                                 },

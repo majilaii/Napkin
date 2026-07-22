@@ -63,7 +63,7 @@ interface Props {
     onPress: () => void;
     heroHeight?: number;
     palette?: typeof Colors.light;
-    /** AtlasGridView supplies its already-resolved photo for aggregate credit parity. */
+    /** AtlasGridView supplies its already-resolved, source-aware photo. */
     resolvedPhoto?: ResolvedSourcedPhoto;
     onPhotoError?: () => void;
 }

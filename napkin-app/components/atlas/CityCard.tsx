@@ -55,7 +55,7 @@ interface Props {
     /** Height for the photo hero area. Stagger between columns */
     heroHeight?: number;
     palette?: typeof Colors.light;
-    /** AtlasCityIndex supplies its already-resolved hero for aggregate credit parity. */
+    /** AtlasCityIndex supplies its already-resolved, source-aware hero. */
     resolvedHero?: ResolvedSourcedPhoto;
     onHeroError?: () => void;
 }

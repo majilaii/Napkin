@@ -98,20 +98,8 @@ function headers(renderer: any) {
     return renderer.root.findAllByType('SectionHeader');
 }
 
-function attributionCredits(renderer: any) {
-    return renderer.root.findAllByType('Text').filter(
-        (node: any) => node.props.testID === 'list-cover-attribution',
-    );
-}
-
-function textContent(node: any): string {
-    if (typeof node === 'string' || typeof node === 'number') return String(node);
-    if (!node?.children) return '';
-    return node.children.map(textContent).join('');
-}
-
 describe('ListsShelf section header (rev 2 un-merge)', () => {
-    it('renders one parsed credit adjacent to an attributed Places cover', () => {
+    it('renders an attributed Places cover without inline attribution', () => {
         mockMyLists = [{
             ...MY_LIST,
             cover_photo_url: 'https://cdn.example/places.jpg',
@@ -119,25 +107,21 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
             cover_attribution_html: '<a href="https://maps.example/jane">Jane Doe</a>',
         }];
         const renderer = render();
-        const credits = attributionCredits(renderer);
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(1);
-        expect(credits).toHaveLength(1);
-        expect(textContent(credits[0])).toBe('photo · Jane Doe');
-        expect(credits[0].props.numberOfLines).toBe(1);
-        expect(renderer.root.findByType('Image').parent.findAllByProps({
-            testID: 'list-cover-attribution',
-        })).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ testID: 'list-cover-attribution' }))
+            .toHaveLength(0);
 
         const image = renderer.root.findByType('Image');
         act(() => image.props.onError());
         expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-        expect(attributionCredits(renderer)).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ testID: 'list-cover-attribution' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
 
-    it('renders one deduped aggregate line for a shelf with multiple Places covers', () => {
+    it('renders multiple sourced Places covers without inline attribution', () => {
         mockMyLists = [
             {
                 ...MY_LIST,
@@ -162,15 +146,10 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
             },
         ];
         const renderer = render();
-        const credits = attributionCredits(renderer);
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(3);
-        expect(credits).toHaveLength(1);
-        expect(textContent(credits[0])).toBe('photos · Jane Doe, Marco');
-        for (const image of renderer.root.findAllByType('Image')) {
-            expect(image.parent.findAllByProps({ testID: 'list-cover-attribution' }))
-                .toHaveLength(0);
-        }
+        expect(renderer.root.findAllByProps({ testID: 'list-cover-attribution' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
@@ -185,12 +164,13 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
         const renderer = render();
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(1);
-        expect(attributionCredits(renderer)).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ testID: 'list-cover-attribution' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
 
-    it('does not count an own photo in the Places photo grammar', () => {
+    it('renders mixed Places and own covers without inline attribution', () => {
         mockMyLists = [
             {
                 ...MY_LIST,
@@ -208,10 +188,10 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
             },
         ];
         const renderer = render();
-        const [credit] = attributionCredits(renderer);
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(2);
-        expect(textContent(credit)).toBe('photo · Jane Doe');
+        expect(renderer.root.findAllByProps({ testID: 'list-cover-attribution' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
@@ -226,7 +206,8 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
         const renderer = render();
 
         expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-        expect(attributionCredits(renderer)).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ testID: 'list-cover-attribution' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
@@ -255,7 +236,8 @@ describe('ListsShelf section header (rev 2 un-merge)', () => {
         expect(renderer.root.findByType('Image').props.source).toEqual({
             uri: 'https://cdn.example/new.jpg',
         });
-        expect(textContent(attributionCredits(renderer)[0])).toBe('photo · New credit');
+        expect(renderer.root.findAllByProps({ testID: 'list-cover-attribution' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });

@@ -58,7 +58,7 @@ import { InlineStars } from '@/components/feed/InlineStars';
 import { usePostInteractions, usePostInteractionsRealtime, effectiveCommentCount } from '@/hooks/posts';
 import { CommentThread } from '@/components/posts';
 import { FeedActionRow } from '@/components/feed';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 type Palette = typeof Colors.light;
 
@@ -305,7 +305,6 @@ export default function TableNightDetailScreen() {
     const heroPhotoUrl = resolvedRestaurantPhoto.url === failedHeroPhotoUrl
         ? null
         : resolvedRestaurantPhoto.url;
-    const heroPhotoCredit = heroPhotoUrl ? resolvedRestaurantPhoto.credit : null;
     const citySub = [
         nightStatus.restaurants?.city,
         (nightStatus.restaurants as { cuisine?: string | null } | null)?.cuisine,
@@ -359,7 +358,7 @@ export default function TableNightDetailScreen() {
 
                     {/* ── Hero photo w/ rating chip (WF6) ── */}
                     <Pressable onPress={goToRestaurant} disabled={!goToRestaurant}>
-                        <View style={[styles.hero, heroPhotoCredit && styles.heroWithCredit]}>
+                        <View style={styles.hero}>
                             {heroPhotoUrl ? (
                                 <Image
                                     source={{ uri: heroPhotoUrl }}
@@ -423,12 +422,6 @@ export default function TableNightDetailScreen() {
                             </View>
                         </View>
                     </Pressable>
-                    <PlacesCredit
-                        credits={[heroPhotoCredit]}
-                        photoCount={1}
-                        style={styles.heroCredit}
-                    />
-
                     {/* Delta vs last table visit (subtle, directly under hero) */}
                     {overallAvg != null && previousGroupAvg != null && (
                         <View style={styles.deltaRow}>
@@ -1069,13 +1062,6 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         backgroundColor: Colors.light.primary,
         position: 'relative',
-    },
-    heroWithCredit: {
-        marginBottom: 4,
-    },
-    heroCredit: {
-        marginHorizontal: 22,
-        marginBottom: 16,
     },
     heroScrim: {
         position: 'absolute',

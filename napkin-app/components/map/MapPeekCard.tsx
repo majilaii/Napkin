@@ -18,12 +18,10 @@ import {
     Shadow,
     Type,
 } from '@/constants/theme';
-import { PlacesCredit, type PlacesPhotoCredit } from '@/components/ui/PlacesCredit';
 import {
     PEEK_MAX_FONT_SCALE,
-    peekCardHeight,
     peekEffectiveFontScale,
-    peekPlacesCreditHeight,
+    peekRailCardHeight,
 } from '@/components/wishlist/peekLayout';
 import type { MapPeekThumbnail } from './mapPeekPresentation';
 
@@ -38,7 +36,6 @@ interface MapPeekCardProps {
     contextTailActionLabel?: string;
     onContextTailPress?: () => void;
     thumbnail: MapPeekThumbnail | null;
-    placesCredit: PlacesPhotoCredit | null;
     fontScale: number;
     palette: typeof Colors.light;
     style?: StyleProp<ViewStyle>;
@@ -67,7 +64,6 @@ export function MapPeekCard({
     contextTailActionLabel,
     onContextTailPress,
     thumbnail,
-    placesCredit,
     fontScale,
     palette,
     style,
@@ -89,9 +85,7 @@ export function MapPeekCard({
     const actionLineHeight = Math.round(18 * effectiveScale);
     const summaryHeight = Math.round(60 * effectiveScale);
     const actionHeight = Math.round(44 + (effectiveScale - 1) * 14);
-    const hasPlacesCredit = thumbnail?.isPlaces === true && placesCredit != null;
-    const height = peekCardHeight(fontScale, hasPlacesCredit);
-    const creditHeight = peekPlacesCreditHeight(fontScale);
+    const height = peekRailCardHeight(fontScale);
     const heartBusy = wishlistPending || saved === undefined;
     const hoursAreLiveOpen = /\bopen(?:\s+until)?\b/i.test(hoursLine ?? '');
 
@@ -373,18 +367,6 @@ export function MapPeekCard({
                 </View>
             </View>
 
-            {hasPlacesCredit ? (
-                <View style={[styles.creditSlot, { height: creditHeight }]}>
-                    <PlacesCredit
-                        credits={[placesCredit]}
-                        photoCount={1}
-                        testID="map-peek-places-credit"
-                        interactive={false}
-                        maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
-                    />
-                </View>
-            ) : null}
-
             <View style={[styles.actions, { height: actionHeight }]}>
                 <Pressable
                     testID="map-peek-log-action"
@@ -534,10 +516,6 @@ const styles = StyleSheet.create({
         minWidth: 44,
         flexShrink: 0,
         justifyContent: 'flex-end',
-    },
-    creditSlot: {
-        justifyContent: 'center',
-        minWidth: 0,
     },
     actions: {
         flexDirection: 'row',

@@ -46,14 +46,8 @@ function pick(id: string, overrides: Partial<TopPick> = {}): TopPick {
     };
 }
 
-function textContent(node: any): string {
-    return node.children
-        .map((child: any) => typeof child === 'string' ? child : textContent(child))
-        .join('');
-}
-
-describe('TopFour Places credit', () => {
-    it('renders one aggregate line with distinct authors for the Places plates', () => {
+describe('TopFour sourced photos', () => {
+    it('renders sourced Places plates without inline attribution', () => {
         let renderer: any;
         act(() => {
             renderer = TestRenderer.create(
@@ -80,27 +74,19 @@ describe('TopFour Places credit', () => {
             );
         });
 
-        const credit = renderer.root.findAllByProps({ testID: 'profile-top-four-places-credit' })
-            .find((node: any) => node.type === 'Text');
-        expect(textContent(credit)).toBe('photos · Jane Doe, Luis Ray');
         expect(renderer.root.findAllByType('MarqueePlate').map((node: any) => node.props.photoUrl))
             .toEqual([
                 'https://cdn.test/a.jpg',
                 'https://cdn.test/b.jpg',
                 'https://cdn.test/c.jpg',
             ]);
-
-        const firstPlate = renderer.root.findAllByType('MarqueePlate')[0];
-        act(() => firstPlate.props.onPhotoError(firstPlate.props.photoUrl));
-        const updatedCredit = renderer.root
-            .findAllByProps({ testID: 'profile-top-four-places-credit' })
-            .find((node: any) => node.type === 'Text');
-        expect(textContent(updatedCredit)).toBe('photos · jane   doe, Luis Ray');
+        expect(renderer.root.findAllByProps({ testID: 'profile-top-four-places-credit' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
 
-    it('fails an uncredited Places plate closed while a chosen memory stays uncredited', () => {
+    it('fails an uncredited Places plate closed while a chosen memory stays visible', () => {
         let renderer: any;
         act(() => {
             renderer = TestRenderer.create(

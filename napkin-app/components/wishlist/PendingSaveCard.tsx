@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -130,13 +130,6 @@ export function PendingSaveCard({
                         ) : null}
                     </>
                 )}
-                {visiblePhoto && resolvedPhoto.credit ? (
-                    <PlacesCredit
-                        credits={[resolvedPhoto.credit]}
-                        photoCount={1}
-                        testID="pending-save-places-credit"
-                    />
-                ) : null}
             </View>
         </View>
     );

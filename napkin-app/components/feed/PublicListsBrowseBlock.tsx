@@ -9,9 +9,9 @@
  *
  * Covers (TICKET-189, public-safe chain only): `cover_photo_url` arrives from
  * the server ALREADY gated — the author's own cover, or the list's first
- * restaurant's mirrored Places hero (in which case `attribution_html` rides
- * along and one quiet credit line renders below the image) — else null → emoji/tint
- * plate. NO member/entry-photo lookup happens here, ever: a user/table hero
+ * restaurant's mirrored Places hero (`attribution_html` rides along for the
+ * source-aware image gate) — else null → emoji/tint plate. NO member/entry-photo
+ * lookup happens here, ever: a user/table hero
  * as a derived cover on the public feed is banned (the server returns null
  * for those; this component must never re-derive one). The client repeats the
  * gate so a malformed or stale attribution can never leave an uncredited image.
@@ -25,7 +25,6 @@ import { useRouter } from 'expo-router';
 import { Colors, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-    PlacesCredit,
     resolveSourcedPhoto,
     type ResolvedSourcedPhoto,
 } from '@/components/ui/PlacesCredit';
@@ -227,10 +226,6 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
             ? { ...cover, url: null, credit: null }
             : cover] as const;
     }));
-    const renderedPlacesCovers = presentedLists
-        .map((list) => coversById.get(list.id)!)
-        .filter((cover) => !!cover.url && !!cover.credit);
-
     if (!showcase && rail.length === 0) return null;
 
     return (
@@ -269,13 +264,6 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
                     ))}
                 </ScrollView>
             )}
-            <PlacesCredit
-                credits={renderedPlacesCovers.map((cover) => cover.credit)}
-                photoCount={renderedPlacesCovers.length}
-                testID="public-lists-places-credit"
-                interactive={false}
-                style={styles.aggregateCredit}
-            />
             <PressableScale
                 onPress={() => router.push({ pathname: '/(tabs)/search', params: { mode: 'lists' } })}
                 style={styles.browseAll}
@@ -316,10 +304,6 @@ const styles = StyleSheet.create({
         fontSize: 21,
         fontWeight: '500',
         lineHeight: 25,
-    },
-    aggregateCredit: {
-        marginHorizontal: 20,
-        marginTop: 6,
     },
     railContent: {
         paddingHorizontal: 20,

@@ -27,7 +27,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { PressableScale } from '@/components/ui/napkin';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { AtlasGridView } from './AtlasGridView';
 import { AtlasEmptyState } from './AtlasEmptyState';
 import { AtlasMapView, AtlasMapViewRef } from './AtlasMapView';
@@ -90,8 +90,6 @@ export function AtlasPeekStrip({ tiles, palette, onCardPress }: PeekStripProps) 
             failureKey,
         };
     }), [tiles, failedPhotoKeys]);
-    const placesCredits = resolvedTiles.flatMap(({ photo }) => photo.credit ? [photo.credit] : []);
-
     return (
         <View style={styles.peekStripBlock}>
             <ScrollView
@@ -186,14 +184,6 @@ export function AtlasPeekStrip({ tiles, palette, onCardPress }: PeekStripProps) 
                     );
                 })}
             </ScrollView>
-            {placesCredits.length > 0 ? (
-                <PlacesCredit
-                    credits={placesCredits}
-                    photoCount={placesCredits.length}
-                    testID="atlas-peek-strip-places-credit"
-                    style={styles.peekStripCredit}
-                />
-            ) : null}
         </View>
     );
 }
@@ -679,10 +669,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingVertical: 6,
         gap: 10,
-    },
-    peekStripCredit: {
-        marginHorizontal: 20,
-        marginTop: 2,
     },
     peekCard: {
         width: 130,

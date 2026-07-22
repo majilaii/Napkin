@@ -10,7 +10,7 @@ import React, { useMemo, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { RestaurantTile } from './RestaurantTile';
 import type { AtlasRestaurantTile } from '@/hooks/tables/useTableAtlasCity';
 
@@ -29,8 +29,8 @@ export function AtlasGridView({ tiles, onTilePress, palette: paletteProp }: Prop
     const palette = paletteProp ?? Colors[scheme];
     const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
 
-    // Resolve once at the surface boundary so the aggregate line exactly
-    // describes the images that the child tiles are allowed to display.
+    // Resolve once at the surface boundary so child tiles display only
+    // source-aware images.
     const resolvedTiles = useMemo(() => tiles.map((tile) => {
         const photo = resolveSourcedPhoto({
             url: tile.photo_url,
@@ -58,8 +58,6 @@ export function AtlasGridView({ tiles, onTilePress, palette: paletteProp }: Prop
         });
         return { leftCol: left, rightCol: right };
     }, [resolvedTiles]);
-    const placesCredits = resolvedTiles.flatMap(({ photo }) => photo.credit ? [photo.credit] : []);
-
     return (
         <View style={styles.container}>
             <View style={styles.masonry}>
@@ -99,15 +97,6 @@ export function AtlasGridView({ tiles, onTilePress, palette: paletteProp }: Prop
                     ))}
                 </View>
             </View>
-
-            {placesCredits.length > 0 ? (
-                <PlacesCredit
-                    credits={placesCredits}
-                    photoCount={placesCredits.length}
-                    testID="atlas-grid-places-credit"
-                    style={styles.placesCredit}
-                />
-            ) : null}
         </View>
     );
 }
@@ -127,10 +116,6 @@ const styles = StyleSheet.create({
     },
     tileWrap: {
         // Individual tile wrapper — no extra style needed
-    },
-    placesCredit: {
-        marginHorizontal: 20,
-        marginTop: Spacing.sm,
     },
 });
 

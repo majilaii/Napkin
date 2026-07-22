@@ -17,7 +17,6 @@ import { Colors, IconSize, Radius, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { tintFor } from '@/lib/engraving';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
-import { PlacesCredit, type PlacesPhotoCredit } from '@/components/ui/PlacesCredit';
 import type { ListDetail, OwnerProfile } from '@/hooks/lists/useList';
 import type { ContextLine } from './listHeaderUtils';
 
@@ -34,10 +33,7 @@ export interface ListDetailHeaderProps {
     ownerProfile: OwnerProfile | null;
     /** deriveCover(entries).photoUrl — attributed restaurant hero, else tint plate. */
     cover: string | null;
-    /** Aggregate attribution for every rendered Places thumbnail on this sheet. */
-    placesCredits: PlacesPhotoCredit[];
-    placesPhotoCount: number;
-    /** Reports a URI-bound cover failure so the owner can update aggregation. */
+    /** Reports a URI-bound cover failure so the owner can update presentation state. */
     onCoverError?: (coverUrl: string) => void;
     /** deriveMetadataLine(...) — "{n} places" + optional " · saved {m} times". */
     metadata: string;
@@ -62,8 +58,6 @@ export function ListDetailHeader({
     list,
     ownerProfile,
     cover,
-    placesCredits,
-    placesPhotoCount,
     onCoverError,
     metadata,
     contextLine,
@@ -149,12 +143,6 @@ export function ListDetailHeader({
                     <Text style={[styles.metadata, { color: palette.textMuted }]} numberOfLines={1}>
                         {metadata}
                     </Text>
-                    <PlacesCredit
-                        credits={placesCredits}
-                        photoCount={placesPhotoCount}
-                        testID="list-detail-cover-attribution"
-                        style={styles.coverCredit}
-                    />
                 </View>
 
                 <View style={styles.identityActions}>
@@ -330,13 +318,6 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginTop: 2,
         fontVariant: ['tabular-nums'],
-    },
-    coverCredit: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 11,
-        lineHeight: 14,
-        marginTop: 2,
-        opacity: 0.85,
     },
     identityActions: {
         flexDirection: 'row',

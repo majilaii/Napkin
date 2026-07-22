@@ -35,25 +35,10 @@ jest.mock('expo-image', () => {
             ReactModule.createElement('ExpoImage', props),
     };
 });
-jest.mock('@/components/ui/PlacesCredit', () => {
-    const ReactModule = require('react');
-    return {
-        PlacesCredit: (props: Record<string, unknown>) =>
-            ReactModule.createElement('PlacesCredit', props),
-    };
-});
-
 import { MapPeekCard } from './MapPeekCard';
 import { Colors, Radius } from '@/constants/theme';
-import type { PlacesPhotoCredit } from '@/components/ui/PlacesCredit';
 
 const noop = jest.fn();
-const credit: PlacesPhotoCredit = {
-    label: 'Jane Doe',
-    href: 'https://maps.example/jane',
-    normalizedLabel: 'jane doe',
-    redundant: false,
-};
 
 function props(overrides: Record<string, unknown> = {}) {
     return {
@@ -62,7 +47,6 @@ function props(overrides: Record<string, unknown> = {}) {
         hoursLine: 'today 9:00 am – 11:00 pm',
         contextLine: 'saved by you',
         thumbnail: null,
-        placesCredit: null,
         fontScale: 1,
         palette: Colors.light,
         onThumbnailError: noop,
@@ -110,12 +94,9 @@ describe('MapPeekCard compact states', () => {
         ]);
     });
 
-    it.each(['entry', 'clip'])('renders a 60pt radius-12 %s thumbnail with no credit at 136pt', (kind) => {
+    it.each(['entry', 'clip'])('renders a 60pt radius-12 %s thumbnail at 136pt', (kind) => {
         const renderer = render({
             thumbnail: { url: `https://storage.example/${kind}.jpg`, isPlaces: false },
-            // Defensive boundary: even a bad caller cannot attach Places credit
-            // to an own-entry or clip thumbnail.
-            placesCredit: credit,
         });
         const card = renderer.root.findByProps({ testID: 'map-peek-card' });
         const thumbnail = renderer.root.findByProps({ testID: 'map-peek-thumbnail' });
@@ -129,22 +110,17 @@ describe('MapPeekCard compact states', () => {
         expect(renderer.root.findAllByProps({ testID: 'map-peek-places-credit' })).toHaveLength(0);
     });
 
-    it('adds the exact off-image credit and grows only for a Places thumbnail', () => {
+    it('keeps a Places thumbnail at 136pt with no inline attribution', () => {
         const renderer = render({
             thumbnail: { url: 'https://storage.example/places.jpg', isPlaces: true },
-            placesCredit: credit,
         });
         const card = renderer.root.findByProps({ testID: 'map-peek-card' });
 
         expect(styleObjects(card.props.style)).toEqual(expect.arrayContaining([
-            expect.objectContaining({ height: 151 }),
+            expect.objectContaining({ height: 136 }),
         ]));
-        expect(renderer.root.findByProps({ testID: 'map-peek-places-credit' }).props)
-            .toEqual(expect.objectContaining({
-                photoCount: 1,
-                interactive: false,
-                maxFontSizeMultiplier: 2,
-            }));
+        expect(renderer.root.findAllByProps({ testID: 'map-peek-places-credit' }))
+            .toHaveLength(0);
     });
 
     it('keeps profile and gather as separate 44pt controls outside the restaurant button', () => {

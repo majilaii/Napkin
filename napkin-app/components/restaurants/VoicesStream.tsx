@@ -280,9 +280,16 @@ export function VoicesStream(props: Props) {
     const scheme = useColorScheme();
     const palette = Colors[scheme ?? 'light'] as Palette;
 
+    // The viewer's own reviews render as the "You" self rows above — showing
+    // them again in the public slots tripled them (founder-caught on-sim,
+    // 2026-07-22). Counts still include self; only the rendered rows dedupe.
+    const othersReviews = React.useMemo(
+        () => publicReviews.filter((review) => review.user_id !== props.viewerUserId),
+        [publicReviews, props.viewerUserId],
+    );
     const strangerReviews = React.useMemo(
-        () => publicReviews.filter((review) => !review.is_followee),
-        [publicReviews],
+        () => othersReviews.filter((review) => !review.is_followee),
+        [othersReviews],
     );
     const qualifyingPublicCount = strangerReviews.filter(reviewQualifiesForMatchFilter).length;
     const showFilterPill =
@@ -292,12 +299,12 @@ export function VoicesStream(props: Props) {
         // Followee-first (stable, recency preserved within each group) so a
         // friend's review is never buried behind the doorway by a stranger's.
         if (!matchFilterOn) {
-            return [...publicReviews].sort(
+            return [...othersReviews].sort(
                 (a, b) => Number(b.is_followee) - Number(a.is_followee),
             );
         }
 
-        const followees = publicReviews.filter((review) => review.is_followee);
+        const followees = othersReviews.filter((review) => review.is_followee);
         const matchingStrangers = strangerReviews
             .filter(reviewQualifiesForMatchFilter)
             .slice()
@@ -308,7 +315,7 @@ export function VoicesStream(props: Props) {
                 return b.created_at > a.created_at ? 1 : -1;
             });
         return [...followees, ...matchingStrangers];
-    }, [publicReviews, strangerReviews, matchFilterOn]);
+    }, [othersReviews, strangerReviews, matchFilterOn]);
 
     const inlinePublic = visiblePublic.slice(0, 2);
     const hasPrivateVoices = selfVisits.length > 0 || tablemateVisits.length > 0;

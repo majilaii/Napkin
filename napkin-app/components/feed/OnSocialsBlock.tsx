@@ -26,11 +26,7 @@ import { useRouter } from 'expo-router';
 
 import { Colors, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import {
-    PlacesCredit,
-    resolveSourcedPhoto,
-    type PlacesPhotoCredit,
-} from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { SocialsCard } from '@/hooks/feed/useSocials';
 import { SectionKicker } from './SectionKicker';
@@ -59,9 +55,8 @@ export function OnSocialsBlock({ cards }: { cards: SocialsCard[] }) {
         });
     }, []);
 
-    // Resolve the clip-first ladder in the owning render. The chosen Places
-    // image and its aggregate credit therefore enter and leave in the same
-    // commit, including after either image rung fails.
+    // Resolve the clip-first ladder in the owning render, including image-rung
+    // failures, so only source-aware fallback imagery reaches the cards.
     const presentations = cards.map((card) => {
         const thumbFailureKey = card.thumb_url
             ? `${card.restaurant_id}:thumb:${card.thumb_url}`
@@ -88,14 +83,8 @@ export function OnSocialsBlock({ cards }: { cards: SocialsCard[] }) {
             thumbFailureKey,
             heroUrl: showHero ? placesHero.url : null,
             heroFailureKey,
-            credit: showHero ? placesHero.credit : null,
         };
     });
-    const renderedPlacesPhotos = presentations.flatMap((presentation) => (
-        presentation.heroUrl && presentation.credit
-            ? [{ url: presentation.heroUrl, credit: presentation.credit }]
-            : []
-    ));
 
     if (cards.length === 0) return null;
 
@@ -115,13 +104,6 @@ export function OnSocialsBlock({ cards }: { cards: SocialsCard[] }) {
                     />
                 ))}
             </ScrollView>
-            <PlacesCredit
-                credits={renderedPlacesPhotos.map((photo) => photo.credit)}
-                photoCount={renderedPlacesPhotos.length}
-                testID="socials-places-credit"
-                interactive={false}
-                style={styles.aggregateCredit}
-            />
         </View>
     );
 }
@@ -139,7 +121,6 @@ function SocialsClipCard({
     thumbFailureKey: string | null;
     heroUrl: string | null;
     heroFailureKey: string | null;
-    credit: PlacesPhotoCredit | null;
     onPhotoError: (failureKey: string) => void;
 }) {
     const scheme = useColorScheme() ?? 'light';
@@ -243,10 +224,6 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    aggregateCredit: {
-        marginHorizontal: 20,
-        marginTop: 6,
     },
     caption: {
         paddingTop: 9,

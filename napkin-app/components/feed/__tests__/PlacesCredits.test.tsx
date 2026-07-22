@@ -39,16 +39,6 @@ jest.mock('../SectionKicker', () => ({ SectionKicker: 'SectionKicker' }));
 import { OnSocialsBlock } from '../OnSocialsBlock';
 import { PublicListsBrowseBlock } from '../PublicListsBrowseBlock';
 
-function textContent(node: any): string {
-    return node.children
-        .map((child: any) => typeof child === 'string' ? child : textContent(child))
-        .join('');
-}
-
-function hostCredit(renderer: any, testID: string) {
-    return renderer.root.findAllByProps({ testID }).find((node: any) => node.type === 'Text');
-}
-
 function social(id: string, author: string): SocialsCard {
     return {
         restaurant_id: id,
@@ -85,7 +75,7 @@ function list(id: string, author: string): PublicListResult {
     };
 }
 
-it('aggregates the socials rail into one off-image line and updates after image failure', () => {
+it('keeps sourced socials photos while rendering no inline attribution', () => {
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(
@@ -97,20 +87,16 @@ it('aggregates the socials rail into one off-image line and updates after image 
         );
     });
 
-    const credit = hostCredit(renderer, 'socials-places-credit');
-    expect(textContent(credit)).toBe('photos · Jane Doe, Marco');
-    expect(renderer.root.findAllByProps({ testID: 'socials-places-credit' })
-        .filter((node: any) => node.type === 'Text')).toHaveLength(1);
-    for (const image of renderer.root.findAllByType('Image')) {
-        expect(image.parent.findAllByProps({ testID: 'socials-places-credit' })).toHaveLength(0);
-    }
+    expect(renderer.root.findAllByType('Image')).toHaveLength(3);
+    expect(renderer.root.findAllByProps({ testID: 'socials-places-credit' })).toHaveLength(0);
 
     act(() => renderer.root.findAllByType('Image')[2].props.onError());
-    expect(textContent(hostCredit(renderer, 'socials-places-credit'))).toBe('photos · Jane Doe');
+    expect(renderer.root.findAllByType('Image')).toHaveLength(2);
+    expect(renderer.root.findAllByProps({ testID: 'socials-places-credit' })).toHaveLength(0);
     act(() => renderer.unmount());
 });
 
-it('aggregates public-list covers once outside every image block and fails malformed covers closed', () => {
+it('keeps gated public-list covers while rendering no inline attribution', () => {
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(
@@ -124,17 +110,12 @@ it('aggregates public-list covers once outside every image block and fails malfo
     });
 
     expect(renderer.root.findAllByType('Image')).toHaveLength(3);
-    expect(textContent(hostCredit(renderer, 'public-lists-places-credit')))
-        .toBe('photos · Jane Doe, Marco');
-    expect(renderer.root.findAllByProps({ testID: 'public-lists-places-credit' })
-        .filter((node: any) => node.type === 'Text')).toHaveLength(1);
-    for (const image of renderer.root.findAllByType('Image')) {
-        expect(image.parent.findAllByProps({ testID: 'public-lists-places-credit' }))
-            .toHaveLength(0);
-    }
+    expect(renderer.root.findAllByProps({ testID: 'public-lists-places-credit' }))
+        .toHaveLength(0);
 
     act(() => renderer.root.findAllByType('Image')[2].props.onError());
-    expect(textContent(hostCredit(renderer, 'public-lists-places-credit')))
-        .toBe('photos · Jane Doe');
+    expect(renderer.root.findAllByType('Image')).toHaveLength(2);
+    expect(renderer.root.findAllByProps({ testID: 'public-lists-places-credit' }))
+        .toHaveLength(0);
     act(() => renderer.unmount());
 });

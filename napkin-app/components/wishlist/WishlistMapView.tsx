@@ -1352,8 +1352,7 @@ function PeekCarousel({
         ]).start();
     }, [slide, fade]);
 
-    // The transparent rail envelope admits the single legal growth case
-    // (off-image Places credit); ordinary photo and type cards remain uniform.
+    // The transparent rail envelope keeps photo and type cards uniform.
     const railCardH = peekRailMaxCardHeight(fontScale);
 
     // Mount at the tapped pin's card (getItemLayout makes initialScrollIndex
@@ -1656,7 +1655,6 @@ function PeekCardBody({
             contextTailActionLabel={contextTailActionLabel}
             onContextTailPress={onContextTailPress}
             thumbnail={selectedMedia?.thumbnail ?? null}
-            placesCredit={selectedMedia?.credit ?? null}
             fontScale={fontScale}
             palette={palette}
             style={styles.peekCard}
