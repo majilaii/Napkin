@@ -5,7 +5,6 @@ import { Colors } from '@/constants/theme';
 import type { ListDetail, ListEntry, OwnerProfile } from '@/hooks/lists/useList';
 import { ListDetailHeader, type ListDetailHeaderProps } from '../ListDetailHeader';
 import { ListEntryRow } from '../ListEntryRow';
-import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,10 +34,6 @@ function flattenStyle(style: unknown): Record<string, unknown> {
         (merged, value) => (value && typeof value === 'object' ? { ...merged, ...value } : merged),
         {},
     );
-}
-
-function hostTextByTestId(root: any, testID: string) {
-    return root.findAllByProps({ testID }).find((node: any) => node.type === 'Text')!;
 }
 
 function textContent(node: any): string {
@@ -242,22 +237,14 @@ function list(title: string): ListDetail {
 
 function renderHeader(
     title: string,
-    coverAttribution: string | null = null,
     cover: string | null = null,
 ) {
     const onAddSpots = jest.fn();
     const onShare = jest.fn();
-    const resolved = resolveSourcedPhoto({
-        url: cover,
-        photoSource: cover ? 'places' : null,
-        attributionHtml: coverAttribution,
-    });
     const props: ListDetailHeaderProps = {
         list: list(title),
         ownerProfile,
         cover,
-        placesCredits: resolved.credit ? [resolved.credit] : [],
-        placesPhotoCount: resolved.credit ? 1 : 0,
         metadata: '12 places',
         contextLine: { kind: 'table', text: 'Shared with everyone at this Table' },
         isOwner: true,
@@ -278,32 +265,19 @@ function renderHeader(
 }
 
 describe('ListDetailHeader design AA overlap guard', () => {
-    it('renders the Places credit as a legible ghosted line outside the 44pt thumbnail', () => {
+    it('keeps a sourced cover without rendering inline attribution', () => {
         const { renderer } = renderHeader(
             'Dinner ideas',
-            'Jane Doe',
             'https://cdn.example/places.jpg',
         );
-        const identity = renderer.root.findByProps({ testID: 'list-detail-header-identity' });
-        const credit = hostTextByTestId(renderer.root, 'list-detail-cover-attribution');
-
-        expect(identity.findAllByProps({ testID: 'list-detail-cover-attribution' })
-            .filter((node: any) => node.type === 'Text')).toHaveLength(1);
-        expect(textContent(credit)).toBe('photo · Jane Doe');
-        expect(credit.props.numberOfLines).toBe(1);
-        expect(flattenStyle(credit.props.style)).toMatchObject({
-            fontFamily: 'Manrope_500Medium',
-            fontSize: 11,
-            lineHeight: 14,
-            opacity: 0.85,
-            color: Colors.light.textMuted,
-        });
+        expect(renderer.root.findAllByProps({ testID: 'list-detail-cover-attribution' }))
+            .toHaveLength(0);
 
         const image = renderer.root.findByType('ExpoImage');
         act(() => image.props.onError());
         expect(renderer.root.findAllByType('ExpoImage')).toHaveLength(0);
-        expect(renderer.root.findAllByProps({ testID: 'list-detail-cover-attribution' })
-            .filter((node: any) => node.type === 'Text')).toHaveLength(1);
+        expect(renderer.root.findAllByProps({ testID: 'list-detail-cover-attribution' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
@@ -311,23 +285,15 @@ describe('ListDetailHeader design AA overlap guard', () => {
     it('ignores a late image error from a cover that was already replaced', () => {
         const { renderer, props } = renderHeader(
             'Dinner ideas',
-            'Old credit',
             'https://cdn.example/old.jpg',
         );
         const failOldCover = renderer.root.findByType('ExpoImage').props.onError;
 
         act(() => {
-            const next = resolveSourcedPhoto({
-                url: 'https://cdn.example/new.jpg',
-                photoSource: 'places',
-                attributionHtml: 'New credit',
-            });
             renderer.update(
                 <ListDetailHeader
                     {...props}
                     cover="https://cdn.example/new.jpg"
-                    placesCredits={[next.credit!]}
-                    placesPhotoCount={1}
                 />,
             );
         });
@@ -336,9 +302,8 @@ describe('ListDetailHeader design AA overlap guard', () => {
         expect(renderer.root.findByType('ExpoImage').props.source).toEqual({
             uri: 'https://cdn.example/new.jpg',
         });
-        expect(textContent(
-            hostTextByTestId(renderer.root, 'list-detail-cover-attribution'),
-        )).toBe('photo · New credit');
+        expect(renderer.root.findAllByProps({ testID: 'list-detail-cover-attribution' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });

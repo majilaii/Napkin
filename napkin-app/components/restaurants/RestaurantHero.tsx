@@ -23,7 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing } from '@/constants/theme';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { RestaurantPageRestaurant } from '@/hooks/restaurants/useRestaurantPage';
 
@@ -75,7 +75,6 @@ export function RestaurantHero({
     });
     const [failedPhotoUrl, setFailedPhotoUrl] = useState<string | null>(null);
     const photoUri = resolvedPhoto.url === failedPhotoUrl ? null : resolvedPhoto.url;
-    const photoCredit = photoUri ? resolvedPhoto.credit : null;
     const isInvitation = !photoUri;
 
     const metaParts: string[] = [];
@@ -151,9 +150,9 @@ export function RestaurantHero({
         );
     }
 
-    // TICKET-057 AC 10/11: isPlaces drives both the warm-paper overlay and the
-    // attribution rule. 'none' is treated identically to null — no overlay, no
-    // attribution, falls through to invitation hero if photo_url is also null.
+    // TICKET-057 AC 10/11: isPlaces drives the warm-paper overlay. 'none' is
+    // treated identically to null — no overlay, and the source gate falls through
+    // to the invitation hero if photo_url is also null.
     // When a user/Table photo replaces a Places hero, photo_source flips server-side
     // and isPlaces becomes false on the next render — no manual refresh needed (AC 11).
     const isPlaces = resolvedPhoto.isPlaces;
@@ -242,24 +241,6 @@ export function RestaurantHero({
                     ) : null}
                 </View>
             </View>
-
-            {/* TICKET-057 AC 6/7: attribution rule below the hero photo, on the warm-paper
-                margin. NOT overlaid on the image (Heirloom: no scrim chrome on photography).
-                Only rendered when the shared source gate returns a Places credit. */}
-            {photoCredit ? (
-                <View
-                    style={[
-                        styles.attributionRow,
-                        { backgroundColor: palette.background },
-                    ]}
-                >
-                    <PlacesCredit
-                        credits={[photoCredit]}
-                        photoCount={1}
-                        testID="restaurant-hero-places-credit"
-                    />
-                </View>
-            ) : null}
         </>
     );
 }
@@ -341,12 +322,6 @@ const styles = StyleSheet.create({
         color: CREAM,
         opacity: 0.8,
         marginTop: 5,
-    },
-    // ── TICKET-057: Places attribution rule ──────────────────────────────
-    attributionRow: {
-        paddingHorizontal: 22,
-        paddingTop: 8,
-        paddingBottom: 12,
     },
     // ── Invitation (no-photo) variant ────────────────────────────────────
     invitationBg: {

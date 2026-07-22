@@ -79,19 +79,8 @@ function tile(id: string, overrides: Partial<AtlasRestaurantTile> = {}): AtlasRe
     };
 }
 
-function textContent(node: any): string {
-    return node.children
-        .map((child: any) => typeof child === 'string' ? child : textContent(child))
-        .join('');
-}
-
-function creditTextNodes(renderer: any, testID: string) {
-    return renderer.root.findAllByType('Text')
-        .filter((node: any) => node.props.testID === testID);
-}
-
-describe('Atlas Places photo compliance', () => {
-    it('gates city heroes and renders one aggregate line for the city index', () => {
+describe('Atlas sourced photo presentation', () => {
+    it('gates city heroes without rendering inline attribution', () => {
         const data: TableAtlasData = {
             stats: { members: 2, cities: 5, spots: 10, founded_at: null },
             cities: [
@@ -136,14 +125,13 @@ describe('Atlas Places photo compliance', () => {
             { uri: 'https://cdn.test/berlin.jpg' },
             { uri: 'https://cdn.test/user.jpg' },
         ]));
-        const credits = creditTextNodes(renderer, 'atlas-city-index-places-credit');
-        expect(credits).toHaveLength(1);
-        expect(textContent(credits[0])).toBe('photos · Jane Doe, Luis Ray');
+        expect(renderer.root.findAllByProps({ testID: 'atlas-city-index-places-credit' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
 
-    it('renders one deduped aggregate line for the restaurant grid', () => {
+    it('gates restaurant-grid photos without rendering inline attribution', () => {
         const tiles = [
             tile('a', {
                 photo_url: 'https://cdn.test/a.jpg',
@@ -185,15 +173,13 @@ describe('Atlas Places photo compliance', () => {
                 { uri: 'https://cdn.test/user.jpg' },
             ]));
         expect(renderer.root.findAllByType('ImageBackground')).toHaveLength(4);
-        const credits = creditTextNodes(renderer, 'atlas-grid-places-credit');
-        expect(credits).toHaveLength(1);
-        const [credit] = credits;
-        expect(textContent(credit)).toBe('photos · Jane Doe, Luis Ray');
+        expect(renderer.root.findAllByProps({ testID: 'atlas-grid-places-credit' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
 
-    it('gates peek-strip images and renders one surface-level aggregate line', () => {
+    it('gates peek-strip images without rendering inline attribution', () => {
         const tiles = [
             tile('a', {
                 photo_url: 'https://cdn.test/a.jpg',
@@ -225,10 +211,8 @@ describe('Atlas Places photo compliance', () => {
                 { uri: 'https://cdn.test/a.jpg' },
                 { uri: 'https://cdn.test/b.jpg' },
             ]);
-        const credits = creditTextNodes(renderer, 'atlas-peek-strip-places-credit');
-        expect(credits).toHaveLength(1);
-        const [credit] = credits;
-        expect(textContent(credit)).toBe('photos · Jane Doe, Luis Ray');
+        expect(renderer.root.findAllByProps({ testID: 'atlas-peek-strip-places-credit' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });

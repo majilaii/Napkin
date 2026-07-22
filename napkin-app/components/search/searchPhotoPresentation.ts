@@ -9,7 +9,7 @@ import {
 /**
  * Search ghosts remain text-only. Persisted rows cross the same provenance
  * boundary as every other restaurant-photo surface: ambiguous and unattributed
- * Places URLs fail closed, while user/Table photos render without credit chrome.
+ * Places URLs fail closed, while user/Table photos pass the source-aware gate.
  */
 export function resolveSearchResultPhoto(row: SearchResultRow): ResolvedSourcedPhoto {
     if (!row.id) return { url: null, credit: null, isPlaces: false };

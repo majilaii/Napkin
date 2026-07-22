@@ -33,9 +33,7 @@ import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRestaurantSearch, type SearchResultRow as SearchRow } from '@/hooks/search/useRestaurantSearch';
 import { usePersistPlace } from '@/hooks/search/usePersistPlace';
-import { PlacesCredit } from '@/components/ui/PlacesCredit';
 import {
-    deriveSearchPlacesCredits,
     resolveSearchResultPhoto,
     resolveVisibleSearchResultPhoto,
     searchPhotoFailureKey,
@@ -151,15 +149,6 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
             ].filter((s) => s.rows.length > 0),
         [results],
     );
-    const visibleRows = useMemo(
-        () => sections.flatMap((section) => section.rows),
-        [sections],
-    );
-    const placesCredit = useMemo(
-        () => deriveSearchPlacesCredits(visibleRows, failedPhotoKeys),
-        [failedPhotoKeys, visibleRows],
-    );
-
     const hasQuery = debounced.length >= 2;
     const hasResults = sections.length > 0;
 
@@ -225,15 +214,6 @@ export function TopFourSearchScreen({ onClose, onPick, userId, pickedIds, atCapa
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
                 >
-                    {placesCredit.credits.length > 0 ? (
-                        <View style={styles.placesCredit}>
-                            <PlacesCredit
-                                credits={placesCredit.credits}
-                                photoCount={placesCredit.photoCount}
-                                testID="profile-top-four-search-places-credit"
-                            />
-                        </View>
-                    ) : null}
                     {sections.map((section) => (
                         <View key={section.label}>
                             <Text style={[styles.tierLabel, { color: palette.textMuted }]}>
@@ -351,10 +331,6 @@ const styles = StyleSheet.create({
         ...Type.metadata,
         marginHorizontal: 18,
         marginBottom: Spacing.xs,
-    },
-    placesCredit: {
-        paddingHorizontal: 18,
-        paddingTop: Spacing.xs,
     },
     centered: {
         flex: 1,

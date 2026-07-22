@@ -63,8 +63,8 @@ const baseProps = {
     palette: Colors.light,
 };
 
-describe('TableTopFourGrid Places credit', () => {
-    it('aggregates distinct Places authors below the grid', () => {
+describe('TableTopFourGrid sourced photos', () => {
+    it('renders sourced Places photos without inline attribution', () => {
         let renderer: any;
         act(() => {
             renderer = TestRenderer.create(
@@ -87,25 +87,23 @@ describe('TableTopFourGrid Places credit', () => {
             );
         });
 
-        const credit = renderer.root.findAllByProps({ testID: 'table-top-four-places-credit' })
-            .find((node: any) => node.type === 'Text');
-        expect(textContent(credit)).toBe('photos · Jane Doe, Luis Ray');
         expect(renderer.root.findAllByType('ExpoImage').map((node: any) => node.props.source))
             .toEqual([
                 { uri: 'https://cdn.test/a.jpg' },
                 { uri: 'https://cdn.test/b.jpg' },
             ]);
+        expect(renderer.root.findAllByProps({ testID: 'table-top-four-places-credit' }))
+            .toHaveLength(0);
 
         act(() => renderer.root.findAllByType('ExpoImage')[0].props.onError());
-        const updatedCredit = renderer.root
-            .findAllByProps({ testID: 'table-top-four-places-credit' })
-            .find((node: any) => node.type === 'Text');
-        expect(textContent(updatedCredit)).toBe('photo · Luis Ray');
+        expect(renderer.root.findAllByType('ExpoImage')).toHaveLength(1);
+        expect(renderer.root.findAllByProps({ testID: 'table-top-four-places-credit' }))
+            .toHaveLength(0);
 
         act(() => renderer.unmount());
     });
 
-    it('dedupes authors, suppresses missing credit, preserves custom-photo precedence and social history', () => {
+    it('suppresses missing source metadata and preserves custom-photo precedence and social history', () => {
         let renderer: any;
         act(() => {
             renderer = TestRenderer.create(
@@ -148,15 +146,14 @@ describe('TableTopFourGrid Places credit', () => {
             );
         });
 
-        const credit = renderer.root.findAllByProps({ testID: 'table-top-four-places-credit' })
-            .find((node: any) => node.type === 'Text');
-        expect(textContent(credit)).toBe('photos · Jane Doe');
         expect(renderer.root.findAllByType('ExpoImage').map((node: any) => node.props.source))
             .toEqual([
                 { uri: 'https://cdn.test/a.jpg' },
                 { uri: 'https://cdn.test/b.jpg' },
                 { uri: 'https://cdn.test/custom.jpg' },
             ]);
+        expect(renderer.root.findAllByProps({ testID: 'table-top-four-places-credit' }))
+            .toHaveLength(0);
         expect(
             renderer.root.findAllByType('Text')
                 .map((node: any) => textContent(node))

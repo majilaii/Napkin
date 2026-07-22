@@ -14,7 +14,7 @@
  *
  * Covers are public-safe: `cover_photo_url` arrives null unless the list's
  * first restaurant is a Places hero WITH attribution (`photo_source` +
- * `attribution_html` ride along for the credit overlay). No user entry photo
+ * `attribution_html` ride along for the client source gate). No user entry photo
  * ever backs a cover here.
  *
  * Non-paginated by design (locked: cap ~6, "see more" hands off to the search

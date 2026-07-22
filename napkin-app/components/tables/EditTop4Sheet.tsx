@@ -33,13 +33,8 @@ import { useSetTableTopFour } from '@/hooks/tables/useSetTableTopFour';
 import type { TopFourPlacePayload } from '@/hooks/tables/useSetTableTopFour';
 import type { TopFourSlot, TopFourSuggested } from '@/hooks/tables/useTableTopFour';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import {
-    PlacesCredit,
-    dedupePlacesCredits,
-    resolveSourcedPhoto,
-} from '@/components/ui/PlacesCredit';
-import {
-    deriveSearchPlacesCredits,
     resolveSearchResultPhoto,
     resolveVisibleSearchResultPhoto,
     searchPhotoFailureKey,
@@ -576,50 +571,6 @@ export function EditTop4Sheet({
         ...searchResults.onNapkin,
         ...searchResults.morePlaces,
     ].filter((r) => r.id || r.placeId), [searchResults]); // persisted rows have a DB id; ghost rows have a placeId
-    const searchPlacesCredit = useMemo(
-        () => deriveSearchPlacesCredits(allSearchResults, failedPhotoKeys),
-        [allSearchResults, failedPhotoKeys],
-    );
-    const visiblePhotoCredits = useMemo(() => {
-        const draftCredits = draft.flatMap((slot) => {
-            const photo = resolveDraftSlotPhoto(slot);
-            const failureKey = scopedPhotoFailureKey(
-                'draft',
-                `${slot.position}:${slot.restaurant_id}`,
-                photo.url,
-            );
-            return photo.url
-                && photo.credit
-                && !(failureKey && failedPhotoKeys.has(failureKey))
-                ? [photo.credit]
-                : [];
-        });
-        const resultCredits = hasSearchQuery
-            ? (searchLoading ? [] : searchPlacesCredit.credits)
-            : suggested.flatMap((item) => {
-                const photo = resolveSuggestedPhoto(item);
-                const failureKey = scopedPhotoFailureKey(
-                    'suggested',
-                    item.restaurant.id,
-                    photo.url,
-                );
-                return photo.url
-                    && photo.credit
-                    && !(failureKey && failedPhotoKeys.has(failureKey))
-                    ? [photo.credit]
-                    : [];
-            });
-        const photoCount = draftCredits.length + (
-            hasSearchQuery
-                ? (searchLoading ? 0 : searchPlacesCredit.photoCount)
-                : resultCredits.length
-        );
-        return {
-            credits: dedupePlacesCredits([...draftCredits, ...resultCredits]),
-            photoCount,
-        };
-    }, [draft, failedPhotoKeys, hasSearchQuery, searchLoading, searchPlacesCredit, suggested]);
-
     return (
         <Modal
             visible={visible}
@@ -691,16 +642,6 @@ export function EditTop4Sheet({
                         );
                     })}
                 </View>
-
-                {visiblePhotoCredits.credits.length > 0 ? (
-                    <View style={styles.placesCredit}>
-                        <PlacesCredit
-                            credits={visiblePhotoCredits.credits}
-                            photoCount={visiblePhotoCredits.photoCount}
-                            testID="table-top-four-editor-places-credit"
-                        />
-                    </View>
-                ) : null}
 
                 {/* Search bar */}
                 <SearchInput
@@ -824,11 +765,6 @@ const styles = StyleSheet.create({
         marginHorizontal: 22,
         gap: 8,
         marginBottom: Spacing.md,
-    },
-    placesCredit: {
-        marginHorizontal: 22,
-        marginTop: -Spacing.xs,
-        marginBottom: Spacing.sm,
     },
     tile: {
         borderRadius: Radius.sm,

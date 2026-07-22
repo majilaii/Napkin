@@ -104,13 +104,7 @@ function renderSheet(currentTakes: ProfileQuickTake[]) {
     return renderer;
 }
 
-function textContent(node: any): string {
-    return node.children
-        .map((child: any) => typeof child === 'string' ? child : textContent(child))
-        .join('');
-}
-
-it('shows one adjacent, deduped credit line for every gated draft thumbnail', () => {
+it('shows gated draft thumbnails without inline attribution', () => {
     const renderer = renderSheet([
         take('best_value', 'One', 'Jane Doe'),
         take('best_pub', 'Two', '  JANE   DOE  '),
@@ -120,24 +114,13 @@ it('shows one adjacent, deduped credit line for every gated draft thumbnail', ()
     ]);
 
     const images = renderer.root.findAllByType('Image');
-    const creditLines = renderer.root.findAllByProps({ testID: 'quick-takes-sheet-places-credit' })
-        .filter((node: any) => node.type === 'Text');
-    const credit = creditLines[0];
-    const authors = credit.findAll((node: any) =>
-        typeof node.props.testID === 'string'
-        && node.props.testID.startsWith('quick-takes-sheet-places-credit-author-'));
-
     expect(images).toHaveLength(3);
-    expect(creditLines).toHaveLength(1);
-    expect(authors.map((node: any) => node.children.join(''))).toEqual(['Jane Doe', 'Marco']);
-    expect(textContent(credit)).toBe('photos · Jane Doe, Marco');
-    for (const image of images) {
-        expect(image.parent.findAllByProps({ testID: 'quick-takes-sheet-places-credit' })).toHaveLength(0);
-    }
+    expect(renderer.root.findAllByProps({ testID: 'quick-takes-sheet-places-credit' }))
+        .toHaveLength(0);
     act(() => renderer.unmount());
 });
 
-it('removes a failed thumbnail from the rendered-photo credit aggregate', () => {
+it('removes a failed thumbnail without adding attribution chrome', () => {
     const renderer = renderSheet([
         take('best_value', 'One', 'Jane Doe'),
         take('best_pub', 'Two', 'Marco'),
@@ -147,12 +130,7 @@ it('removes a failed thumbnail from the rendered-photo credit aggregate', () => 
     act(() => failedImage.props.onError());
 
     expect(renderer.root.findAllByType('Image')).toHaveLength(1);
-    const credit = renderer.root.findAllByProps({ testID: 'quick-takes-sheet-places-credit' })
-        .find((node: any) => node.type === 'Text');
-    expect(textContent(credit)).toBe('photo · Marco');
-    expect(credit.findAll((node: any) =>
-        typeof node.props.testID === 'string'
-        && node.props.testID.startsWith('quick-takes-sheet-places-credit-author-'))
-        .map((node: any) => node.children.join(''))).toEqual(['Marco']);
+    expect(renderer.root.findAllByProps({ testID: 'quick-takes-sheet-places-credit' }))
+        .toHaveLength(0);
     act(() => renderer.unmount());
 });

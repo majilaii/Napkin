@@ -67,8 +67,8 @@ export function listCoverPhotoFailureKey(entries: readonly CoverEntry[]): string
 }
 
 /**
- * One header line covers every safely-renderable Places thumbnail in the list.
- * Rows intentionally carry no credit text of their own.
+ * Derives structured attribution metadata for safely-renderable Places
+ * thumbnails. Render surfaces do not display this metadata inline.
  */
 export function deriveListPlacesCredits(
     entries: readonly CoverEntry[],

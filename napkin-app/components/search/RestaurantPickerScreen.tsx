@@ -22,9 +22,7 @@ import {
 } from '@/hooks/search/useRestaurantSearch';
 import { usePersistPlace } from '@/hooks/search/usePersistPlace';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
-import { PlacesCredit } from '@/components/ui/PlacesCredit';
 import {
-    deriveSearchPlacesCredits,
     resolveVisibleSearchResultPhoto,
     searchPhotoFailureKey,
 } from './searchPhotoPresentation';
@@ -81,15 +79,6 @@ export function RestaurantPickerScreen({
             ].filter((section) => section.rows.length > 0),
         [results],
     );
-    const visibleRows = useMemo(
-        () => sections.flatMap((section) => section.rows),
-        [sections],
-    );
-    const placesCredit = useMemo(
-        () => deriveSearchPlacesCredits(visibleRows, failedPhotoKeys),
-        [failedPhotoKeys, visibleRows],
-    );
-
     const choose = useCallback(
         (row: SearchResultRow) => {
             const finish = (restaurantId: string) => {
@@ -182,15 +171,6 @@ export function RestaurantPickerScreen({
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xl }}
                 >
-                    {placesCredit.credits.length > 0 ? (
-                        <View style={styles.placesCredit}>
-                            <PlacesCredit
-                                credits={placesCredit.credits}
-                                photoCount={placesCredit.photoCount}
-                                testID="restaurant-picker-places-credit"
-                            />
-                        </View>
-                    ) : null}
                     {sections.map((section) => (
                         <View key={section.label}>
                             <Text style={[Type.sectionKicker, styles.sectionLabel, { color: palette.textMuted }]}>
@@ -311,10 +291,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         marginTop: Spacing.md,
         marginBottom: Spacing.xs,
-    },
-    placesCredit: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.xs,
     },
     row: {
         minHeight: 68,

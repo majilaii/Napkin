@@ -54,9 +54,9 @@ describe('peek rail height', () => {
         expect(peekRailCardHeight(3)).toBe(peekRailCardHeight(2));
     });
 
-    it('allows height growth only for the off-image Places credit line', () => {
-        expect(peekCardHeight(1, true)).toBe(151);
-        expect(peekRailMaxCardHeight(1)).toBe(151);
-        expect(peekCardHeight(1, true)).toBeGreaterThan(peekCardHeight(1, false));
+    it('keeps the rail envelope uniform for Places photos', () => {
+        expect(peekCardHeight(1, true)).toBe(136);
+        expect(peekRailMaxCardHeight(1)).toBe(136);
+        expect(peekCardHeight(1, true)).toBe(peekCardHeight(1, false));
     });
 });

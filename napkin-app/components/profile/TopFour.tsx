@@ -20,7 +20,7 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { resolveTilePhoto } from '@/lib/restaurantPhoto';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { SectionHeader } from './SectionHeader';
 import { MarqueePlate } from './MarqueePlate';
 import type { TopPick } from '@/hooks/users/useUserProfile';
@@ -39,7 +39,6 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
     const { width: viewportWidth } = useWindowDimensions();
     const plateWidth = (viewportWidth - (Spacing.lg * 2) - (Spacing.sm * 3)) / 4;
     const plateDimensions = { width: plateWidth, height: plateWidth * 1.5 };
-    const [failedPhotoKeys, setFailedPhotoKeys] = React.useState<Set<string>>(() => new Set());
 
     const slots: (TopPick | null)[] = [
         picks[0] ?? null,
@@ -48,9 +47,8 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
         picks[3] ?? null,
     ];
 
-    // Resolve the final image once so the aggregate credit describes only the
-    // photos that actually reach the grid. A chosen-memory photo wins over the
-    // restaurant's Places hero and therefore contributes no Places credit.
+    // Resolve the final image once. A chosen-memory photo wins over the
+    // restaurant's Places hero.
     const resolvedSlots = slots.map((pick) => {
         if (!pick) return null;
         const sourced = resolveSourcedPhoto({
@@ -69,13 +67,7 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
         return {
             pick,
             photo,
-            credit: photo.kind === 'url' && photo.isPlaces ? sourced.credit : null,
         };
-    });
-    const renderedPlacesPhotos = resolvedSlots.flatMap((slot) => {
-        if (!slot?.credit || slot.photo.kind !== 'url') return [];
-        const key = `${slot.pick.restaurant_id}:${slot.photo.url}`;
-        return failedPhotoKeys.has(key) ? [] : [slot];
     });
 
     const openPick = (pick: TopPick) =>
@@ -134,22 +126,10 @@ export function TopFour({ picks, isOwner = false, onEdit }: Props) {
                             photoUrl={photo.kind === 'url' ? photo.url : null}
                             placesWash={photo.kind === 'url' && photo.isPlaces}
                             onPress={() => openPick(pick)}
-                            onPhotoError={(url) => setFailedPhotoKeys(
-                                (current) => new Set(current).add(`${pick.restaurant_id}:${url}`),
-                            )}
                         />
                     );
                 })}
             </View>
-            {renderedPlacesPhotos.length > 0 ? (
-                <View style={styles.placesCreditRow}>
-                    <PlacesCredit
-                        credits={renderedPlacesPhotos.map((slot) => slot.credit)}
-                        photoCount={renderedPlacesPhotos.length}
-                        testID="profile-top-four-places-credit"
-                    />
-                </View>
-            ) : null}
         </View>
     );
 }
@@ -163,10 +143,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         paddingHorizontal: Spacing.lg,
         gap: Spacing.sm,
-    },
-    placesCreditRow: {
-        marginHorizontal: Spacing.lg,
-        marginTop: Spacing.sm,
     },
     plate: {
         flexGrow: 0,

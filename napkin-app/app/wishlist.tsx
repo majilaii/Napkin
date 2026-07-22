@@ -61,7 +61,6 @@ import { useImportSlot } from '@/hooks/imports/useImportSlot';
 import { useCorrectImport } from '@/hooks/wishlist/useCorrectImport';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useSavedLists } from '@/hooks/lists/useSavedLists';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { useList } from '@/hooks/lists/useList';
 import { buildMapPins } from '@/components/wishlist/mapPinsUtils';
 import {
@@ -324,39 +323,6 @@ export default function WishlistScreen() {
     const handleListCoverError = useCallback((failureKey: string) => {
         setFailedListCoverKeys((current) => new Set(current).add(failureKey));
     }, []);
-    const myListPlacesCovers = useMemo(
-        () => (myLists ?? []).map((list) => {
-            const cover = resolveSourcedPhoto({
-                url: list.cover_photo_url,
-                photoSource: list.cover_photo_source,
-                attributionHtml: list.cover_attribution_html,
-                restaurantName: list.cover_restaurant_name,
-            });
-            return { cover, failureKey: cover.url ? `${list.id}:${cover.url}` : null };
-        }).filter(({ cover, failureKey }) => (
-            !!cover.url
-            && !!cover.credit
-            && !(failureKey && failedListCoverKeys.has(failureKey))
-        )).map(({ cover }) => cover),
-        [failedListCoverKeys, myLists],
-    );
-    const savedListPlacesCovers = useMemo(
-        () => (savedLists ?? []).map((list) => {
-            const cover = resolveSourcedPhoto({
-                url: list.cover_photo_url,
-                photoSource: list.cover_photo_source,
-                attributionHtml: list.cover_attribution_html,
-                restaurantName: list.cover_restaurant_name,
-            });
-            return { cover, failureKey: cover.url ? `${list.id}:${cover.url}` : null };
-        }).filter(({ cover, failureKey }) => (
-            !!cover.url
-            && !!cover.credit
-            && !(failureKey && failedListCoverKeys.has(failureKey))
-        )).map(({ cover }) => cover),
-        [failedListCoverKeys, savedLists],
-    );
-
     const routeView = routeParamValue(params.view);
     const routeListId = routeParamValue(params.listId);
     const routeRestaurantId = routeParamValue(params.restaurantId);
@@ -1255,13 +1221,6 @@ export default function WishlistScreen() {
                                 {`${listsCount} ${listsCount === 1 ? 'list' : 'lists'}`}
                             </Text>
                             <Text style={[styles.rCollectionHeading, { color: palette.textMuted }]}>Your lists</Text>
-                            <PlacesCredit
-                                credits={myListPlacesCovers.map((cover) => cover.credit)}
-                                photoCount={myListPlacesCovers.length}
-                                testID="wishlist-own-lists-places-credit"
-                                interactive={false}
-                                style={styles.rPlacesCredit}
-                            />
                             {(myLists ?? []).map((list) => (
                                 <WishlistListCardFull
                                     key={list.id}
@@ -1283,13 +1242,6 @@ export default function WishlistScreen() {
                             {(savedLists?.length ?? 0) > 0 ? (
                                 <>
                                     <Text style={[styles.rCollectionHeading, styles.rSavedHeading, { color: palette.textMuted }]}>Saved lists</Text>
-                                    <PlacesCredit
-                                        credits={savedListPlacesCovers.map((cover) => cover.credit)}
-                                        photoCount={savedListPlacesCovers.length}
-                                        testID="wishlist-saved-lists-places-credit"
-                                        interactive={false}
-                                        style={styles.rPlacesCredit}
-                                    />
                                     {(savedLists ?? []).map((list) => (
                                         <SavedListCardFull
                                             key={list.id}
@@ -1538,9 +1490,6 @@ const styles = StyleSheet.create({
     },
     rSavedHeading: {
         marginTop: Spacing.xl,
-    },
-    rPlacesCredit: {
-        marginBottom: Spacing.sm,
     },
     rNoResults: {
         alignItems: 'center',

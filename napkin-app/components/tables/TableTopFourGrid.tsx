@@ -25,7 +25,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { resolveTilePhoto, type TilePhotoResult } from '@/lib/restaurantPhoto';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import type { TopFourSlot, TopFourLastEvent } from '@/hooks/tables/useTableTopFour';
 
 type Palette = typeof Colors.light;
@@ -74,10 +74,9 @@ interface FilledTileProps {
     tileWidth: number;
     palette: Palette;
     onPress: () => void;
-    onPhotoError: (url: string) => void;
 }
 
-function FilledTile({ slot, photo, tileWidth, palette, onPress, onPhotoError }: FilledTileProps) {
+function FilledTile({ slot, photo, tileWidth, palette, onPress }: FilledTileProps) {
     const [imgError, setImgError] = useState(false);
     const tileHeight = (tileWidth * 4) / 3;
 
@@ -123,7 +122,6 @@ function FilledTile({ slot, photo, tileWidth, palette, onPress, onPhotoError }: 
                             recyclingKey={photo.url}
                             onError={() => {
                                 setImgError(true);
-                                onPhotoError(photo.url);
                             }}
                         />
                         {/* TICKET-157: warm Places wash over the borrowed venue photo,
@@ -224,8 +222,6 @@ export function TableTopFourGrid({
     palette,
 }: TableTopFourGridProps) {
     const { width: screenWidth } = useWindowDimensions();
-    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
-
     // Return null for 0/4 — caller shows the placeholder instead
     if (slots.length === 0) return null;
 
@@ -236,9 +232,8 @@ export function TableTopFourGrid({
     // Build the 4-slot grid (position 1–4), filling empties
     const positions: (1 | 2 | 3 | 4)[] = [1, 2, 3, 4];
 
-    // Resolve every slot at the grid boundary so the one aggregate line names
-    // only authors whose Places photos actually render. A custom slot photo has
-    // absolute precedence and never contributes Places credit.
+    // Resolve every slot at the grid boundary. A custom slot photo has absolute
+    // precedence over the restaurant hero.
     const resolvedSlotMap = new Map(slots.map((slot) => {
         const sourced = resolveSourcedPhoto({
             url: slot.restaurant?.photo_url,
@@ -256,14 +251,8 @@ export function TableTopFourGrid({
         return [slot.position, {
             slot,
             photo,
-            credit: photo.kind === 'url' && photo.isPlaces ? sourced.credit : null,
         }] as const;
     }));
-    const renderedPlacesPhotos = [...resolvedSlotMap.values()]
-        .filter((resolved) => {
-            if (!resolved.credit || resolved.photo.kind !== 'url') return false;
-            return !failedPhotoKeys.has(`${resolved.slot.restaurant_id}:${resolved.photo.url}`);
-        });
 
     // ── Attribution row logic ──────────────────────────────────────────────────
     let attributionCopy: string | null = null;
@@ -325,9 +314,6 @@ export function TableTopFourGrid({
                                 tileWidth={tileWidth}
                                 palette={palette}
                                 onPress={onEdit}
-                                onPhotoError={(url) => setFailedPhotoKeys(
-                                    (current) => new Set(current).add(`${resolved.slot.restaurant_id}:${url}`),
-                                )}
                             />
                         );
                     }
@@ -342,16 +328,6 @@ export function TableTopFourGrid({
                     );
                 })}
             </View>
-
-            {renderedPlacesPhotos.length > 0 ? (
-                <View style={styles.placesCreditRow}>
-                    <PlacesCredit
-                        credits={renderedPlacesPhotos.map((resolved) => resolved.credit)}
-                        photoCount={renderedPlacesPhotos.length}
-                        testID="table-top-four-places-credit"
-                    />
-                </View>
-            ) : null}
 
             {/* Last-edit social attribution row — unrelated to Places photo credit. */}
             {attributionCopy ? (
@@ -425,10 +401,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         marginHorizontal: 22,
         gap: 8,
-    },
-    placesCreditRow: {
-        marginHorizontal: 22,
-        marginTop: 10,
     },
     tile: {
         borderRadius: Radius.sm,

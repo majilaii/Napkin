@@ -31,7 +31,7 @@ export type RestaurantPageRestaurant = {
     google_rating_count: number | null;
     external_id: string | null;
     // TICKET-057: photo provenance and Places attribution.
-    // photo_source drives the warm-paper overlay and attribution rule in RestaurantHero.
+    // photo_source drives the warm-paper overlay and source-aware image gate.
     // 'none' = we tried Places, got no usable attribution — skip lazy backfill on re-visit.
     photo_source: 'user' | 'table' | 'places' | 'none' | null;
     places_photo_attribution_html: string | null;
@@ -293,7 +293,7 @@ export function useRestaurantPage(
  *
  * TICKET-057: accepts photoAttributionHtml from the search result to populate
  * photo_source and places_photo_attribution_html on the ghost render so
- * RestaurantHero can show the warm-paper overlay and attribution rule
+ * RestaurantHero can show the warm-paper overlay and source-gate the image
  * immediately — before the lazy server upsert resolves.
  */
 export function restaurantFromPlace(

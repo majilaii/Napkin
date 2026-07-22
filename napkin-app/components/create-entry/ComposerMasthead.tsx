@@ -13,7 +13,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 
 interface Props {
     restaurantName: string;
@@ -85,14 +85,6 @@ export function ComposerMasthead({
                     >
                         {meta}
                     </Text>
-                ) : null}
-
-                {visibleThumbnail && resolvedThumbnail.credit ? (
-                    <PlacesCredit
-                        credits={[resolvedThumbnail.credit]}
-                        photoCount={1}
-                        testID="composer-masthead-places-credit"
-                    />
                 ) : null}
 
                 {onClearPlace ? (

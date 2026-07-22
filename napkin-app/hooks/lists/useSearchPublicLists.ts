@@ -32,9 +32,9 @@ export interface PublicListResult {
     cover_photo_url?: string | null;
     /** TICKET-189 (browse only): 'places' when cover_photo_url is set, else null. */
     photo_source?: string | null;
-    /** TICKET-189/200 (browse only): Places attribution html for the adjacent credit. */
+    /** TICKET-189/200 (browse only): Places attribution html for source-aware image gating. */
     attribution_html?: string | null;
-    /** Restaurant paired with the cover, used only for redundant-credit minimization. */
+    /** Restaurant paired with the cover for normalized attribution metadata. */
     cover_restaurant_name?: string | null;
 }
 

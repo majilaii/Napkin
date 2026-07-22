@@ -26,7 +26,7 @@ import { Colors, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { tintFor } from '@/lib/engraving';
-import { PlacesCredit, resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import type { ProfileListSummary } from '@/hooks/users/useUserProfile';
 import { SectionHeader } from './SectionHeader';
@@ -142,15 +142,6 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
         attributionHtml: item.coverAttributionHtml,
         restaurantName: item.coverRestaurantName,
     })]));
-    const renderedPlacesCovers = items
-        .map((item) => ({ item, cover: resolvedCovers.get(item.id)! }))
-        .filter(({ item, cover }) => (
-            !!cover.url
-            && !!cover.credit
-            && !failedCoverKeys.has(`${item.id}:${cover.url}`)
-        ))
-        .map(({ cover }) => cover);
-
     const openList = (id: string) =>
         router.push({ pathname: '/list/[id]', params: { id } });
 
@@ -190,13 +181,6 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
                         <GhostCard palette={palette} onPress={() => router.push('/list/new')} />
                     )}
                 </ScrollView>
-                <PlacesCredit
-                    credits={renderedPlacesCovers.map((cover) => cover.credit)}
-                    photoCount={renderedPlacesCovers.length}
-                    testID="list-cover-attribution"
-                    interactive={false}
-                    style={styles.aggregateCredit}
-                />
             </View>
         );
     }
@@ -225,13 +209,6 @@ export function ListsShelf({ isSelf, userId, publicLists }: Props) {
                     />
                 ))}
             </ScrollView>
-            <PlacesCredit
-                credits={renderedPlacesCovers.map((cover) => cover.credit)}
-                photoCount={renderedPlacesCovers.length}
-                testID="list-cover-attribution"
-                interactive={false}
-                style={styles.aggregateCredit}
-            />
         </View>
     );
 }
@@ -247,10 +224,6 @@ const styles = StyleSheet.create({
     card: {
         width: CARD_W,
         gap: 8,
-    },
-    aggregateCredit: {
-        marginHorizontal: 22,
-        marginTop: 5,
     },
     plate: {
         width: CARD_W,

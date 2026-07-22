@@ -58,8 +58,6 @@ import {
     filterListsByQuery,
 } from '@/components/search';
 import type { SearchMode } from '@/components/search';
-import { PlacesCredit } from '@/components/ui/PlacesCredit';
-import { deriveSearchPlacesCredits } from '@/components/search/searchPhotoPresentation';
 
 type Palette = typeof Colors.light;
 const SEARCH_DEBOUNCE_MS = 250;
@@ -237,11 +235,6 @@ export default function SearchScreen() {
     const handleSearchPhotoError = useCallback((failureKey: string) => {
         setFailedSearchPhotoKeys((current) => new Set(current).add(failureKey));
     }, []);
-    const placesCredit = useMemo(
-        () => deriveSearchPlacesCredits(mergedResults, failedSearchPhotoKeys),
-        [failedSearchPhotoKeys, mergedResults],
-    );
-
     const hasQuery = immediateQuery.trim().length > 0;
     const hasResults = mergedResults.length > 0;
 
@@ -484,15 +477,6 @@ export default function SearchScreen() {
                             styles.listContent,
                             { paddingBottom: insets.bottom + Spacing.lg },
                         ]}
-                        ListHeaderComponent={placesCredit.credits.length > 0 ? (
-                            <View style={styles.placesCredit}>
-                                <PlacesCredit
-                                    credits={placesCredit.credits}
-                                    photoCount={placesCredit.photoCount}
-                                    testID="search-results-places-credit"
-                                />
-                            </View>
-                        ) : null}
                         ListEmptyComponent={
                             !isLoading ? (
                                 <View style={styles.centeredState}>
@@ -548,6 +532,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: Spacing.sm,
         marginHorizontal: Spacing.lg,
+        marginTop: Spacing.sm,
         marginBottom: Spacing.xs,
         paddingLeft: Spacing.md,
         paddingRight: Spacing.xs,
@@ -573,11 +558,6 @@ const styles = StyleSheet.create({
     },
     listContent: {
         flexGrow: 1,
-    },
-    placesCredit: {
-        paddingHorizontal: Spacing.lg,
-        paddingTop: Spacing.xs,
-        paddingBottom: Spacing.xs,
     },
     errorBanner: {
         flexDirection: 'row',

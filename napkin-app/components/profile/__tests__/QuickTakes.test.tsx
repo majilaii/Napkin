@@ -167,8 +167,6 @@ it('renders the approved photo plate grid with olive semibold metadata', () => {
     const name = copyLink.findAllByType('Text')[0];
     const meta = copyLink.findAllByType('Text')[1];
     const note = renderer.root.findByProps({ testID: 'quick-take-detail-note' });
-    const credit = renderer.root.findAllByProps({ testID: 'quick-take-places-credit' })
-        .find((node: any) => node.type === 'Text');
 
     expect(
         detail.children
@@ -210,11 +208,8 @@ it('renders the approved photo plate grid with olive semibold metadata', () => {
         opacity: Colors.light.placesOverlayOpacity,
     });
     expect(overlay.props.pointerEvents).toBe('none');
-    expect(artLink.findAllByProps({ testID: 'quick-take-places-credit' })).toHaveLength(0);
-    expect(mediaRow.findAllByProps({ testID: 'quick-take-places-credit' })).toHaveLength(0);
-    expect(credit?.props.numberOfLines).toBe(1);
-    expect(credit?.findByProps({ testID: 'quick-take-places-credit-author-0' }).children)
-        .toEqual(['Ada Lens']);
+    expect(renderer.root.findAllByProps({ testID: 'quick-take-places-credit' }))
+        .toHaveLength(0);
     expect(resolvedPressableStyle(copyLink)).toMatchObject({
         flex: 1,
         minWidth: 0,
@@ -234,7 +229,7 @@ it('renders the approved photo plate grid with olive semibold metadata', () => {
         body.children
             .filter((node: any) => typeof node !== 'string')
             .map((node: any) => node.props.testID),
-    ).toEqual(['quick-take-detail-media-row', 'quick-take-places-credit', 'quick-take-detail-note']);
+    ).toEqual(['quick-take-detail-media-row', 'quick-take-detail-note']);
     expect(note.children).toEqual(['— The set menu still feels generous.']);
     expect(flattenStyle(note.props.style).marginTop).toBe(Spacing.sm + Spacing.xs);
     expect(flattenStyle(collapseSurface.props.style)).toMatchObject({

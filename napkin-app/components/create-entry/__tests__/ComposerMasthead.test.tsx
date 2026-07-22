@@ -33,24 +33,11 @@ function render(overrides: Partial<React.ComponentProps<typeof ComposerMasthead>
     return renderer;
 }
 
-it('gates the Places proxy and renders its minimized credit beside, never on, the thumbnail', () => {
+it('gates the Places proxy without rendering inline attribution', () => {
     const renderer = render();
     const image = renderer.root.findByType('Image');
-    const credit = renderer.root.findAllByProps({ testID: 'composer-masthead-places-credit' })
-        .find((node: any) => node.type === 'Text');
-    const author = renderer.root.findAllByProps({
-        testID: 'composer-masthead-places-credit-author-0',
-    }).find((node: any) => node.type === 'Text');
-
-    expect(credit).toBeDefined();
-    expect(credit.children.filter((child: unknown) => typeof child === 'string').join(''))
-        .toContain('photo');
-    expect(author.children).toEqual(['Osteria Romana']);
-    expect(image.parent.findAllByProps({ testID: 'composer-masthead-places-credit' }))
+    expect(renderer.root.findAllByProps({ testID: 'composer-masthead-places-credit' }))
         .toHaveLength(0);
-    expect(author.props.style).not.toEqual(expect.arrayContaining([
-        expect.objectContaining({ textDecorationLine: 'underline' }),
-    ]));
 
     act(() => image.props.onError());
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
@@ -58,7 +45,7 @@ it('gates the Places proxy and renders its minimized credit beside, never on, th
         .toHaveLength(0);
 });
 
-it('suppresses an un-attributed Places proxy while own photos carry no credit chrome', () => {
+it('suppresses an un-attributed Places proxy while preserving own photos', () => {
     const missing = render({ thumbnailAttributionHtml: null });
     expect(missing.root.findAllByType('Image')).toHaveLength(0);
     expect(missing.root.findAllByProps({ testID: 'composer-masthead-places-credit' }))

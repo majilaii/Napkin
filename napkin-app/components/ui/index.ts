@@ -12,7 +12,6 @@ export { RestaurantHeader } from './RestaurantHeader';
 export { PhotoStrip } from './PhotoStrip';
 export { PhotoCollage } from './PhotoCollage';
 export {
-    PlacesCredit,
     dedupePlacesCredits,
     normalizePlacesCreditLabel,
     resolveSourcedPhoto,

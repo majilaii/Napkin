@@ -18,7 +18,7 @@ export interface ShelfList {
     coverPhotoUrl: string | null;
     /** Provenance for the cover photo. null covers include stale pre-194 data. */
     coverPhotoSource: CoverPhotoSource;
-    /** Sanitized server-authored Places attribution HTML; parsed before display. */
+    /** Sanitized server-authored Places attribution HTML; parsed by the source gate. */
     coverAttributionHtml: string | null;
     coverRestaurantName: string | null;
     /** User-chosen list emoji; null → the default terracotta teardrop plate. */
