@@ -5,9 +5,9 @@
  * social clippings — the TikTok/Reel a saver clipped this place from — as compact
  * press-clipping cards on cream, tapping out to the original video.
  *
- * Self-hides entirely when empty (return null — no header, no rule, no skeleton),
- * mirroring ProfessionalTakesBand. Header copy is "ON SOCIALS" alone, hairline-
- * flanked uppercase Manrope, matching ProfessionalTakesBand exactly.
+ * Self-hides entirely when empty (return null — no header, no rule, no skeleton).
+ * Header copy is "ON SOCIALS" alone, in the shared hairline-flanked uppercase
+ * Manrope band grammar.
  */
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
@@ -29,7 +29,7 @@ export function OnSocialsRail({ clippings }: Props) {
 
     return (
         <View style={styles.band}>
-            {/* Section header: hairline · "ON SOCIALS" · hairline (mirrors ProfessionalTakesBand) */}
+            {/* Section header: hairline · "ON SOCIALS" · hairline (shared band grammar) */}
             <View style={styles.headerRow}>
                 <View style={[styles.headerRule, { backgroundColor: palette.ruleInkSoft }]} />
                 <Text

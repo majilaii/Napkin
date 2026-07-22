@@ -238,6 +238,23 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // Featured-in-lists band: guards the POST allow-list + above-global-guard
+    // routing + the { rows, total } envelope. Row contents are viewer/fixture-
+    // dependent; shape only.
+    {
+        name: 'restaurant-history?action=featured_lists (restaurant page lists band)',
+        method: 'POST',
+        fn: 'restaurant-history',
+        query: `action=featured_lists&restaurant_id=${RESTAURANT_ID}`,
+        body: { restaurant_id: RESTAURANT_ID },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown[]; total?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (typeof data.total !== 'number') return 'data.total is not a number';
+            return null;
+        },
+    },
     // TICKET-190: lazy map-card enrichment. Body is canonical and restaurant_id
     // is mirrored in the query so this specifically guards the POST allow-list +
     // above-global-guard routing trap. Values are fixture-dependent; every

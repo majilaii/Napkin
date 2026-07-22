@@ -194,6 +194,9 @@ export const queryKeys = {
         /** TICKET-156: On Socials rail — social clippings for a restaurant. */
         clippings: (restaurantId: string) =>
             ['restaurantClippings', restaurantId] as const,
+        /** Public lists containing this restaurant; viewer-keyed for self-exclusion. */
+        featuredLists: (viewerId: string, restaurantId: string) =>
+            ['restaurantFeaturedLists', viewerId, restaurantId] as const,
         /** TICKET-190: every layer-context peek for one viewer + restaurant. */
         peekCardForRestaurant: restaurantPeekCardForRestaurant,
         /** Viewer + restaurant + layer context is the private-media cache fence. */

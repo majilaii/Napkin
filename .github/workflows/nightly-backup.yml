@@ -27,7 +27,9 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned like migration-replay.yml — "latest" resolves via the GitHub API
+          # and rate-limits on shared runners (PR #310 flake). Bump with package.json.
+          version: 2.58.5
 
       - name: Link to prod project
         env:

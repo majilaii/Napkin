@@ -18,8 +18,8 @@
  *   YOUR HISTORY — tick rows (rating · note/occasion · date)
  *   [below canvas, gated/quiet]:
  *     Distribution histogram
- *     Voices / public reviews stream
- *     Professional takes band
+ *     Reviews stream + all-reviews doorway
+ *     Featured-in-lists band
  *     Atlas cross-link chip
  *
  * Save: the bookmark (top-right) opens AddToListSheet — Wishlist + curated lists.
@@ -72,7 +72,7 @@ import {
     type SignalCellData,
     SwitchableDistribution,
     VoicesStream,
-    ProfessionalTakesBand,
+    FeaturedInListsBand,
     SavedFromTikTokPanel,
     OnSocialsRail,
     MapHero,
@@ -81,6 +81,7 @@ import {
     BottomActionBar,
 } from '@/components/restaurants';
 import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippings';
+import { useRestaurantFeaturedLists } from '@/hooks/restaurants/useRestaurantFeaturedLists';
 import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { AddToListSheet } from '@/components/lists';
@@ -397,6 +398,10 @@ export default function RestaurantScreen() {
     // ── Save wiring (wishlist + lists) ─────────────────────────────────────
     const persistedRestaurantId =
         pageData?.restaurant?.id ?? (isGhost ? undefined : restaurantId ?? undefined);
+    const { data: featuredListsData } = useRestaurantFeaturedLists(
+        persistedRestaurantId,
+        user?.id,
+    );
     // TICKET-156: ON SOCIALS rail — its OWN independent query (never blocks the
     // page's hero / score / CTA). clippings gates BOTH the rail and the
     // SavedFromTikTokPanel fallback (the panel survives only when the rail is empty
@@ -844,25 +849,23 @@ export default function RestaurantScreen() {
                         </View>
                     ) : null}
 
+                    {/* Public lists containing this persisted restaurant. */}
+                    {restaurant && persistedRestaurantId ? (
+                        <FeaturedInListsBand
+                            rows={featuredListsData?.rows ?? []}
+                            total={featuredListsData?.total ?? 0}
+                        />
+                    ) : null}
+
                     {/* On socials — your circle's (+ strangers') clippings (TICKET-156).
-                        Sits after VoicesStream, before ProfessionalTakesBand:
-                        written voices → video clips → professional takes. Renders
-                        independent of hasVoices (a cold page can still show clips).
+                        Sits after reviews and featured lists. Renders independently
+                        of hasVoices (a cold page can still show clips).
                         Gated on non-empty so an empty rail leaves no padded gap (N4). */}
                     {restaurant && clippings.length > 0 ? (
                         <View style={styles.belowSection}>
                             <OnSocialsRail clippings={clippings} />
                         </View>
                     ) : null}
-
-                    {/* Professional takes */}
-                    {!FRIEND_TEST.hideCritics && (
-                        <View style={styles.belowSection}>
-                            <ProfessionalTakesBand
-                                critics={pageData?.professional_critics ?? []}
-                            />
-                        </View>
-                    )}
 
                     {/* Atlas cross-link chip */}
                     {!FRIEND_TEST.hideAtlas && restaurant?.city && hasAnyTable ? (
@@ -1055,7 +1058,7 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         paddingHorizontal: 20,
     },
-    // TICKET-168: quiet reviews link when the VOICES header (its usual home)
+    // TICKET-168: quiet reviews link when the REVIEWS header (its usual home)
     // is absent. Functional text = Manrope, never decorative italic.
     allReviewsQuiet: {
         fontFamily: 'Manrope_600SemiBold',

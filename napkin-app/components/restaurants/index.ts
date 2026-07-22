@@ -20,9 +20,7 @@ export { YourLastKicker } from './YourLastKicker';
 export { PhotosTab } from './PhotosTab';
 export { InfoTab } from './InfoTab';
 export { InfoMapPreview } from './InfoMapPreview';
-// TICKET-026: professional critics
-export { ProfessionalTakesBand } from './ProfessionalTakesBand';
-export { CriticRow } from './CriticRow';
+export { FeaturedInListsBand } from './FeaturedInListsBand';
 // TICKET-054: TikTok source panel
 export { SavedFromTikTokPanel } from './SavedFromTikTokPanel';
 // TICKET-156: On Socials rail — social clippings

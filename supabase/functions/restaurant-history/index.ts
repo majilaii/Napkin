@@ -16,6 +16,7 @@
  *   GET  ?action=page&restaurant_id=X[&table_id=Y]
  *   GET  ?action=reserve_link&restaurant_id=X   (TICKET-149 booking-page resolver)
  *   POST ?action=reviews  { restaurant_id, cursor?, limit? }   (TICKET-154 all-reviews page)
+ *   POST ?action=featured_lists  { restaurant_id }
  *
  * Both filter to data the requesting user is entitled to see. Table history
  * verifies the caller is a member of the table; user history is trivially
@@ -273,6 +274,7 @@ serve(async (req) => {
             req.method === 'POST'
             && action !== 'reviews'
             && action !== 'social_clippings'
+            && action !== 'featured_lists'
             && action !== 'peek_card'
         ) {
             return fail('Method not allowed', 405);
@@ -618,23 +620,33 @@ serve(async (req) => {
                 a._rank - b._rank ||
                 (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
 
-            const capped = cards.slice(0, 12);
-
-            // Join durable thumbnails for the winners' keys (status='cached' only —
-            // a 'gone' row stays typographic). Never returns a provider URL.
-            const wantKeys = capped.map((c) => c._key).filter((k): k is string => !!k);
+            // Read every candidate key before the cap so confirmed-dead clips
+            // can be removed and later live candidates can backfill the rail.
+            const wantKeys = [...new Set(cards.map((c) => c._key).filter((k): k is string => !!k))];
             const thumbByKey = new Map<string, string>();
+            const goneKeys = new Set<string>();
             if (wantKeys.length > 0) {
                 const { data: thumbRows, error: thumbErr } = await supabase
                     .from('clip_thumbs')
-                    .select('content_key, storage_path')
+                    .select('content_key, storage_path, status')
                     .in('content_key', wantKeys)
-                    .eq('status', 'cached');
+                    .in('status', ['cached', 'gone']);
                 if (thumbErr) throw thumbErr;
-                for (const t of (thumbRows ?? []) as any[]) {
-                    if (t.storage_path) thumbByKey.set(t.content_key as string, t.storage_path as string);
+                for (const t of (thumbRows ?? []) as Array<{
+                    content_key: string;
+                    storage_path: string | null;
+                    status: 'cached' | 'gone';
+                }>) {
+                    if (t.status === 'gone') goneKeys.add(t.content_key);
+                    else if (t.storage_path) thumbByKey.set(t.content_key, t.storage_path);
                 }
             }
+
+            // Missing thumb rows remain eligible; only an explicit gone marker
+            // excludes a URL-bearing card. Keyless video cards always pass.
+            const capped = cards
+                .filter((c) => !c._key || !goneKeys.has(c._key))
+                .slice(0, 12);
 
             const rows = capped.map((c) => {
                 const storagePath = c._key ? thumbByKey.get(c._key) ?? null : null;
@@ -651,6 +663,51 @@ serve(async (req) => {
             });
 
             return json({ data: { rows } });
+        }
+
+        // ── Featured in lists ────────────────────────────────────────────────
+        // Body-POST action: MUST remain above the global restaurantId guard.
+        // The RPC is service-role-only; p_viewer is the JWT-validated caller.
+        if (action === 'featured_lists') {
+            const body = await req.json().catch(() => ({}));
+            const rid = (body?.restaurant_id ?? restaurantId) as string | null;
+            if (!rid) return fail('restaurant_id is required');
+
+            const resolvedId = await resolveRestaurantLookupId(supabase, rid);
+            if (!resolvedId) return fail('restaurant not found', 404);
+
+            const { data: featuredRows, error: rpcErr } = await supabase.rpc(
+                'fn_restaurant_featured_lists',
+                {
+                    p_viewer: user.id,
+                    p_restaurant_id: resolvedId,
+                    p_limit: 3,
+                },
+            );
+            if (rpcErr) {
+                const code = (rpcErr as { code?: string }).code ?? '';
+                if (code === '42883' || code === 'PGRST202') {
+                    console.warn('featured_lists: fn_restaurant_featured_lists absent — returning empty band');
+                    return json({ data: { rows: [], total: 0 } });
+                }
+                reportError(rpcErr, { fn: 'restaurant-history', action: 'featured_lists' });
+                throw rpcErr;
+            }
+
+            const rawRows = (featuredRows ?? []) as any[];
+            const rows = rawRows.map((row) => ({
+                id: row.id as string,
+                title: row.title as string,
+                emoji: (row.emoji as string | null) ?? null,
+                entry_count: Number(row.entry_count ?? 0),
+                owner_display_name: (row.owner_display_name as string | null) ?? null,
+                owner_username: (row.owner_username as string | null) ?? null,
+            }));
+            const total = rawRows.length > 0
+                ? Number(rawRows[0].total_count ?? 0)
+                : 0;
+
+            return json({ data: { rows, total } });
         }
 
         // ── Map pin peek-card enrichment (TICKET-190) ────────────────────────

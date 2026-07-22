@@ -29,10 +29,6 @@ export const FRIEND_TEST = {
     hideTopFours: true,
     /** Hide Atlas tab on Tables screen + AtlasCrossLinkChip on restaurant page. */
     hideAtlas: true,
-    /** Hide ProfessionalTakesBand ("PROFESSIONAL TAKES") on restaurant page. Admin /critics already self-gates. */
-    // Professional takes on restaurant pages are reading CONTENT (TICKET-065),
-    // not a maintained surface — keep visible. Flip true if testers find it noisy.
-    hideCritics: false,
     /** Hide Looking-back anniversary tick + seed-from-solo entry points (EmptyChairInvitation, TableSwitcherSheet gather CTA). */
     hideEmergenceArc: true,
     /** TICKET-069: Curtain all Rounds entry points for the skinny-five v1.

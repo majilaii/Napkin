@@ -127,7 +127,9 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned like migration-replay.yml — "latest" resolves via the GitHub API
+          # and rate-limits on shared runners (PR #310 flake). Bump with package.json.
+          version: 2.58.5
 
       # Deno 2.x required: the repo's deno.lock is lockfile v5, which Deno 1.x
       # cannot read — `deno run` crashed on startup ("Unsupported lockfile
