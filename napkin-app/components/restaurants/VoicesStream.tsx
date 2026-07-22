@@ -12,6 +12,8 @@ import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { PageVisit, PublicReviewCard } from '@/hooks/restaurants/useRestaurantPage';
 
+import { AllReviewsFolio } from './AllReviewsFolio';
+
 interface VoiceRowProps {
     kind: 'self' | 'tablemate';
     initial: string;
@@ -416,36 +418,7 @@ export function VoicesStream(props: Props) {
             ) : null}
 
             {onSeeAllReviews ? (
-                publicReviewTotal > 0 ? (
-                    <Pressable
-                        onPress={onSeeAllReviews}
-                        accessibilityRole="button"
-                        accessibilityLabel="all reviews"
-                        style={({ pressed }) => [
-                            styles.folioCard,
-                            { backgroundColor: palette.card },
-                            Shadow.ambient,
-                            pressed && styles.folioPressed,
-                        ]}
-                    >
-                        <Text style={[styles.folioText, { color: palette.text }]}>
-                            {`all ${publicReviewTotal} review${publicReviewTotal === 1 ? '' : 's'}`}
-                        </Text>
-                        <Text style={[styles.folioArrow, { color: palette.primary }]}>→</Text>
-                    </Pressable>
-                ) : (
-                    <Pressable
-                        onPress={onSeeAllReviews}
-                        hitSlop={8}
-                        accessibilityRole="button"
-                        accessibilityLabel="all reviews"
-                        style={({ pressed }) => [styles.seeAll, { opacity: pressed ? 0.6 : 1 }]}
-                    >
-                        <Text style={[styles.seeAllText, { color: palette.textSecondary }]}>
-                            all reviews →
-                        </Text>
-                    </Pressable>
-                )
+                <AllReviewsFolio total={publicReviewTotal} onPress={onSeeAllReviews} />
             ) : (
                 <Text
                     style={[styles.seeAllText, styles.voiceCount, { color: palette.textSecondary }]}
@@ -485,11 +458,6 @@ const styles = StyleSheet.create({
         ...Type.metadata,
         fontFamily: 'Manrope_600SemiBold',
         letterSpacing: 0.2,
-    },
-    seeAll: {
-        alignSelf: 'flex-end',
-        paddingVertical: Spacing.xs,
-        marginTop: Spacing.sm,
     },
     voiceCount: {
         alignSelf: 'flex-end',
@@ -652,32 +620,8 @@ const styles = StyleSheet.create({
         minWidth: 42,
         textAlign: 'right',
     },
-    folioCard: {
-        minHeight: 60,
-        borderRadius: Radius.md,
-        paddingLeft: Spacing.md + 2,
-        paddingRight: Spacing.md,
-        paddingVertical: Spacing.sm,
-        marginTop: Spacing.md,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-    },
-    folioText: {
-        ...Type.headlineMedium,
-        flex: 1,
-    },
-    folioArrow: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 20,
-        lineHeight: 24,
-        marginLeft: Spacing.md,
-    },
     pressed: {
         opacity: 0.75,
-    },
-    folioPressed: {
-        opacity: 0.7,
     },
     empty: {
         paddingHorizontal: 22,

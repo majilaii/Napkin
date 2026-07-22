@@ -72,6 +72,7 @@ import {
     type SignalCellData,
     SwitchableDistribution,
     VoicesStream,
+    AllReviewsFolio,
     FeaturedInListsBand,
     SavedFromTikTokPanel,
     OnSocialsRail,
@@ -814,14 +815,12 @@ export default function RestaurantScreen() {
                         exactly what the band is fed — self reviews now count
                         [review-1 FAIL-1]. Ghosts have no persisted id → no link. */}
                     {pageData?.restaurant?.id && !voicesVisible ? (
-                        <Text
-                            style={[styles.allReviewsQuiet, { color: palette.textSecondary }]}
-                            onPress={handleSeeAllReviews}
-                            accessibilityRole="button"
-                            accessibilityLabel="all reviews"
-                        >
-                            all reviews →
-                        </Text>
+                        <View style={styles.allReviewsFolioWrap}>
+                            <AllReviewsFolio
+                                total={pageData?.public_reviews_total ?? null}
+                                onPress={handleSeeAllReviews}
+                            />
+                        </View>
                     ) : null}
 
                     {/* ── BELOW CANVAS — gated/quiet ────────────────────────────────── */}
@@ -1058,16 +1057,8 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         paddingHorizontal: 20,
     },
-    // TICKET-168: quiet reviews link when the REVIEWS header (its usual home)
-    // is absent. Functional text = Manrope, never decorative italic.
-    allReviewsQuiet: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-        lineHeight: 18,
-        letterSpacing: 0.2,
-        textAlign: 'center',
-        marginTop: 8,
-        paddingHorizontal: 20,
+    allReviewsFolioWrap: {
+        paddingHorizontal: 22,
     },
     murmur: {
         fontFamily: 'Newsreader_400Regular_Italic',

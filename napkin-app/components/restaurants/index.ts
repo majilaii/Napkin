@@ -16,6 +16,7 @@ export { CommunityTab } from './CommunityTab';
 export { SignalStrip, type SignalTier, type SignalCellData } from './SignalStrip';
 export { SwitchableDistribution } from './SwitchableDistribution';
 export { VoicesStream } from './VoicesStream';
+export { AllReviewsFolio } from './AllReviewsFolio';
 export { YourLastKicker } from './YourLastKicker';
 export { PhotosTab } from './PhotosTab';
 export { InfoTab } from './InfoTab';
