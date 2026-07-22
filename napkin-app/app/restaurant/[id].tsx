@@ -523,12 +523,22 @@ export default function RestaurantScreen() {
         selfVisits.length > 0 ||
         tablemateVisits.length > 0 ||
         (pageData?.public_reviews ?? []).length > 0;
-    // TICKET-168 [review-1 FAIL-1]: what VoicesStream ACTUALLY renders — it is
-    // fed selfVisits=[] (self history lives in YOUR HISTORY) and early-returns
-    // on empty, so hasVoices (which counts selfVisits) over-claims on self-only
-    // pages. The stream mount + the quiet all-reviews fallback both key on THIS.
+    // Your own written reviews belong in the REVIEWS band (founder, 2026-07-22 —
+    // "I've reviewed Tenmaru a few times, why is it not under reviews?"). The old
+    // split (self history ONLY in YOUR HISTORY) left the note text with no home
+    // on the page. Note-bearing self visits now feed the band; noteless visits
+    // stay ledger-only.
+    const selfReviewVisits = useMemo(
+        () => selfVisits.filter((v) => !!v.note?.trim()),
+        [selfVisits],
+    );
+    // TICKET-168 [review-1 FAIL-1]: this MUST stay the band's REAL render
+    // predicate (exactly what VoicesStream is fed), never a superset — the
+    // stream mount + the quiet all-reviews fallback both key on THIS.
     const voicesVisible =
-        tablemateVisits.length > 0 || (pageData?.public_reviews ?? []).length > 0;
+        selfReviewVisits.length > 0 ||
+        tablemateVisits.length > 0 ||
+        (pageData?.public_reviews ?? []).length > 0;
 
     // Any rating anywhere? Gates the histogram — a zeroed frame is scaffolding,
     // not signal (founder, 2026-07-22).
@@ -794,12 +804,10 @@ export default function RestaurantScreen() {
                         )
                     ) : null}
 
-                    {/* TICKET-168: reviews stay reachable when VOICES is absent
-                        (warm-but-voiceless + cold pages — INCLUDING self-only
-                        pages: hasVoices counts selfVisits but VoicesStream is fed
-                        selfVisits=[] and early-returns, so the gate here must be
-                        the child's REAL render predicate, not the superset bool
-                        [review-1 FAIL-1]). Ghosts have no persisted id → no link. */}
+                    {/* TICKET-168: reviews stay reachable when the REVIEWS band is
+                        absent (cold + noteless-self pages). voicesVisible mirrors
+                        exactly what the band is fed — self reviews now count
+                        [review-1 FAIL-1]. Ghosts have no persisted id → no link. */}
                     {pageData?.restaurant?.id && !voicesVisible ? (
                         <Text
                             style={[styles.allReviewsQuiet, { color: palette.textSecondary }]}
@@ -813,11 +821,13 @@ export default function RestaurantScreen() {
 
                     {/* ── BELOW CANVAS — gated/quiet ────────────────────────────────── */}
 
-                    {/* Voices stream — public reviews + tablemate visits */}
+                    {/* Reviews band — your written reviews + tablemate visits +
+                        public reviews (self rows lead; noteless visits are
+                        ledger-only in YOUR HISTORY). */}
                     {restaurant && pageData && voicesVisible ? (
                         <View style={styles.belowSection}>
                             <VoicesStream
-                                selfVisits={[]}
+                                selfVisits={selfReviewVisits}
                                 tablemateVisits={tablemateVisits}
                                 publicReviews={pageData.public_reviews ?? []}
                                 reviewCount={pageData.public_reviews_total ?? null}
