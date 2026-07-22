@@ -231,7 +231,6 @@ function CompactPublicReview({
             accessibilityLabel={publicReviewAccessibilityLabel(review, viewerUserId)}
             style={({ pressed }) => [
                 styles.compactReview,
-                { borderBottomColor: palette.ruleInkSoft },
                 pressed && styles.pressed,
             ]}
         >
@@ -621,7 +620,6 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         gap: 11,
         paddingVertical: 14,
-        borderBottomWidth: 1,
     },
     compactBody: {
         flex: 1,
