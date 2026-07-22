@@ -123,7 +123,11 @@ export function FastLogForm({
                 rating: ratingValue,
                 // TICKET-043: send table_ids array instead of single table_id.
                 table_ids: selectedTableIds,
-                visibility: selectedTableIds.length > 0 ? 'table' : 'private',
+                // Founder order 2026-07-22: solo logs default PUBLIC-eligible
+                // ('friends'), never 'private' — privacy is the account-level
+                // settings toggle, not a silent per-log default. Supersedes the
+                // 2026-04-17 "logs default private" doctrine.
+                visibility: selectedTableIds.length > 0 ? 'table' : 'friends',
             });
             const entryId = result?.id ?? result?.entry?.id ?? '';
             onSubmitted(entryId);

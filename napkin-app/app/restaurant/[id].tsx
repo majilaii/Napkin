@@ -528,12 +528,32 @@ export default function RestaurantScreen() {
         selfVisits.length > 0 ||
         tablemateVisits.length > 0 ||
         (pageData?.public_reviews ?? []).length > 0;
-    // TICKET-168 [review-1 FAIL-1]: what the REVIEWS stream ACTUALLY renders — it is
-    // fed selfVisits=[] (self history lives in YOUR HISTORY) and early-returns
-    // on empty, so hasVoices (which counts selfVisits) over-claims on self-only
-    // pages. The stream mount + the quiet all-reviews fallback both key on THIS.
+    // Your own written reviews belong in the REVIEWS band (founder, 2026-07-22 —
+    // "I've reviewed Tenmaru a few times, why is it not under reviews?"). The old
+    // split (self history ONLY in YOUR HISTORY) left the note text with no home
+    // on the page. Note-bearing self visits now feed the band; noteless visits
+    // stay ledger-only.
+    const selfReviewVisits = useMemo(
+        () => selfVisits.filter((v) => !!v.note?.trim()),
+        [selfVisits],
+    );
+    // TICKET-168 [review-1 FAIL-1]: this MUST stay the band's REAL render
+    // predicate (exactly what VoicesStream is fed), never a superset — the
+    // stream mount + the quiet all-reviews fallback both key on THIS.
     const voicesVisible =
-        tablemateVisits.length > 0 || (pageData?.public_reviews ?? []).length > 0;
+        selfReviewVisits.length > 0 ||
+        tablemateVisits.length > 0 ||
+        (pageData?.public_reviews ?? []).length > 0;
+
+    // Any rating anywhere? Gates the histogram — a zeroed frame is scaffolding,
+    // not signal (founder, 2026-07-22).
+    const hasAnyRatings = useMemo(() => {
+        const d = pageData?.distributions_half;
+        if (!d) return false;
+        return [d.you, d.your_table, d.napkin].some(
+            (bins) => Array.isArray(bins) && bins.some((n) => n > 0),
+        );
+    }, [pageData?.distributions_half]);
 
     // Cold restaurant: no Napkin signal at all (no self/tablemate/public voices, no
     // you/table/napkin numbers). Google is external and never makes a page "warm".
@@ -690,41 +710,20 @@ export default function RestaurantScreen() {
                     ) : null}
 
                     {/* YOUR HISTORY (design 2a) — amber numeral · companions · caps
-                        date. Empty → two ghost rows hold the ledger's space. */}
-                    {restaurant ? (
+                        date. Hidden with zero visits: the empty-ledger ghost rows
+                        read as old-design scaffolding next to the rebuilt bands
+                        (founder, 2026-07-22 — cold pages collapse to essentials). */}
+                    {restaurant && selfVisits.length > 0 ? (
                         <View style={styles.section}>
                             <View style={styles.sectionHead}>
                                 <Text style={[styles.sectionKicker, { color: palette.textMuted }]}>
                                     YOUR HISTORY
                                 </Text>
-                                {selfVisits.length > 0 ? (
-                                    <Text style={[styles.sectionCount, { color: palette.textMuted }]}>
-                                        {`${selfVisits.length} visit${selfVisits.length !== 1 ? 's' : ''}`}
-                                    </Text>
-                                ) : null}
+                                <Text style={[styles.sectionCount, { color: palette.textMuted }]}>
+                                    {`${selfVisits.length} visit${selfVisits.length !== 1 ? 's' : ''}`}
+                                </Text>
                             </View>
-                            {selfVisits.length === 0 ? (
-                                <>
-                                    {[0, 1].map((i) => (
-                                        <View
-                                            key={i}
-                                            style={[
-                                                styles.historyRow,
-                                                styles.ghostRow,
-                                                i === 0 && {
-                                                    borderBottomWidth: 1,
-                                                    borderBottomColor: 'rgba(28,28,25,0.06)',
-                                                },
-                                            ]}
-                                        >
-                                            <Text style={[styles.historyRating, { color: palette.amberBright, opacity: 0.3 }]}>
-                                                —
-                                            </Text>
-                                            <View style={[styles.ghostLine, { backgroundColor: palette.ruleWarmNib }]} />
-                                        </View>
-                                    ))}
-                                </>
-                            ) : selfVisits.slice(0, 5).map((v, i, arr) => (
+                            {selfVisits.slice(0, 5).map((v, i, arr) => (
                                 <Pressable
                                     key={v.id}
                                     onPress={() => handleVisitPress(v)}
@@ -756,8 +755,9 @@ export default function RestaurantScreen() {
                     ) : null}
 
                     {/* Ratings histogram (design 2a) — amber bars, pill tier toggle.
-                        Renders its frame even with zero data (ghost tracks + "—"). */}
-                    {restaurant ? (
+                        Hidden until ANY tier has a rating: the zeroed frame read
+                        as old-design scaffolding on cold pages (founder, 2026-07-22). */}
+                    {restaurant && hasAnyRatings ? (
                         <SwitchableDistribution
                             activeTier={activeTier}
                             distributions={pageData?.distributions_half ?? { you: new Array(10).fill(0), your_table: null, napkin: new Array(10).fill(0) }}
@@ -765,9 +765,12 @@ export default function RestaurantScreen() {
                         />
                     ) : null}
 
-                    {/* One review line (design 2a) — the newest note, or THE single
-                        invitation on an unwritten page. */}
-                    {restaurant ? (
+                    {/* One review line (design 2a) — the newest circle note, or THE
+                        single invitation on an unwritten page. Only when the REVIEWS
+                        band is absent: the band owns voices on populated pages, and
+                        this line duplicating one of its rows above it muddied the
+                        rebuilt design (founder, 2026-07-22). */}
+                    {restaurant && !voicesVisible ? (
                         reviewQuote ? (
                             <View style={styles.reviewLine}>
                                 {reviewQuote.avatar_url ? (
@@ -806,12 +809,10 @@ export default function RestaurantScreen() {
                         )
                     ) : null}
 
-                    {/* TICKET-168: reviews stay reachable when REVIEWS is absent
-                        (warm-but-voiceless + cold pages — INCLUDING self-only
-                        pages: hasVoices counts selfVisits but VoicesStream is fed
-                        selfVisits=[] and early-returns, so the gate here must be
-                        the child's REAL render predicate, not the superset bool
-                        [review-1 FAIL-1]). Ghosts have no persisted id → no link. */}
+                    {/* TICKET-168: reviews stay reachable when the REVIEWS band is
+                        absent (cold + noteless-self pages). voicesVisible mirrors
+                        exactly what the band is fed — self reviews now count
+                        [review-1 FAIL-1]. Ghosts have no persisted id → no link. */}
                     {pageData?.restaurant?.id && !voicesVisible ? (
                         <Text
                             style={[styles.allReviewsQuiet, { color: palette.textSecondary }]}
@@ -825,11 +826,13 @@ export default function RestaurantScreen() {
 
                     {/* ── BELOW CANVAS — gated/quiet ────────────────────────────────── */}
 
-                    {/* Reviews — tablemate visits + at most two public reviews + doorway */}
+                    {/* Reviews band — your written reviews + tablemate visits +
+                        public reviews (self rows lead; noteless visits are
+                        ledger-only in YOUR HISTORY). */}
                     {restaurant && pageData && voicesVisible ? (
                         <View style={styles.belowSection}>
                             <VoicesStream
-                                selfVisits={[]}
+                                selfVisits={selfReviewVisits}
                                 tablemateVisits={tablemateVisits}
                                 publicReviews={pageData.public_reviews ?? []}
                                 reviewCount={pageData.public_reviews_total ?? null}
@@ -981,15 +984,6 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 10.5,
         letterSpacing: 0.3,
-    },
-    // Ghost history rows — hold the ledger's shape before the first entry
-    ghostRow: {
-        opacity: 0.55,
-    },
-    ghostLine: {
-        flex: 1,
-        height: 1,
-        opacity: 0.6,
     },
     // YOUR HISTORY (design 2a)
     section: {
