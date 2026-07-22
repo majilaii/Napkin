@@ -16,7 +16,8 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import * as Location from 'expo-location';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { searchCache, type PlacesResult, type PersistedRow, type VisitedRow } from './searchCache';
@@ -72,17 +73,26 @@ export interface SearchResults {
     morePlaces: SearchResultRow[];
 }
 
+type SearchCoordinates = { latitude: number; longitude: number };
+
+interface RestaurantSearchOptions {
+    /** Silently bias Places results when foreground location is already granted. */
+    grantedLocationBias?: boolean;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 async function fetchPlaces(
     query: string,
-    coords?: { latitude: number; longitude: number } | null,
+    coords?: SearchCoordinates | null,
 ): Promise<PlacesResult[]> {
-    const body: any = { query, limit: 15 };
+    const body: { query: string; limit: number; lat?: number; lng?: number } = {
+        query,
+        limit: 15,
+    };
     if (coords) {
-        body.latitude = coords.latitude;
-        body.longitude = coords.longitude;
-        body.radius = 10000; // 10 km bias
+        body.lat = coords.latitude;
+        body.lng = coords.longitude;
     }
     const data = await callEdgeFn<PlacesResult[]>('places-search', { body });
     return data ?? [];
@@ -105,18 +115,69 @@ export { mergeUnified } from './mergeUnified';
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
+function useGrantedSearchLocation(enabled: boolean): {
+    coords: SearchCoordinates | null;
+    resolved: boolean;
+} {
+    const [coords, setCoords] = useState<SearchCoordinates | null>(null);
+    const [resolved, setResolved] = useState(false);
+    const lookupRef = useRef<Promise<SearchCoordinates | null> | null>(null);
+
+    useEffect(() => {
+        if (!enabled) return;
+        const lookup = lookupRef.current ?? (lookupRef.current = (async () => {
+            try {
+                const { status } = await Location.getForegroundPermissionsAsync();
+                if (status !== 'granted') return null;
+
+                const location =
+                    (await Location.getLastKnownPositionAsync()) ??
+                    (await Location.getCurrentPositionAsync({
+                        accuracy: Location.Accuracy.Balanced,
+                    }));
+                return location
+                    ? {
+                        latitude: location.coords.latitude,
+                        longitude: location.coords.longitude,
+                    }
+                    : null;
+            } catch {
+                // Search remains global when a granted-only location read fails.
+                return null;
+            }
+        })());
+        let active = true;
+
+        void lookup.then((location) => {
+            if (!active) return;
+            setCoords(location);
+            setResolved(true);
+        });
+
+        return () => {
+            active = false;
+        };
+    }, [enabled]);
+
+    return { coords, resolved: !enabled || resolved };
+}
+
 export function useRestaurantSearch(
     query: string,
     userId: string | null | undefined,
-    coords?: { latitude: number; longitude: number } | null,
+    options?: RestaurantSearchOptions | null,
 ): {
     results: SearchResults;
     isLoading: boolean;
     isPlacesError: boolean;
     refetch: () => void;
+    coords: SearchCoordinates | null;
 } {
     const trimmed = query.trim();
     const enabled = trimmed.length >= 2 && !!userId;
+    const { coords, resolved: locationResolved } = useGrantedSearchLocation(
+        options?.grantedLocationBias === true,
+    );
 
     // Check LRU cache synchronously before React Query fires
     const cachedResult = enabled ? searchCache.get(trimmed) : undefined;
@@ -128,7 +189,7 @@ export function useRestaurantSearch(
             if (cached) return cached.places;
             return fetchPlaces(trimmed, coords);
         },
-        enabled: enabled && !cachedResult,
+        enabled: enabled && locationResolved && !cachedResult,
         staleTime: 1000 * 60 * 5, // 5 minutes
         retry: 1,
     });
@@ -188,13 +249,17 @@ export function useRestaurantSearch(
         persistedQuery.data,
     ]);
 
-    const isLoading = !cachedResult && enabled && (placesQuery.isLoading || persistedQuery.isLoading);
+    const isLoading =
+        !cachedResult &&
+        enabled &&
+        (!locationResolved || placesQuery.isLoading || persistedQuery.isLoading);
     const isPlacesError = !cachedResult && placesQuery.isError;
 
     return {
         results,
         isLoading,
         isPlacesError,
+        coords,
         refetch: () => {
             placesQuery.refetch();
             persistedQuery.refetch();
