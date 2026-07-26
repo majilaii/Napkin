@@ -25,6 +25,7 @@ import {
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
+    onNetworkFailure,
     resolveConnectivityStatus,
     type ConnectivityStatus,
 } from '@/lib/connectivity';
@@ -213,6 +214,25 @@ export function ConnectivityProvider({ children }: Props) {
             if (isMountedRef.current) setIsRefreshing(false);
         }
     }, [applySnapshot, waitForDefinitiveSnapshot]);
+
+    /**
+     * Re-probe the moment a real request dies in transport.
+     *
+     * NetInfo's reachability probe is periodic, so between losing signal and the
+     * next probe the app still believes it is online — and anything the user
+     * does in that window fails with generic copy and no offline banner. A
+     * failed request is better evidence than the probe: it is the user's own
+     * traffic, failing right now. `refresh()` no-ops while one is already in
+     * flight, so a burst of failures costs a single probe.
+     */
+    useEffect(
+        () =>
+            onNetworkFailure(() => {
+                if (!isMountedRef.current) return;
+                void refresh();
+            }),
+        [refresh],
+    );
 
     const contextValue = useMemo(
         () => ({ status, isRefreshing, refresh }),

@@ -35,6 +35,7 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { isOfflineError } from '@/lib/connectivity';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
 import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
@@ -153,6 +154,12 @@ export function GatherSheet({ visible, onClose, restaurant, tableId }: GatherShe
                 onError: (err) => {
                     if (isAlreadyProposed(err)) {
                         Alert.alert('already gathering for this spot');
+                    } else if (isOfflineError(err)) {
+                        // The request never left the device. Saying "couldn't
+                        // propose" here reads as "this feature is broken" when
+                        // nothing is wrong with it — name the actual cause, and
+                        // say the proposal is intact so retrying feels safe.
+                        toast.show("you're offline — your gathering wasn't sent");
                     } else {
                         toast.show("couldn't propose the gathering");
                     }
