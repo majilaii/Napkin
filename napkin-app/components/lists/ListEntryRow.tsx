@@ -8,6 +8,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SwipeToDeleteRow } from '@/components/common';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import { resolveSourcedPhoto } from '@/components/ui/PlacesCredit';
+import { markFor, tintFor } from '@/lib/engraving';
 import { listRowPhotoFailureKey } from './listHeaderUtils';
 import type { ListEntry } from '@/hooks/lists/useList';
 
@@ -75,6 +76,24 @@ export function ListEntryRow({
     const visiblePhotoUrl = photoFailureKey && failedPhotoKeys.has(photoFailureKey)
         ? null
         : resolvedPhoto.url;
+    /**
+     * Photoless rows get an ENGRAVED PLATE, never a blank square.
+     *
+     * A third of saved restaurants have no photograph, and most of those are
+     * permanent: the server already asked Google and Google has none
+     * (`photo_source = 'none'` — a verified terminal state, not a pending gap).
+     * So a list will always contain rows a photo can never fill, and painting
+     * them as an empty tinted box made the whole list read as broken/half-
+     * loaded. The same mark+tint the Top 4 plates use gives every row an
+     * intentional face: list emoji → cuisine glyph → monogram, on a warm tint
+     * seeded off the restaurant id (stable per restaurant, varied down a list).
+     * This is also the render path when a mirrored photo 404s later.
+     */
+    const mark = markFor({
+        listEmoji: null,
+        cuisine: restaurant.cuisine,
+        name: restaurant.name,
+    });
 
     useEffect(() => {
         setNoteText(entry.note ?? '');
@@ -112,7 +131,14 @@ export function ListEntryRow({
                 <PressableScale onPress={onPress} haptic="light" style={styles.placeTap}>
                     <View
                         testID="list-row-thumbnail"
-                        style={[styles.photo, { backgroundColor: palette.surfaceContainerHigh }]}
+                        style={[
+                            styles.photo,
+                            {
+                                backgroundColor: visiblePhotoUrl
+                                    ? palette.surfaceContainerHigh
+                                    : tintFor(restaurant.id, palette),
+                            },
+                        ]}
                     >
                         {visiblePhotoUrl ? (
                             <Image
@@ -122,7 +148,25 @@ export function ListEntryRow({
                                 transition={180}
                                 onError={() => photoFailureKey && onPhotoError?.(photoFailureKey)}
                             />
-                        ) : null}
+                        ) : mark.kind === 'emoji' ? (
+                            <Text testID="list-row-plate-mark" style={styles.plateEmoji}>
+                                {mark.emoji}
+                            </Text>
+                        ) : mark.kind === 'glyph' ? (
+                            <Ionicons
+                                testID="list-row-plate-mark"
+                                name={mark.glyph}
+                                size={22}
+                                color={palette.primary}
+                            />
+                        ) : (
+                            <Text
+                                testID="list-row-plate-mark"
+                                style={[styles.plateMonogram, { color: palette.primary }]}
+                            >
+                                {mark.letter}
+                            </Text>
+                        )}
                         <View
                             pointerEvents="none"
                             style={[StyleSheet.absoluteFillObject, styles.imageOutline, { borderColor: palette.imageOutline }]}
@@ -299,6 +343,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
+    },
+    /** Engraved-plate marks — only painted when there is no photograph. */
+    plateEmoji: { fontSize: 22 },
+    plateMonogram: {
+        fontFamily: 'Newsreader_500Medium',
+        fontSize: 22,
+        lineHeight: 26,
     },
     imageOutline: {
         borderWidth: StyleSheet.hairlineWidth,
