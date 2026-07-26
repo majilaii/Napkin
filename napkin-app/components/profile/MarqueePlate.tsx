@@ -33,7 +33,15 @@ interface MarqueePlateProps {
     listEmoji?: string | null;
     city?: string | null;
     rating?: number | null; // italic numeric accent; hidden when null
-    rank: number; // ghosted top-left "1"
+    /**
+     * Ordering position, 1–4. NOT rendered — founder call 2026-07-24: the
+     * numeral was dropped from the plate because grid order already states the
+     * ranking and the tile reads chicer without it (it also left the score as
+     * the only numeral on the plate, which is what the "/5" was compensating
+     * for). Still required: it carries the position into the accessibility
+     * label, where non-visual users have no grid to read it from.
+     */
+    rank: number;
     photoUrl?: string | null; // truthy → photo variant; undefined → typographic
     /**
      * TICKET-157: apply the warm Places wash over the photo (borrowed venue photo,
@@ -120,7 +128,7 @@ export function MarqueePlate({
             accessibilityRole={onPress ? 'button' : undefined}
             accessibilityLabel={
                 onPress
-                    ? `${rank}. ${name}${rating != null ? `, rated ${rating.toFixed(1)}` : ''}`
+                    ? `${rank}. ${name}${rating != null ? `, rated ${rating.toFixed(1)} out of 5` : ''}`
                     : undefined
             }
         >
@@ -169,19 +177,13 @@ export function MarqueePlate({
                         style={styles.scrim}
                         pointerEvents="none"
                     />
-                    <Text
-                        style={styles.rankPhoto}
-                        numberOfLines={1}
-                        maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
-                    >
-                        {rank}
-                    </Text>
                     {rating != null ? (
                         <Text
                             style={styles.ratingPhoto}
                             maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
                         >
                             {rating.toFixed(1)}
+                            <Text style={styles.ratingDenominatorPhoto}>/5</Text>
                         </Text>
                     ) : null}
                     <View style={styles.photoFooter} pointerEvents="none">
@@ -196,13 +198,6 @@ export function MarqueePlate({
                 </>
             ) : (
                 <>
-                    <Text
-                        style={[styles.rank, { color: palette.textMuted }]}
-                        numberOfLines={1}
-                        maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
-                    >
-                        {rank}
-                    </Text>
                     <View style={[styles.typoBody, compact ? styles.typoBodyCompact : null]}>
                         {!compact ? (
                             <View style={styles.markWrap}>
@@ -236,6 +231,7 @@ export function MarqueePlate({
                             maxFontSizeMultiplier={PLATE_MAX_FONT_SCALE}
                         >
                             {rating.toFixed(1)}
+                            <Text style={styles.ratingDenominator}>/5</Text>
                         </Text>
                     ) : null}
                 </>
@@ -299,22 +295,29 @@ const styles = StyleSheet.create({
         marginTop: 4,
         textAlign: 'center',
     },
-    rank: {
-        position: 'absolute',
-        top: 7,
-        left: 9,
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
-        zIndex: 2,
-    },
     rating: {
         position: 'absolute',
         bottom: 8,
         right: 9,
         fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 14,
+        fontSize: 20,
         fontVariant: ['tabular-nums'],
         zIndex: 2,
+    },
+    /**
+     * Denominator on the Top 4 score (founder call 2026-07-24, option A).
+     * A bare "4.5" beside a bare rank numeral read as two unlabelled numbers —
+     * neither declaring its scale. The "/5" resolves both at once: the scored
+     * one is the one carrying a denominator. Upright Manrope, deliberately NOT
+     * the italic serif — the italic is the scarce accent reserved for the
+     * numeral itself, and keeping the unit upright is what makes it read as a
+     * unit rather than part of the number. 11pt = the uppercase-label floor.
+     */
+    ratingDenominator: {
+        fontFamily: 'Manrope_500Medium',
+        fontStyle: 'normal',
+        fontSize: 11,
+        opacity: 0.75,
     },
     ratingCompactPosition: {
         top: 7,
@@ -352,7 +355,7 @@ const styles = StyleSheet.create({
         top: 7,
         right: 9,
         fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 14,
+        fontSize: 20,
         color: PLATE_CREAM,
         fontVariant: ['tabular-nums'],
         textShadowColor: 'rgba(28,28,25,0.72)',
@@ -360,17 +363,13 @@ const styles = StyleSheet.create({
         textShadowRadius: 3,
         zIndex: 2,
     },
-    rankPhoto: {
-        position: 'absolute',
-        top: 7,
-        left: 9,
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
-        color: PLATE_CREAM,
-        textShadowColor: 'rgba(28,28,25,0.72)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3,
-        zIndex: 2,
+    /** Photo-variant denominator — see `ratingDenominator`. Inherits the
+     *  parent's cream + text shadow so it stays legible on any hero. */
+    ratingDenominatorPhoto: {
+        fontFamily: 'Manrope_500Medium',
+        fontStyle: 'normal',
+        fontSize: 11,
+        opacity: 0.8,
     },
     // ── double hairline (both variants) ──────────────────────────────────
     hairlineOuter: {
