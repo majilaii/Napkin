@@ -1,17 +1,28 @@
 /**
- * Onboarding S2 — skippable moderated profile photo (TICKET-196 B-1).
+ * Onboarding S2 — MANDATORY moderated profile photo (TICKET-196 B-1).
  *
  * Tap the circle to pick from the library; the picked image is square-cropped to
  * 512², privately staged, moderated, and its approved public URL is written to
- * the onboarding draft. Continue stays blocked until an approved photo exists;
- * Skip remains available when moderation is unavailable.
+ * the onboarding draft. Continue stays blocked until an approved photo exists.
+ *
+ * NO SKIP — founder call 2026-07-25: faces are what make the app feel alive, so
+ * nobody reaches the feed without one.
+ *
+ * History worth keeping: Skip existed because the Vision moderation credential
+ * was never provisioned, so `action=moderate` 503'd (`VISION_UNAVAILABLE`) on
+ * EVERY upload and a mandatory avatar hard-walled signup for everyone (#318).
+ * The credential is now live, so the wall is safe to re-arm — but that is the
+ * single dependency this screen has. If Vision ever goes down again, this
+ * screen blocks all new accounts. Downtime is therefore reported as a
+ * RETRYABLE error, never as a silent pass-through: the user is told to try
+ * again, and the mandate holds.
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, Stack } from 'expo-router';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { Avatar } from '@/components/feed/Avatar';
@@ -19,6 +30,7 @@ import { chooseAvatarAsset } from '@/lib/avatarPicker';
 import { isModerationRejected, stageAndModerate } from '@/lib/imageStaging';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
+import { OnboardingProgress } from './OnboardingProgress';
 
 function isVisionUnavailable(error: unknown): boolean {
     let current: unknown = error;
@@ -56,7 +68,8 @@ export default function OnboardingPhotoScreen() {
             patch({ avatar_url: approved.approved_url });
         } catch (error) {
             if (isVisionUnavailable(error)) {
-                Alert.alert('Photos are down right now', 'Skip for now — you can add one later.');
+                // Retryable, NOT a pass — the mandate holds through downtime.
+                Alert.alert('Photo check is down right now', 'Please try again in a moment.');
                 return;
             }
             Alert.alert(
@@ -77,10 +90,17 @@ export default function OnboardingPhotoScreen() {
         <View style={[s.root, { backgroundColor: palette.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
             <View style={[s.body, { paddingTop: insets.top + Spacing.xxl }]}>
+                <OnboardingProgress step={2} palette={palette} />
                 <Text style={[s.kicker, { color: palette.textMuted }]}>who you are</Text>
                 <Text style={[s.brandLine, { color: palette.text }]}>your photo</Text>
 
-                <View style={styles.stage}>
+                <View
+                    style={[
+                        styles.stage,
+                        { backgroundColor: palette.surfaceJournal },
+                        Shadow.ambient,
+                    ]}
+                >
                     <Pressable
                         onPress={pick}
                         disabled={uploading}
@@ -109,14 +129,6 @@ export default function OnboardingPhotoScreen() {
                     </Pressable>
                 </View>
 
-                <Pressable
-                    onPress={() => router.push('/onboarding/city')}
-                    disabled={uploading}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                >
-                    <Text style={[s.skip, { color: palette.textMuted }]}>Skip</Text>
-                </Pressable>
             </View>
 
             <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
@@ -142,10 +154,18 @@ export default function OnboardingPhotoScreen() {
 }
 
 const styles = StyleSheet.create({
+    /**
+     * A warm plate under the avatar. Without it the circle floated on bare
+     * cream and the screen read as unfinished — which is the wrong feel for the
+     * one step you cannot skip. Same card language as Settings.
+     */
     stage: {
         alignItems: 'center',
         gap: Spacing.lg,
-        marginTop: Spacing.xl,
+        marginTop: Spacing.md,
+        paddingVertical: Spacing.xxl,
+        paddingHorizontal: Spacing.lg,
+        borderRadius: Radius.xl,
     },
     uploadOverlay: {
         ...StyleSheet.absoluteFillObject,

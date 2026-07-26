@@ -72,7 +72,13 @@ describe('mandatory onboarding photo', () => {
         mockDraft = { display_name: 'Jacky', avatar_url: null, home_city: null };
     });
 
-    it('blocks Continue before approval but offers Skip (2026-07-22: a down moderation service must never wall onboarding)', () => {
+    // SUPERSEDES the 2026-07-22 rule ("a down moderation service must never wall
+    // onboarding", which is why Skip existed). Founder call 2026-07-25: the photo
+    // is mandatory — no face, no feed. That earlier rule was written when the
+    // Vision credential was unprovisioned and EVERY upload 503'd; the credential
+    // is live now. The tradeoff is real and deliberate: if Vision goes down,
+    // this screen blocks all new signups, so Vision is a launch dependency.
+    it('has no Skip and blocks Continue until a photo is approved', () => {
         const screen = render(<OnboardingPhotoScreen />);
 
         const continueButton = screen.getByLabelText('Continue');
@@ -80,8 +86,9 @@ describe('mandatory onboarding photo', () => {
         fireEvent.press(continueButton);
         expect(mockPush).not.toHaveBeenCalled();
 
-        fireEvent.press(screen.getByText('Skip'));
-        expect(mockPush).toHaveBeenCalledWith('/onboarding/city');
+        // No escape hatch anywhere on the screen.
+        expect(screen.queryByText('Skip')).toBeNull();
+        expect(mockPush).not.toHaveBeenCalled();
     });
 
     it('allows the next step only with an approved URL in the draft', () => {
