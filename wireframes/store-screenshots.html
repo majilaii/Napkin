@@ -275,6 +275,16 @@ body {
 }
 #s6 .napkin::before { content: ''; position: absolute; left: 51%; top: 0; bottom: 0; width: 2px; background: rgba(28,28,25,0.045); }
 #s6 .napkin::after  { content: ''; position: absolute; top: 53%; left: 0; right: 0; height: 2px; background: rgba(28,28,25,0.045); }
+/* Real-photograph variant: keep the frame (size, tilt, radius, ambient shadow)
+   so it still reads as an artifact laid on the page, but drop everything that
+   was faking paper — the woven-texture gradients, the drawn fold lines, and the
+   inner padding the scrawl needed. The photo has all of that for real. */
+/* Height pinned to 1060 / 0.75 = 1413px — the photo's own 3:4 — so `cover`
+   trims NOTHING. Change these two numbers together or you start cropping. */
+#s6 .napkin--photo { padding: 0; overflow: hidden; background: none; height: 1413px; }
+#s6 .napkin--photo::before,
+#s6 .napkin--photo::after { display: none; }
+#s6 .napkin-photo { display: block; width: 100%; height: 100%; object-fit: cover; }
 #s6 .ring {
     position: absolute; right: -60px; top: -90px; width: 300px; height: 300px;
     border-radius: 999px; border: 24px solid rgba(130,85,22,0.13);
@@ -323,7 +333,7 @@ body {
     <div class="chip chip-note">TRIED · TWICE</div>
     <div class="device">
         <div class="screen">
-            <!-- <img class="capture" src="./capture-restaurant.png" alt=""> -->
+            <img class="capture" src="./capture-restaurant.png" alt="">
             <div class="m-pad">
                 <div class="m-caps">Cantonese · Wan Chai · $$</div>
                 <div class="m-title" style="font-size:110px; margin-top:24px;">Café Deco</div>
@@ -359,7 +369,7 @@ body {
     <div class="bigquote">&ldquo;</div>
     <div class="device">
         <div class="screen">
-            <!-- <img class="capture" src="./capture-poster.png" alt=""> -->
+            <img class="capture" src="./capture-poster.png" alt="">
             <div class="m-pad">
                 <div class="m-caps">Tuesday · 14 Dec · with Maya</div>
                 <div class="m-title" style="font-size:120px; margin-top:24px;">Tatiana</div>
@@ -385,7 +395,7 @@ body {
     <div class="chip chip-olive">3 OF YOU SAVED THIS</div>
     <div class="device">
         <div class="screen">
-            <!-- <img class="capture" src="./capture-table.png" alt=""> -->
+            <img class="capture" src="./capture-table.png" alt="">
             <div class="m-pad">
                 <div class="m-caps">A table · est. March 2026</div>
                 <div class="m-title" style="font-size:104px; margin-top:24px;">The Sunday Roast Club</div>
@@ -420,7 +430,7 @@ body {
     <h1 class="headline">all of it, <em class="hl hl-amber">mapped</em></h1>
     <div class="device">
         <div class="screen">
-            <!-- <img class="capture" src="./capture-map.png" alt=""> -->
+            <img class="capture" src="./capture-map.png" alt="">
             <div class="mapland">
                 <div class="street" style="left:-10%; top:22%; width:120%; height:14px; transform:rotate(-7deg);"></div>
                 <div class="street" style="left:-10%; top:48%; width:120%; height:20px; transform:rotate(4deg);"></div>
@@ -448,17 +458,21 @@ body {
 <section class="board ui-slide" id="s6">
     <div class="wordmark"><span class="rule"></span><span class="word">Napkin</span><span class="rule"></span></div>
     <h1 class="headline">it started on <em class="hl hl-amber">a napkin</em></h1>
-    <div class="napkin">
-        <div class="ring"></div>
-        <div class="scrawl">
-            <span class="title">every place we&rsquo;ve ever loved&nbsp;&mdash;</span>
-            <div class="row"><span>The Chairman</span><span>9</span></div>
-            <div class="row"><span>Caf&eacute; Deco</span><span>8&frac12;</span></div>
-            <div class="row cross"><span>that noodle place</span><span>6</span></div>
-            <div class="row"><span>Ho Lee Fook</span><span>8</span></div>
-            <div class="row"><span class="winner-wrap">Tatiana<span class="circle"></span></span><span>9&frac12; <span class="winstar">★</span></span></div>
-            <div class="row"><span>Osteria Marzia</span><span>9</span></div>
-        </div>
+    <!-- THE REAL NAPKIN (2026-07-26). The founder still had it: three friends
+         ranking every restaurant they'd been to, in pen, on an actual napkin —
+         Donia, Kiln, Casse Croute, Fallow, Agora. The CSS napkin that used to
+         live here was always labelled a stand-in "if the REAL napkin still
+         exists, photograph it and swap it in". It exists. Swapped.
+
+         SHOWN UNCROPPED, deliberately. The first pass cropped to the napkin
+         strip alone and the founder rightly killed it: the marigolds, the
+         china, the cork mats and the wood grain ARE the Heirloom mood, and the
+         scene is what makes this read as a real dinner rather than a document.
+         The frame's aspect is therefore pinned to the photo's own 3:4 so
+         `object-fit: cover` has nothing to trim — every edge of the original
+         survives to export. Any future re-crop must keep the full table scene. -->
+    <div class="napkin napkin--photo">
+        <img class="napkin-photo" src="./napkin-real.jpg" alt="An overhead shot of a laid table: a paper napkin with a handwritten ranked list of restaurants, beside plates, a teacup and marigolds">
     </div>
     <div class="chip chip-note">EST. AT THE TABLE</div>
 </section>
