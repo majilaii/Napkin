@@ -1,6 +1,7 @@
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 
 import { SessionExpiredError } from '@/lib/edgeInvoke';
+import { isOfflineError, notifyNetworkFailure } from '@/lib/connectivity';
 import { captureError } from '@/lib/sentry';
 import { trackError } from '@/lib/track';
 
@@ -15,6 +16,12 @@ function shouldSkip(err: unknown): boolean {
 
 function report(err: unknown, buildContext: () => string): void {
     try {
+        // Runs BEFORE the skip check: transport failures are marked
+        // `__napkinReported` at the callEdgeFn choke point (they are not app
+        // bugs), so gating this behind `shouldSkip` would mean the one signal
+        // we most want — a request that never left the device — is the one
+        // signal we never act on.
+        if (isOfflineError(err)) notifyNetworkFailure();
         if (shouldSkip(err)) return;
         const context = buildContext();
         trackError(err, context);

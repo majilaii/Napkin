@@ -27,6 +27,7 @@ import { useFollow } from '@/hooks/users/useFollow';
 import { CoDinerFollowCard } from '@/components/feed/CoDinerFollowCard';
 import { resolveEmptyState } from '@/components/feed/feedEmptyStateGate';
 import { onboardingStyles as s } from './styles';
+import { OnboardingProgress } from './OnboardingProgress';
 import { useFinishOnboarding } from '@/hooks/onboarding/useFinishOnboarding';
 
 export default function OnboardingFollowsScreen() {
@@ -92,6 +93,7 @@ export default function OnboardingFollowsScreen() {
         <View style={[s.root, { backgroundColor: palette.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
             <View style={[s.body, { paddingTop: insets.top + Spacing.xxl }]}>
+                <OnboardingProgress step={4} palette={palette} />
                 <Text style={[s.kicker, { color: palette.textMuted }]}>already here</Text>
                 <Text style={[s.brandLine, { color: palette.text }]}>people you know</Text>
 

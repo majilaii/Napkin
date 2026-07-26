@@ -28,6 +28,7 @@ import { useCoDiners } from '@/hooks/feed/useCoDiners';
 import { CitySuggestField } from '@/components/onboarding/CitySuggestField';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
+import { OnboardingProgress } from './OnboardingProgress';
 import { useFinishOnboarding } from '@/hooks/onboarding/useFinishOnboarding';
 
 export default function OnboardingCityScreen() {
@@ -92,6 +93,7 @@ export default function OnboardingCityScreen() {
         >
             <Stack.Screen options={{ headerShown: false }} />
             <View style={[s.body, { paddingTop: insets.top + Spacing.xxl }]}>
+                <OnboardingProgress step={3} palette={palette} />
                 <Text style={[s.kicker, { color: palette.textMuted }]}>where you eat</Text>
                 <Text style={[s.brandLine, { color: palette.text }]}>your home city</Text>
 

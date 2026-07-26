@@ -2,25 +2,28 @@
  * SearchResultRow — single result in the tiered search list.
  *
  * TICKET-069 canvas restyle (Kit 07 · The Restaurant Row):
- *   [52px photo thumb — only if present]  italic serif 17 name
- *                                  sans 12 muted  neighborhood · cuisine
- *                                  [right-edge] your-signal slot:
- *                                    • amber italic 18 rating  (if visited + rating)
- *                                    • location-outline glyph  (if wishlisted)
- *                                    • nothing               (else)
+ *   italic serif 17 name
+ *   sans 12 muted  neighborhood · cuisine
+ *   [right-edge] your-signal slot:
+ *     • location-outline glyph  (if visited)
+ *     • nothing                 (else)
  *
- * Logic unchanged. Only presentation updated.
+ * NO THUMBNAILS — founder order 2026-07-24. Search results are a pure text
+ * list, permanently. The reason is structural, not cosmetic: a result list
+ * mixes persisted restaurants (which may carry a mirrored, attributed Places
+ * hero) with ghosts — Places hits not yet in our DB, which by design have no
+ * photo at all. So a thumbnail column can NEVER be consistent here; it renders
+ * on whichever rows happen to already exist in Napkin, which reads as random.
+ * Photos still belong on surfaces whose rows are all persisted (list rows,
+ * Top 4 plates) and on pickers where the photo IS the artifact being chosen.
+ * Do not reintroduce a thumb — or a monogram/emoji placeholder — here.
  */
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, Radius } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { SearchResultRow as SearchResultRowType } from '@/hooks/search/useRestaurantSearch';
-import {
-    resolveVisibleSearchResultPhoto,
-    searchPhotoFailureKey,
-} from './searchPhotoPresentation';
 
 interface Props {
     item: SearchResultRowType;
@@ -31,25 +34,11 @@ interface Props {
      * "Pinned near you" section; absent everywhere else.
      */
     distanceLabel?: string | null;
-    failedPhotoKeys?: ReadonlySet<string>;
-    onPhotoError?: (failureKey: string) => void;
 }
 
-export function SearchResultRow({
-    item,
-    onPress,
-    distanceLabel,
-    failedPhotoKeys = new Set(),
-    onPhotoError,
-}: Props) {
+export function SearchResultRow({ item, onPress, distanceLabel }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const [locallyFailedKey, setLocallyFailedKey] = useState<string | null>(null);
-
-    const photo = resolveVisibleSearchResultPhoto(item, failedPhotoKeys);
-    const failureKey = searchPhotoFailureKey(item, photo.url);
-    const thumbUrl = failureKey === locallyFailedKey ? null : photo.url;
-    const hasPhoto = !!thumbUrl;
 
     // Meta line: address · cuisine. TICKET-167 flips the preference to address
     // (falling back to city) so same-name venues at different addresses read as
@@ -78,20 +67,6 @@ export function SearchResultRow({
             accessibilityRole="button"
             accessibilityLabel={item.name}
         >
-            {/* Photo thumb — only when a real photo exists. No monogram
-                placeholder: photoless results read as a clean text list. */}
-            {hasPhoto ? (
-                <Image
-                    source={{ uri: thumbUrl! }}
-                    style={styles.thumb}
-                    onError={() => {
-                        if (!failureKey) return;
-                        setLocallyFailedKey(failureKey);
-                        onPhotoError?.(failureKey);
-                    }}
-                />
-            ) : null}
-
             {/* Text block */}
             <View style={styles.textBlock}>
                 <Text
@@ -132,12 +107,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.lg,
         paddingVertical: Spacing.sm + 3,
         gap: 14,
-    },
-    thumb: {
-        width: 52,
-        height: 52,
-        borderRadius: Radius.md,
-        flexShrink: 0,
     },
     textBlock: {
         flex: 1,

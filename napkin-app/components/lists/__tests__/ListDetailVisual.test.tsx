@@ -102,18 +102,25 @@ function renderRow(
 }
 
 describe('ListEntryRow design AA', () => {
-    it('renders a null-photo thumbnail as a plain warm tint with no image or glyph', () => {
+    // SUPERSEDES the original design-AA rule ("plain warm tint, no glyph").
+    // Founder call 2026-07-24: a photoless row must never read as an empty box.
+    // 41 of the 48 photoless restaurants in prod are `photo_source='none'` —
+    // Google HAS no picture for them — so those squares can never be filled and
+    // the blank state is permanent, not a loading gap.
+    it('renders a null-photo thumbnail as an engraved plate, never an empty box', () => {
         const renderer = renderRow(null);
         const thumbnail = renderer.root.findByProps({ testID: 'list-row-thumbnail' });
 
         expect(thumbnail.findAllByType('ExpoImage')).toHaveLength(0);
-        expect(thumbnail.findAllByType('Ionicons')).toHaveLength(0);
-        expect(flattenStyle(thumbnail.props.style)).toMatchObject({
-            width: 54,
-            height: 54,
-            borderRadius: 12,
-            backgroundColor: Colors.light.surfaceContainerHigh,
-        });
+        // The fixture carries a cuisine ('Japanese'), so the mark is a glyph.
+        expect(thumbnail.findAllByProps({ testID: 'list-row-plate-mark' }).length)
+            .toBeGreaterThan(0);
+        expect(thumbnail.findAllByType('Ionicons')).toHaveLength(1);
+
+        const style = flattenStyle(thumbnail.props.style);
+        expect(style).toMatchObject({ width: 54, height: 54, borderRadius: 12 });
+        // Tinted off the restaurant id — NOT the flat container grey it used to be.
+        expect(style.backgroundColor).not.toBe(Colors.light.surfaceContainerHigh);
 
         act(() => renderer.unmount());
     });

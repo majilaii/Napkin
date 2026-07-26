@@ -8,6 +8,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+    Alert,
     Modal,
     Pressable,
     ScrollView,
@@ -22,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { usePersistPlace } from '@/hooks/search/usePersistPlace';
 import { useRepointWishlistItem } from '@/hooks/wishlist/useRepointWishlistItem';
+import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import {
     PlacePickerModal,
     type PlacePickerResult,
@@ -83,7 +85,9 @@ export function TableUnmappedSpotsSheet({
         null,
         tableId,
     );
-    const busy = persisting || repointing;
+    const { mutateAsync: removeSave, isPending: removing } = useWishlistRemove(userId);
+    const [removeError, setRemoveError] = useState(false);
+    const busy = persisting || repointing || removing;
 
     const wasVisible = useRef(false);
     useEffect(() => {
@@ -112,6 +116,38 @@ export function TableUnmappedSpotsSheet({
         [fixTarget, persistPlace, repoint],
     );
 
+    /**
+     * Drop an unfixable save outright.
+     *
+     * "fix" alone was a dead end for the case this sheet exists to surface:
+     * a name the importer derived from a video that Google has no record of
+     * ("White Men Can't Jerk"). You can't repoint it to a place that isn't
+     * there, so without this the only exit was hunting the row down in the
+     * wishlist. Gated on `viewerItemId` for the same reason "fix" is — you may
+     * only remove YOUR OWN save, never another member's.
+     */
+    const handleRemove = useCallback(
+        (row: UnmappableRow) => {
+            if (!row.viewerItemId) return;
+            Alert.alert(
+                `remove ${row.name}?`,
+                'this takes it off your wishlist. you can always save it again.',
+                [
+                    { text: 'cancel', style: 'cancel' },
+                    {
+                        text: 'remove',
+                        style: 'destructive',
+                        onPress: () => {
+                            setRemoveError(false);
+                            removeSave(row.restaurantId).catch(() => setRemoveError(true));
+                        },
+                    },
+                ],
+            );
+        },
+        [removeSave],
+    );
+
     const rowContents = (row: UnmappableRow, repairable: boolean) => {
         const metadata = [row.city, `saved by ${row.saverLabel}`].filter(Boolean).join(' · ');
         return (
@@ -134,6 +170,20 @@ export function TableUnmappedSpotsSheet({
         );
     };
 
+    /** Trailing "remove" — the escape hatch when the spot isn't fixable. */
+    const removeAction = (row: UnmappableRow) => (
+        <Pressable
+            onPress={() => handleRemove(row)}
+            disabled={busy}
+            hitSlop={10}
+            style={({ pressed }) => [styles.removeAction, { opacity: pressed || busy ? 0.5 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={`remove ${row.name} from your wishlist`}
+        >
+            <Text style={[styles.removeLabel, { color: palette.textMuted }]}>remove</Text>
+        </Pressable>
+    );
+
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <TouchableWithoutFeedback onPress={onClose}>
@@ -153,29 +203,43 @@ export function TableUnmappedSpotsSheet({
                 <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
                     {rows.map((row) =>
                         row.viewerItemId ? (
-                            <Pressable
-                                key={row.restaurantId}
-                                onPress={() => {
-                                    setFixError(false);
-                                    setFixSelection({
-                                        viewerItemId: row.viewerItemId!,
-                                        restaurantId: row.restaurantId,
-                                        userId: userId ?? null,
-                                        tableId: tableId ?? null,
-                                    });
-                                }}
-                                style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : 1 }]}
-                                accessibilityRole="button"
-                                accessibilityLabel={`fix ${row.name}`}
-                            >
-                                {rowContents(row, true)}
-                            </Pressable>
+                            // Two targets on one line: the body repoints, the
+                            // trailing action drops it. Both own-save only.
+                            <View key={row.restaurantId} style={styles.rowWrap}>
+                                <Pressable
+                                    onPress={() => {
+                                        setFixError(false);
+                                        setFixSelection({
+                                            viewerItemId: row.viewerItemId!,
+                                            restaurantId: row.restaurantId,
+                                            userId: userId ?? null,
+                                            tableId: tableId ?? null,
+                                        });
+                                    }}
+                                    disabled={busy}
+                                    style={({ pressed }) => [
+                                        styles.row,
+                                        styles.rowInWrap,
+                                        { opacity: pressed ? 0.7 : 1 },
+                                    ]}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`fix ${row.name}`}
+                                >
+                                    {rowContents(row, true)}
+                                </Pressable>
+                                {removeAction(row)}
+                            </View>
                         ) : (
                             <View key={row.restaurantId} style={styles.row}>
                                 {rowContents(row, false)}
                             </View>
                         ),
                     )}
+                    {removeError ? (
+                        <Text style={[styles.removeError, { color: palette.primary }]}>
+                            couldn&rsquo;t remove that spot — try again
+                        </Text>
+                    ) : null}
                 </ScrollView>
 
                 {/* Nested INSIDE the open Modal — Fabric modal-stacking law. */}
@@ -228,6 +292,10 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         paddingHorizontal: 22,
     },
+    /** Holds the two targets (fix body + remove) on one line. */
+    rowWrap: { flexDirection: 'row', alignItems: 'center' },
+    /** The fix target takes the slack; `remove` owns the right gutter instead. */
+    rowInWrap: { flex: 1, paddingRight: Spacing.xs },
     rowBody: { flex: 1, gap: 2, minWidth: 0 },
     rowName: Type.editorialBody,
     rowMeta: Type.metadata,
@@ -235,6 +303,23 @@ const styles = StyleSheet.create({
         ...Type.metadata,
         fontFamily: 'Manrope_600SemiBold',
         letterSpacing: 0.2,
+    },
+    removeAction: {
+        paddingVertical: 12,
+        paddingLeft: Spacing.sm,
+        paddingRight: 22,
+    },
+    /** Quieter than `fix` — repointing is the better outcome; removing is the
+     *  way out when there is nothing to repoint to. */
+    removeLabel: {
+        ...Type.metadata,
+        fontFamily: 'Manrope_500Medium',
+        letterSpacing: 0.2,
+    },
+    removeError: {
+        ...Type.metadata,
+        paddingHorizontal: 22,
+        paddingTop: Spacing.xs,
     },
 });
 

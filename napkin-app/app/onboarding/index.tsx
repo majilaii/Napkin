@@ -21,6 +21,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
+import { OnboardingProgress } from './OnboardingProgress';
 
 export default function OnboardingNameScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -52,6 +53,7 @@ export default function OnboardingNameScreen() {
         >
             <Stack.Screen options={{ headerShown: false }} />
             <View style={[s.body, { paddingTop: insets.top + Spacing.xxl }]}>
+                <OnboardingProgress step={1} palette={palette} />
                 <Text style={[s.kicker, { color: palette.textMuted }]}>welcome to napkin</Text>
                 <Text style={[s.brandLine, { color: palette.text }]}>your name</Text>
 

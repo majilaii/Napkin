@@ -10,7 +10,6 @@ import {
     TextInput,
     View,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -22,10 +21,6 @@ import {
 } from '@/hooks/search/useRestaurantSearch';
 import { usePersistPlace } from '@/hooks/search/usePersistPlace';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
-import {
-    resolveVisibleSearchResultPhoto,
-    searchPhotoFailureKey,
-} from './searchPhotoPresentation';
 
 export type RestaurantPickerPick = {
     restaurant_id: string;
@@ -55,7 +50,6 @@ export function RestaurantPickerScreen({
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const [resolvingKey, setResolvingKey] = useState<string | null>(null);
-    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
     const inFlight = useRef(new Set<string>());
     const persistPlace = usePersistPlace();
 
@@ -114,7 +108,6 @@ export function RestaurantPickerScreen({
 
     const hasQuery = debouncedQuery.length >= 2;
     const hasResults = sections.length > 0;
-    const imageOutline = scheme === 'dark' ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)';
 
     return (
         <View style={[styles.root, { backgroundColor: palette.background, paddingTop: insets.top }]}>
@@ -179,8 +172,6 @@ export function RestaurantPickerScreen({
                             {section.rows.map((row) => {
                                 const key = rowKey(row);
                                 const meta = [row.city ?? row.address, row.cuisine].filter(Boolean).join(' · ');
-                                const photoUrl = resolveVisibleSearchResultPhoto(row, failedPhotoKeys).url;
-                                const photoFailureKey = searchPhotoFailureKey(row, photoUrl);
                                 return (
                                     <PressableScale
                                         key={key}
@@ -191,31 +182,6 @@ export function RestaurantPickerScreen({
                                         accessibilityRole="button"
                                         accessibilityLabel={`Choose ${row.name}`}
                                     >
-                                        <View
-                                            style={[
-                                                styles.thumb,
-                                                {
-                                                    backgroundColor: palette.surfaceJournalHi,
-                                                    borderColor: imageOutline,
-                                                },
-                                            ]}
-                                        >
-                                            {photoUrl ? (
-                                                <Image
-                                                    source={{ uri: photoUrl }}
-                                                    style={StyleSheet.absoluteFill}
-                                                    contentFit="cover"
-                                                    onError={() => {
-                                                        if (!photoFailureKey) return;
-                                                        setFailedPhotoKeys(
-                                                            (current) => new Set(current).add(photoFailureKey),
-                                                        );
-                                                    }}
-                                                />
-                                            ) : (
-                                                <Ionicons name="restaurant-outline" size={20} color={palette.textMuted} />
-                                            )}
-                                        </View>
                                         <View style={styles.rowCopy}>
                                             <Text style={[Type.editorialBody, { color: palette.text }]} numberOfLines={1}>
                                                 {row.name}
@@ -299,15 +265,6 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
-    },
-    thumb: {
-        width: 48,
-        height: 48,
-        borderRadius: Radius.sm,
-        borderWidth: StyleSheet.hairlineWidth,
-        overflow: 'hidden',
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     rowCopy: { flex: 1, minWidth: 0 },
     emptyResult: { minHeight: 68, justifyContent: 'center', paddingHorizontal: Spacing.xl },
