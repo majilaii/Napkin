@@ -12,13 +12,14 @@
  * a sibling would silently never present while the sheet is up).
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Modal, Pressable, ScrollView, StyleSheet, TouchableWithoutFeedback } from 'react-native';
+import { Alert, View, Text, Modal, Pressable, ScrollView, StyleSheet, TouchableWithoutFeedback } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import type { PersonalWishlistItem } from '@/hooks/wishlist';
 import { useRepointWishlistItem } from '@/hooks/wishlist/useRepointWishlistItem';
+import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import { usePersistPlace } from '@/hooks/search/usePersistPlace';
 import { PlacePickerModal, type PlacePickerResult } from './PlacePickerModal';
 
@@ -43,7 +44,9 @@ export function UnmappedSpotsSheet({ visible, onClose, items, userId, palette }:
         userId,
         fixTarget?.job_id ?? null,
     );
-    const busy = persisting || repointing;
+    const { mutateAsync: removeSave, isPending: removing } = useWishlistRemove(userId);
+    const [removeError, setRemoveError] = useState(false);
+    const busy = persisting || repointing || removing;
 
     // Auto-close once the last unmapped spot gains a location (the refetch
     // empties `items` while we're open). Skipped while a fix is mid-flight.
@@ -72,6 +75,38 @@ export function UnmappedSpotsSheet({ visible, onClose, items, userId, palette }:
         [fixTarget, persistPlace, repoint],
     );
 
+    /**
+     * Drop the save outright.
+     *
+     * "fix" alone was a dead end for the case this sheet exists to surface: a
+     * name the importer derived from a video that Google has no record of
+     * ("White Men Can't Jerk"). There is nothing to repoint it to, so without
+     * this the only way out was hunting the row down in the wishlist proper.
+     */
+    const handleRemove = useCallback(
+        (item: PersonalWishlistItem) => {
+            const restaurantId = item.restaurant?.id;
+            if (!restaurantId) return;
+            const label = item.restaurant?.name ?? 'this spot';
+            Alert.alert(
+                `remove ${label}?`,
+                'this takes it off your wishlist. you can always save it again.',
+                [
+                    { text: 'cancel', style: 'cancel' },
+                    {
+                        text: 'remove',
+                        style: 'destructive',
+                        onPress: () => {
+                            setRemoveError(false);
+                            removeSave(restaurantId).catch(() => setRemoveError(true));
+                        },
+                    },
+                ],
+            );
+        },
+        [removeSave],
+    );
+
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <TouchableWithoutFeedback onPress={onClose}>
@@ -90,30 +125,57 @@ export function UnmappedSpotsSheet({ visible, onClose, items, userId, palette }:
 
                 <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
                     {items.map((item) => (
-                        <Pressable
-                            key={item.id}
-                            onPress={() => {
-                                setFixError(false);
-                                setFixTarget(item);
-                            }}
-                            style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : 1 }]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`fix ${item.restaurant?.name ?? 'this spot'}`}
-                        >
-                            <View style={styles.rowBody}>
-                                <Text style={[styles.rowName, { color: palette.text }]} numberOfLines={1}>
-                                    {item.restaurant?.name ?? 'unnamed spot'}
-                                </Text>
-                                {item.restaurant?.city ? (
-                                    <Text style={[styles.rowMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                                        {item.restaurant.city}
+                        // Two targets on one line: the body repoints, the
+                        // trailing action drops it when there's nothing to
+                        // repoint to.
+                        <View key={item.id} style={styles.rowWrap}>
+                            <Pressable
+                                onPress={() => {
+                                    setFixError(false);
+                                    setFixTarget(item);
+                                }}
+                                disabled={busy}
+                                style={({ pressed }) => [
+                                    styles.row,
+                                    styles.rowInWrap,
+                                    { opacity: pressed ? 0.7 : 1 },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={`fix ${item.restaurant?.name ?? 'this spot'}`}
+                            >
+                                <View style={styles.rowBody}>
+                                    <Text style={[styles.rowName, { color: palette.text }]} numberOfLines={1}>
+                                        {item.restaurant?.name ?? 'unnamed spot'}
                                     </Text>
-                                ) : null}
-                            </View>
-                            <Text style={[styles.fixLabel, { color: palette.primary }]}>fix</Text>
-                            <Ionicons name="chevron-forward" size={13} color={palette.textMuted} />
-                        </Pressable>
+                                    {item.restaurant?.city ? (
+                                        <Text style={[styles.rowMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                                            {item.restaurant.city}
+                                        </Text>
+                                    ) : null}
+                                </View>
+                                <Text style={[styles.fixLabel, { color: palette.primary }]}>fix</Text>
+                                <Ionicons name="chevron-forward" size={13} color={palette.textMuted} />
+                            </Pressable>
+                            <Pressable
+                                onPress={() => handleRemove(item)}
+                                disabled={busy || !item.restaurant?.id}
+                                hitSlop={10}
+                                style={({ pressed }) => [
+                                    styles.removeAction,
+                                    { opacity: pressed || busy ? 0.5 : 1 },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={`remove ${item.restaurant?.name ?? 'this spot'} from your wishlist`}
+                            >
+                                <Text style={[styles.removeLabel, { color: palette.textMuted }]}>remove</Text>
+                            </Pressable>
+                        </View>
                     ))}
+                    {removeError ? (
+                        <Text style={[styles.removeError, { color: palette.primary }]}>
+                            couldn&rsquo;t remove that spot — try again
+                        </Text>
+                    ) : null}
                 </ScrollView>
 
                 {/* Nested INSIDE the open Modal — Fabric modal-stacking law. */}
@@ -165,6 +227,10 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         paddingHorizontal: 22,
     },
+    /** Holds the two targets (fix body + remove) on one line. */
+    rowWrap: { flexDirection: 'row', alignItems: 'center' },
+    /** The fix target takes the slack; `remove` owns the right gutter instead. */
+    rowInWrap: { flex: 1, paddingRight: Spacing.xs },
     rowBody: { flex: 1, gap: 2, minWidth: 0 },
     rowName: {
         ...Type.editorialBody,
@@ -174,6 +240,24 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 12.5,
         letterSpacing: 0.2,
+    },
+    removeAction: {
+        paddingVertical: 12,
+        paddingLeft: Spacing.sm,
+        paddingRight: 22,
+    },
+    /** Quieter than `fix` — repointing is the better outcome; removing is the
+     *  way out when there is nothing to repoint to. */
+    removeLabel: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12.5,
+        letterSpacing: 0.2,
+    },
+    removeError: {
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 12,
+        paddingHorizontal: 22,
+        paddingTop: Spacing.xs,
     },
 });
 

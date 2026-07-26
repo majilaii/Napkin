@@ -6,6 +6,8 @@ import TestRenderer, { act } from 'react-test-renderer';
 
 const mockPersistPlace = jest.fn(async (id: string) => id);
 const mockRepoint = jest.fn(async () => undefined);
+const mockRemoveSave = jest.fn(async () => undefined);
+const mockAlert = jest.fn();
 const mockUseRepoint = jest.fn(
     (_userId?: string | null, _jobId?: string | null, _tableId?: string | null) => ({
         mutateAsync: mockRepoint,
@@ -14,6 +16,7 @@ const mockUseRepoint = jest.fn(
 );
 
 jest.mock('react-native', () => ({
+    Alert: { alert: (...args: unknown[]) => mockAlert(...args) },
     Modal: 'Modal',
     Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios ?? options.default },
     Pressable: 'Pressable',
@@ -36,6 +39,9 @@ jest.mock('@/hooks/wishlist/useRepointWishlistItem', () => ({
         jobId?: string | null,
         tableId?: string | null,
     ) => mockUseRepoint(userId, jobId, tableId),
+}));
+jest.mock('@/hooks/wishlist/useWishlistRemove', () => ({
+    useWishlistRemove: () => ({ mutateAsync: mockRemoveSave, isPending: false }),
 }));
 jest.mock('@/components/wishlist/PlacePickerModal', () => ({
     PlacePickerModal: 'PlacePickerModal',
@@ -76,6 +82,8 @@ describe('TableUnmappedSpotsSheet', () => {
         mockPersistPlace.mockClear();
         mockRepoint.mockClear();
         mockUseRepoint.mockClear();
+        mockRemoveSave.mockClear();
+        mockAlert.mockClear();
     });
 
     it('attributes every saver but exposes repair only for the viewer item id', async () => {
@@ -97,10 +105,16 @@ describe('TableUnmappedSpotsSheet', () => {
         expect(renderedText(renderer)).toContain('New York · saved by Clara');
         expect(renderedText(renderer)).toContain('London · saved by Mateo +1');
 
-        const repairRows = renderer.root.findAllByProps({ accessibilityRole: 'button' });
-        expect(repairRows).toHaveLength(1);
-        expect(repairRows[0].props.accessibilityLabel).toBe('fix Kono');
+        // The owned row exposes BOTH actions; the read-only row exposes neither.
+        const actions = renderer.root.findAllByProps({ accessibilityRole: 'button' });
+        expect(actions.map((n: any) => n.props.accessibilityLabel)).toEqual([
+            'fix Kono',
+            'remove Kono from your wishlist',
+        ]);
 
+        const repairRows = actions.filter((n: any) =>
+            n.props.accessibilityLabel.startsWith('fix '),
+        );
         act(() => repairRows[0].props.onPress());
         const picker = renderer.root.findByType('PlacePickerModal');
         expect(picker.props.visible).toBe(true);
@@ -198,6 +212,42 @@ describe('TableUnmappedSpotsSheet', () => {
         });
         expect(mockRepoint).not.toHaveBeenCalled();
         expect(onClose).toHaveBeenCalledTimes(1);
+
+        act(() => renderer.unmount());
+    });
+
+    it('removes an unfixable save only after confirmation, keyed on the restaurant', async () => {
+        let renderer: any;
+        act(() => {
+            renderer = TestRenderer.create(
+                <TableUnmappedSpotsSheet
+                    visible
+                    onClose={jest.fn()}
+                    rows={[owned, readOnly]}
+                    tableId="table-1"
+                    userId="viewer-1"
+                    palette={Colors.light}
+                />,
+            );
+        });
+
+        const removeButton = renderer.root
+            .findAllByProps({ accessibilityRole: 'button' })
+            .find((n: any) => n.props.accessibilityLabel.startsWith('remove '));
+
+        act(() => removeButton.props.onPress());
+
+        // Destructive, so it must ask first — never remove on the bare tap.
+        expect(mockRemoveSave).not.toHaveBeenCalled();
+        expect(mockAlert).toHaveBeenCalledTimes(1);
+        const [title, , buttons] = mockAlert.mock.calls[0] as [string, string, any[]];
+        expect(title).toBe('remove Kono?');
+
+        const confirm = buttons.find((b) => b.style === 'destructive');
+        await act(async () => confirm.onPress());
+
+        // Keyed on restaurantId — that is what the wishlist remove contract takes.
+        expect(mockRemoveSave).toHaveBeenCalledWith('restaurant-owned');
 
         act(() => renderer.unmount());
     });
