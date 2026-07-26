@@ -12,7 +12,7 @@
  * Brand-new user (all sections empty) → nothing but the search field.
  * No "see all" links — wishlist/lists have their own tabs.
  */
-import React, { useCallback, useState } from 'react';
+import React from 'react';
 import { View } from 'react-native';
 
 import type { SearchResultRow as SearchResultRowType } from '@/hooks/search/useRestaurantSearch';
@@ -44,10 +44,6 @@ export function SearchEmptyState({
     lists,
     onPressList,
 }: Props) {
-    const [failedPhotoKeys, setFailedPhotoKeys] = useState<Set<string>>(() => new Set());
-    const onPhotoError = useCallback((failureKey: string) => {
-        setFailedPhotoKeys((current) => new Set(current).add(failureKey));
-    }, []);
     const topLists = lists.slice(0, TOP_LISTS_COUNT);
     return (
         <View>
@@ -68,8 +64,6 @@ export function SearchEmptyState({
                             item={row}
                             onPress={onPressRestaurant}
                             distanceLabel={distanceLabel}
-                            failedPhotoKeys={failedPhotoKeys}
-                            onPhotoError={onPhotoError}
                         />
                     ))}
                 </View>

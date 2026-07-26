@@ -229,12 +229,6 @@ export default function SearchScreen() {
         () => mergeUnified(results, debouncedQuery),
         [results, debouncedQuery],
     );
-    const [failedSearchPhotoKeys, setFailedSearchPhotoKeys] = useState<Set<string>>(
-        () => new Set(),
-    );
-    const handleSearchPhotoError = useCallback((failureKey: string) => {
-        setFailedSearchPhotoKeys((current) => new Set(current).add(failureKey));
-    }, []);
     const hasQuery = immediateQuery.trim().length > 0;
     const hasResults = mergedResults.length > 0;
 
@@ -323,21 +317,9 @@ export default function SearchScreen() {
             if (item._type === 'list') {
                 return <ListRow list={item.list} onPress={handleListPress} />;
             }
-            return (
-                <SearchResultRow
-                    item={item.row}
-                    onPress={handleResultPress}
-                    failedPhotoKeys={failedSearchPhotoKeys}
-                    onPhotoError={handleSearchPhotoError}
-                />
-            );
+            return <SearchResultRow item={item.row} onPress={handleResultPress} />;
         },
-        [
-            failedSearchPhotoKeys,
-            handleListPress,
-            handleResultPress,
-            handleSearchPhotoError,
-        ],
+        [handleListPress, handleResultPress],
     );
 
     return (
