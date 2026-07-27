@@ -394,43 +394,23 @@ serve(async req => {
         }
 
         // ── Branch B: Text Search (separate endpoint/mask/debit) ──────────
-        //
-        // `city` is deliberately NOT sent on the interactive search path.
-        //
-        // This used to read profiles.home_city whenever there was no location
-        // bias and pass it as `city`, which searchText joins straight into the
-        // Google textQuery: [name, address, area, city].join(", ").
-        // A locality TOKEN inside the query string is a far harder constraint
-        // than the locationBias it was standing in for — Google treats it as
-        // part of what you're looking for, not as a hint about where you are.
-        //
-        // Measured, same user, same query "noma":
-        //   location granted → textQuery "noma" + 50 km bias
-        //       → "Noma Restaurant, 84 The Cut, London" AND Copenhagen's Noma
-        //   location denied, home_city "London" → textQuery "noma, London"
-        //       → "Noma Swimwear, 27 Old Gloucester St"
-        // Both real restaurants disappear and the user concludes search is
-        // broken. It only bites BARE-NAME queries; an explicitly city-qualified
-        // one ("kamer amsterdam") still resolves, which is why this hid so long.
-        //
-        // This is the reviewer's path — App Review routinely denies the location
-        // prompt — so it is fixed ahead of submission rather than after.
-        //
-        // The cost of dropping it: a denied-location user searching a GENERIC
-        // term ("sushi") no longer gets their home city folded in, so Google
-        // ranks by its own signals. That is a real but much smaller regression
-        // than losing proper-name search entirely. Reinstating a locality signal
-        // properly means geocoding home_city into a locationBias circle, which
-        // is a second paid call and belongs in its own ticket — NOT another
-        // token welded into textQuery.
-        //
-        // NOTE: the completeness worker still passes real extracted facts
-        // (name + city from the clip) to searchText, and should — there the
-        // city is genuinely part of the thing being identified. This change is
-        // scoped to the interactive search endpoint only.
+        let homeCity = '';
+        if (!textSearchBias) {
+            const { data: profile, error: profileError } = await supabase
+                .from('profiles')
+                .select('home_city')
+                .eq('user_id', ownerId)
+                .maybeSingle();
+            if (profileError) {
+                console.error('places-search home city lookup failed:', profileError);
+            } else if (typeof profile?.home_city === 'string') {
+                homeCity = profile.home_city.trim();
+            }
+        }
+
         const candidates = await provider.searchText(ownerId, {
             name: query!,
-            city: '',
+            city: homeCity,
             area: null,
             address: null,
         }, claimant, textSearchBias);

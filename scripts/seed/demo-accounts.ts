@@ -162,9 +162,9 @@ async function main() {
 
     // Display names + usernames (separate actions per user-profile contract).
     const soft = (p: Promise<any>, label: string) => p.catch((e) => console.log(`  (${label}: ${e.message.slice(0, 120)})`));
-    await soft(edge(a, 'user-profile', { action: 'update_profile', display_name: 'Alex Reviewer' }), 'profile A');
+    const profileA = await soft(edge(a, 'user-profile', { action: 'update_profile', display_name: 'Alex Reviewer' }), 'profile A');
     await soft(edge(a, 'user-profile', { action: 'update_username', username: 'alexeats' }), 'username A');
-    await soft(edge(b, 'user-profile', { action: 'update_profile', display_name: 'Billie Tablemate' }), 'profile B');
+    const profileB = await soft(edge(b, 'user-profile', { action: 'update_profile', display_name: 'Billie Tablemate' }), 'profile B');
     await soft(edge(b, 'user-profile', { action: 'update_username', username: 'billietries' }), 'username B');
 
     // ── Clear the onboarding gate ────────────────────────────────────────────
@@ -184,16 +184,29 @@ async function main() {
     //
     // complete_onboarding also stamps terms_accepted_at and sets
     // account_privacy='public', both of which the reviewer's account wants.
+    //
+    // avatar_url is threaded back through DELIBERATELY. fn_complete_onboarding
+    // assigns `avatar_url = v_avatar` UNCONDITIONALLY, so omitting it writes
+    // NULL. This script is idempotent by design and meant to be re-run to top
+    // the accounts up — without this, the second run would silently strip an
+    // avatar someone had set on the review account by hand.
+    const carryAvatar = (profile: any) =>
+        typeof profile?.avatar_url === 'string' && profile.avatar_url
+            ? { avatar_url: profile.avatar_url }
+            : {};
+
     console.log('→ completing onboarding (clears the /onboarding gate)…');
     await edge(a, 'user-profile', {
         action: 'complete_onboarding',
         display_name: 'Alex Reviewer',
         home_city: 'London',
+        ...carryAvatar(profileA),
     });
     await edge(b, 'user-profile', {
         action: 'complete_onboarding',
         display_name: 'Billie Tablemate',
         home_city: 'London',
+        ...carryAvatar(profileB),
     });
     console.log('  ✓ onboarded_at stamped on both accounts');
 
