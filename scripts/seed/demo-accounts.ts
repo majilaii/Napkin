@@ -163,9 +163,15 @@ async function main() {
     // Display names + usernames (separate actions per user-profile contract).
     const soft = (p: Promise<any>, label: string) => p.catch((e) => console.log(`  (${label}: ${e.message.slice(0, 120)})`));
     const profileA = await soft(edge(a, 'user-profile', { action: 'update_profile', display_name: 'Alex Reviewer' }), 'profile A');
-    await soft(edge(a, 'user-profile', { action: 'update_username', username: 'alexeats' }), 'username A');
+    // Handles are globally unique and are NEVER released except by account
+    // deletion, so a previous seed run permanently owns its usernames. Override
+    // via env when re-seeding onto fresh accounts, or the new profiles end up
+    // with no handle at all (the 409 is soft-failed).
+    const usernameA = Deno.env.get('DEMO_USERNAME_A') ?? 'alexeats';
+    const usernameB = Deno.env.get('DEMO_USERNAME_B') ?? 'billietries';
+    await soft(edge(a, 'user-profile', { action: 'update_username', username: usernameA }), 'username A');
     const profileB = await soft(edge(b, 'user-profile', { action: 'update_profile', display_name: 'Billie Tablemate' }), 'profile B');
-    await soft(edge(b, 'user-profile', { action: 'update_username', username: 'billietries' }), 'username B');
+    await soft(edge(b, 'user-profile', { action: 'update_username', username: usernameB }), 'username B');
 
     // ── Clear the onboarding gate ────────────────────────────────────────────
     // MUST NOT be soft-failed, and must run for BOTH accounts.
@@ -218,8 +224,34 @@ async function main() {
     const table = await edge(a, 'table-management', { name: 'thursday club' });
     const tableId = table?.id ?? table?.table?.id;
     if (!tableId) throw new Error(`table create returned no id: ${JSON.stringify(table).slice(0, 200)}`);
-    await edge(a, 'table-management', { table_id: tableId, target_user_id: b.user_id }, '?action=add_member');
-    console.log(`  ✓ "thursday club" (${tableId}) + Billie added`);
+    // add_member does NOT create a membership — it upserts a PENDING invitation
+    // (TICKET-133) that the invitee must accept before a table_members row
+    // exists. Without the accept below, Billie is not a member, and every entry
+    // she posts to this table 403s with `table_not_authorized`, aborting the
+    // seed partway through. The old script logged "Billie added" and moved on.
+    const invite = await edge(
+        a,
+        'table-management',
+        { table_id: tableId, target_user_id: b.user_id },
+        '?action=add_member',
+    );
+    if (invite?.already_member) {
+        console.log(`  ✓ "thursday club" (${tableId}) — Billie already a member`);
+    } else {
+        const invitationId = invite?.invitation_id;
+        if (!invitationId) {
+            throw new Error(
+                `add_member returned no invitation_id: ${JSON.stringify(invite).slice(0, 200)}`,
+            );
+        }
+        await edge(
+            b,
+            'table-management',
+            { invitation_id: invitationId, response: 'accept' },
+            '?action=respond_invitation',
+        );
+        console.log(`  ✓ "thursday club" (${tableId}) + Billie accepted`);
+    }
 
     console.log('→ entries for A (shared to the table)…');
     const entryNotes: Array<[number, number, string]> = [
