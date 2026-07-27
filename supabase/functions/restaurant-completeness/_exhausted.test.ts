@@ -20,6 +20,8 @@ Deno.test("exhausted items use owner-scoped stable keyset pagination", async () 
       job_id: uuid(100 + index),
       item_nonce: uuid(200 + index),
       restaurant_id: null,
+      resolution_id: index === 0 ? uuid(300) : null,
+      external_id: index === 0 ? "ChIJ-test-place" : null,
       client_facts: { name: `Spot ${index}`, city: "London" },
       last_error: "ambiguous",
       created_at: "2026-07-16T12:00:00.000Z",
@@ -29,14 +31,43 @@ Deno.test("exhausted items use owner-scoped stable keyset pagination", async () 
   const nullFilters: Array<[string, unknown]> = [];
   const orders: Array<[string, unknown]> = [];
   const orFilters: string[] = [];
+  const queueSelections: string[] = [];
+  const jobSelections: string[] = [];
+  const jobInFilters: Array<[string, unknown]> = [];
+  const jobEqualities: Array<[string, unknown]> = [];
   let observedLimit = 0;
   const supabase = {
     from: (table: string) => {
+      if (table === "import_jobs") {
+        const chain: Record<string, unknown> = {};
+        chain.select = (columns: string) => {
+          jobSelections.push(columns);
+          return chain;
+        };
+        chain.in = (column: string, value: unknown) => {
+          jobInFilters.push([column, value]);
+          return chain;
+        };
+        chain.eq = (column: string, value: unknown) => {
+          jobEqualities.push([column, value]);
+          return Promise.resolve({
+            data: rows.slice(0, EXHAUSTED_PAGE_LIMIT).map((row, index) => ({
+              job_id: row.job_id,
+              import_nonce: index === 0 ? null : uuid(400 + index),
+            })),
+            error: null,
+          });
+        };
+        return chain;
+      }
       if (table !== "restaurant_completeness_queue") {
         throw new Error(`unexpected table ${table}`);
       }
       const chain: Record<string, unknown> = {};
-      chain.select = () => chain;
+      chain.select = (columns: string) => {
+        queueSelections.push(columns);
+        return chain;
+      };
       chain.eq = (column: string, value: unknown) => {
         equalities.push([column, value]);
         return chain;
@@ -65,13 +96,26 @@ Deno.test("exhausted items use owner-scoped stable keyset pagination", async () 
   assertEquals(first.items.length, EXHAUSTED_PAGE_LIMIT);
   assertEquals(first.has_more, true);
   assertEquals(observedLimit, EXHAUSTED_PAGE_LIMIT + 1);
+  assertEquals(queueSelections, [
+    "id,job_id,item_nonce,restaurant_id,resolution_id,external_id,client_facts,last_error,created_at",
+  ]);
+  assertEquals(jobSelections, ["job_id,import_nonce"]);
   assertEquals(equalities, [["owner_id", OWNER], ["state", "exhausted"]]);
+  assertEquals(jobEqualities, [["user_id", OWNER]]);
+  assertEquals(jobInFilters, [[
+    "job_id",
+    rows.slice(0, EXHAUSTED_PAGE_LIMIT).map((row) => row.job_id),
+  ]]);
   assertEquals(nullFilters, [["dismissed_at", null]]);
   assertEquals(orders, [
     ["created_at", { ascending: false }],
     ["id", { ascending: false }],
   ]);
   assertEquals(orFilters, []);
+  assertEquals(first.items[0].import_nonce, null);
+  assertEquals(first.items[0].resolution_id, uuid(300));
+  assertEquals(first.items[0].external_id, "ChIJ-test-place");
+  assertEquals(first.items[1].import_nonce, uuid(401));
 
   const cursor = parseExhaustedCursor(first.next_cursor);
   if (!cursor) throw new Error("expected a valid next cursor");

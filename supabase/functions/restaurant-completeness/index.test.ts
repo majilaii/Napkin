@@ -185,6 +185,12 @@ Deno.test("exhausted read derives owner from JWT and never from request body", a
           job_id: NONCE,
           item_nonce: NONCE,
           restaurant_id: null,
+          // import_nonce carries the provenance the client needs to mint a
+          // match correction; null here exercises the row shape where the
+          // UI must HIDE "find it" rather than offer a call that can't be made.
+          import_nonce: null,
+          resolution_id: null,
+          external_id: null,
           restaurant_name: "Kartuli",
           restaurant_city: "London",
           last_error: "ambiguous",
