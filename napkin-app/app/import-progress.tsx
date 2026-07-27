@@ -23,6 +23,9 @@ import { useActiveImports, type ActiveImport } from '@/hooks/wishlist/useActiveI
 import { useRecentImports } from '@/hooks/wishlist/useRecentImports';
 import { useHasImported } from '@/hooks/wishlist/useHasImported';
 import {
+    type ExhaustedCompletenessItem,
+    useCorrectCompletenessItem,
+    useDismissCompletenessItem,
     useExhaustedCompletenessItems,
     useRetryCompletenessItem,
 } from '@/hooks/imports/useCompletenessRetries';
@@ -35,8 +38,12 @@ import {
 } from '@/components/wishlist/importSourceLabel';
 import { WatchAgainLink } from '@/components/wishlist/ImportSourceCard';
 import { ClipThumb } from '@/components/wishlist/ClipThumb';
+import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
 import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue } from '@/lib/importQueue';
+import { mintImportMatchCorrection } from '@/lib/importResolution';
 import { deleteAppGroupFile } from '@/modules/media-extract';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const PHASE_COPY: Record<ActiveImport['phase'], string> = {
     reading: 'reading the share…',
@@ -66,6 +73,11 @@ export default function ImportProgressScreen() {
         isFetchingNextPage: isFetchingMoreExhausted,
     } = useExhaustedCompletenessItems(user?.id);
     const retryCompleteness = useRetryCompletenessItem(user?.id);
+    const dismissCompleteness = useDismissCompletenessItem(user?.id);
+    const correctCompleteness = useCorrectCompletenessItem(user?.id);
+    const [pickerItem, setPickerItem] = React.useState<ExhaustedCompletenessItem | null>(null);
+    const [pickerError, setPickerError] = React.useState<string | null>(null);
+    const [pickerBusy, setPickerBusy] = React.useState(false);
     // Full activation hub until a first import lands, then the compact standing row.
     const hasImported = useHasImported(user?.id);
     // TICKET-181 decision ④: the share-tip banner shows ONLY on an EMPTY hub. Once
@@ -124,6 +136,65 @@ export default function ImportProgressScreen() {
                     style: 'destructive',
                     onPress: () => {
                         for (const m of reviewBatches) discard(m);
+                    },
+                },
+            ],
+        );
+    };
+
+    const findCompletenessMatch = (item: ExhaustedCompletenessItem) => {
+        setPickerError(null);
+        setPickerItem(item);
+    };
+
+    const pickCompletenessMatch = async (result: PlacePickerResult) => {
+        const item = pickerItem;
+        if (!item || item.import_nonce === null || !user?.id) return;
+
+        setPickerError(null);
+        const chosenExternalId = result.external_id ?? (UUID_RE.test(result.id) ? null : result.id);
+        if (!chosenExternalId) {
+            setPickerError("couldn't verify that match — try again");
+            return;
+        }
+
+        setPickerBusy(true);
+        try {
+            const resolutionId = await mintImportMatchCorrection({
+                import_nonce: item.import_nonce,
+                prior_resolution_id: item.resolution_id ?? null,
+                chosen_external_id: chosenExternalId,
+                expected_owner_id: user.id,
+            });
+            await correctCompleteness.mutateAsync({
+                item_id: item.id,
+                resolution_id: resolutionId,
+            });
+            setPickerItem(null);
+            setPickerError(null);
+            toast.show(`fixed → ${result.name}`);
+        } catch {
+            setPickerError("couldn't verify that match — try again");
+        } finally {
+            setPickerBusy(false);
+        }
+    };
+
+    const removeCompletenessItem = (item: ExhaustedCompletenessItem) => {
+        const label = item.restaurant_name ?? 'unmatched spot';
+        Alert.alert(
+            `remove ${label}?`,
+            "we'll stop trying to match it.",
+            [
+                { text: 'cancel', style: 'cancel' },
+                {
+                    text: 'remove',
+                    style: 'destructive',
+                    onPress: () => {
+                        dismissCompleteness.mutate(item.id, {
+                            onSuccess: () => toast.show(`removed ${label}`),
+                            onError: () => toast.show("couldn't remove — try again"),
+                        });
                     },
                 },
             ],
@@ -353,6 +424,15 @@ export default function ImportProgressScreen() {
                             const retrying =
                                 retryCompleteness.isPending &&
                                 retryCompleteness.variables === item.id;
+                            const dismissing =
+                                dismissCompleteness.isPending &&
+                                dismissCompleteness.variables === item.id;
+                            const correcting =
+                                correctCompleteness.isPending &&
+                                correctCompleteness.variables?.item_id === item.id;
+                            const finding = pickerBusy && pickerItem?.id === item.id;
+                            const rowPending = retrying || dismissing || correcting || finding;
+                            const label = item.restaurant_name ?? 'unmatched spot';
                             return (
                                 <View
                                     key={item.id}
@@ -376,25 +456,60 @@ export default function ImportProgressScreen() {
                                                 .filter(Boolean)
                                                 .join(' · ')}
                                         </Text>
+                                        <View style={styles.failRow}>
+                                            {item.import_nonce !== null ? (
+                                                <>
+                                                    <Pressable
+                                                        onPress={() => findCompletenessMatch(item)}
+                                                        disabled={rowPending}
+                                                        hitSlop={6}
+                                                        style={styles.failActionTarget}
+                                                        accessibilityRole="button"
+                                                        accessibilityLabel={`find ${label}`}
+                                                    >
+                                                        <Text style={[styles.failAction, { color: palette.primary }]}>
+                                                            find it
+                                                        </Text>
+                                                    </Pressable>
+                                                    <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
+                                                </>
+                                            ) : null}
+                                            <Pressable
+                                                onPress={() =>
+                                                    retryCompleteness.mutate(item.id, {
+                                                        onSuccess: () => toast.show('trying that spot again…'),
+                                                        onError: () => toast.show("couldn't retry — try again"),
+                                                    })
+                                                }
+                                                disabled={rowPending}
+                                                hitSlop={6}
+                                                style={styles.failActionTarget}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={`retry ${label}`}
+                                            >
+                                                {retrying ? (
+                                                    <ActivityIndicator size="small" color={palette.primary} />
+                                                ) : (
+                                                    <Text style={[styles.failAction, { color: palette.primary }]}>
+                                                        try again
+                                                    </Text>
+                                                )}
+                                            </Pressable>
+                                            <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
+                                            <Pressable
+                                                onPress={() => removeCompletenessItem(item)}
+                                                disabled={rowPending}
+                                                hitSlop={6}
+                                                style={styles.failActionTarget}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={`remove ${label}`}
+                                            >
+                                                <Text style={[styles.failAction, { color: palette.textMuted }]}>
+                                                    remove
+                                                </Text>
+                                            </Pressable>
+                                        </View>
                                     </View>
-                                    <Pressable
-                                        onPress={() =>
-                                            retryCompleteness.mutate(item.id, {
-                                                onSuccess: () => toast.show('trying that spot again…'),
-                                                onError: () => toast.show("couldn't retry — try again"),
-                                            })
-                                        }
-                                        disabled={retrying}
-                                        style={styles.retryTarget}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`retry ${item.restaurant_name ?? 'unmatched spot'}`}
-                                    >
-                                        {retrying ? (
-                                            <ActivityIndicator size="small" color={palette.primary} />
-                                        ) : (
-                                            <Text style={[styles.failAction, { color: palette.primary }]}>try again</Text>
-                                        )}
-                                    </Pressable>
                                 </View>
                             );
                         })}
@@ -457,6 +572,21 @@ export default function ImportProgressScreen() {
                     </>
                 ) : null}
             </ScrollView>
+            <PlacePickerModal
+                visible={pickerItem !== null}
+                title="find the right place"
+                subtitle={`replace ${pickerItem?.restaurant_name ?? 'this spot'}`}
+                initialQuery={pickerItem?.restaurant_name ?? ''}
+                busy={pickerBusy}
+                errorText={pickerError}
+                onSelect={pickCompletenessMatch}
+                onDismiss={() => {
+                    if (pickerBusy) return;
+                    setPickerItem(null);
+                    setPickerError(null);
+                }}
+                palette={palette}
+            />
         </View>
     );
 }
@@ -477,12 +607,6 @@ const styles = StyleSheet.create({
     failRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
     failAction: { fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
     failActionTarget: { minHeight: 40, justifyContent: 'center' },
-    retryTarget: {
-        minWidth: 72,
-        minHeight: 40,
-        alignItems: 'flex-end',
-        justifyContent: 'center',
-    },
     failDot: { fontFamily: 'Manrope_400Regular', fontSize: 12 },
     bulkRow: {
         flexDirection: 'row',

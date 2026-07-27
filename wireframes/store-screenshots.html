@@ -50,9 +50,12 @@
   3. Export at exact pixels: DevTools → select a .board node →
      Cmd-Shift-P → "Capture node screenshot" → 1320×2868 PNG.
      (Batch alt, untested: npx capture-website-cli <file> --element '#s1')
-  4. Slide-1 photo: swap the file:// URL in .photo-bg for a real
-     candid — friends mid-meal, warm low light, table clutter. Interiors
-     from the design bundle are wired as the placeholder.
+  4. Slide 1 carries NO photograph — see the long note above #s1 in the
+     stylesheet before changing it. The short version: the design-bundle
+     interiors are real, identifiable restaurants with no established
+     licence, and App Store screenshots are public marketing. If a licensed
+     candid ever exists (friends mid-meal, warm low light, table clutter),
+     it can go behind the stack — but do not reinstate the bundle interiors.
 
   Tokens mirror napkin-app/constants/theme.ts — do not invent colors.
 -->
@@ -188,27 +191,89 @@ body {
 .pill-terra { background: var(--terracotta); color: var(--paper); }
 .pill-ghost { background: var(--journal-low); color: var(--ink); }
 
-/* ════════ SLIDE 1 — hook · import (photo-led) ════════ */
+/* ════════ SLIDE 1 — hook · import (artifact-led) ════════ */
+/*
+   NO PHOTOGRAPH — and no FAKE photograph either.
+
+   This slide used to full-bleed `carbone-interior.png` from the design bundle:
+   a real, identifiable New York restaurant whose licensing was never
+   established. App Store screenshots are public marketing, so an unlicensed
+   interior of someone else's business is risk with no upside.
+
+   First replacement attempt was CSS "candlelight" — bokeh discs over a warm
+   radial. It looked like a blurred JPEG, not a room. The lesson is a brand one:
+   Napkin is paper and type, so faking photography fights the brand instead of
+   carrying it. A gradient pretending to be a photo always loses to a shape that
+   is confidently itself.
+
+   So slide 1 is now an ARTIFACT slide: a fanned stack of saved cards on deep
+   ink. It shows the actual promise of the headline — spots piling up from
+   clips you watched — it fills the frame at carousel-thumbnail size, and every
+   pixel is ours. It stays DARK because it leads the carousel and needs contrast
+   against the four warm-paper UI slides that follow.
+
+   Accents held to two: amber (highlight, chip, glow) + olive (the save dots).
+*/
 #s1 .photo-bg {
     position: absolute; inset: 0;
     background:
-        linear-gradient(180deg, rgba(28,28,25,0.18) 0%, rgba(28,28,25,0.02) 34%, rgba(28,28,25,0.52) 78%, rgba(28,28,25,0.66) 100%),
-        url('file:///Users/jacky/Downloads/napkin-core-loop/assets/images/carbone-interior.png') center/cover,
-        radial-gradient(120% 90% at 30% 20%, #6d5138 0%, #40332a 55%, #241f1b 100%);
+        /* a low, warm pool of light behind the stack — the only "lighting" */
+        radial-gradient(78% 42% at 50% 62%, rgba(201,162,39,0.16) 0%, rgba(201,162,39,0) 72%),
+        radial-gradient(120% 80% at 50% 8%, rgba(160,63,40,0.15) 0%, rgba(160,63,40,0) 60%),
+        /* deep warm ink — never pure black */
+        linear-gradient(180deg, #2b241d 0%, #221c17 46%, #1c1714 100%);
 }
-#s1 .headline { position: absolute; left: 96px; bottom: 560px; color: var(--paper); }
-#s1 .notecard {
-    position: absolute; left: 96px; bottom: 220px;
-    width: 760px; background: var(--note); border-radius: 32px;
-    border: 1px solid rgba(221,192,186,0.15);
-    box-shadow: 0 20px 70px rgba(28,28,25,0.30);
-    padding: 44px 52px; transform: rotate(-2deg);
-    display: flex; align-items: center; gap: 34px;
+/* the same paper grain the light boards carry, dialled for a dark ground */
+#s1 .photo-bg::after {
+    content: ''; position: absolute; inset: 0; opacity: .5;
+    background-image: radial-gradient(rgba(252,249,244,0.030) 1px, transparent 1px);
+    background-size: 9px 9px;
 }
-#s1 .notecard .dot { width: 20px; height: 20px; border-radius: 999px; background: var(--olive); flex: none; }
-#s1 .notecard .name { display: block; font: 400 italic 56px var(--serif); }
-#s1 .notecard .meta { display: block; font: 700 26px var(--sans); letter-spacing: .14em; color: var(--taupe); margin-top: 12px; }
-#s1 .chip { right: 120px; bottom: 470px; transform: rotate(3deg); }
+#s1 .headline { position: absolute; left: 96px; top: 330px; color: var(--paper); }
+
+/* ── the cascade of saves ──────────────────────────────────────
+   Wallet-pass logic, not a list: each card is offset by LESS than its own
+   height, so every card behind the front one shows exactly its name strip.
+   That is what makes it read as a pile that continues rather than four rows.
+   Content is top-aligned (not centred) precisely so the name — the only thing
+   that matters on a covered card — is what survives the overlap.
+   Depth comes from scale + shadow ONLY. A translucent scrim over white goes
+   muddy on a dark ground and pushes the meta line under the legibility floor. */
+#s1 .stack { position: absolute; left: 0; right: 0; top: 970px; height: 1500px; }
+#s1 .card {
+    position: absolute; left: 105px; width: 1110px;
+    background: var(--note); border-radius: 36px;
+    padding: 54px 62px 58px;
+    display: flex; align-items: flex-start; gap: 34px;
+    box-shadow: 0 30px 72px rgba(0,0,0,0.46), 0 6px 18px rgba(0,0,0,0.30);
+}
+/* nudged down to sit on the name's cap height, not its line box */
+#s1 .card .dot {
+    width: 22px; height: 22px; border-radius: 999px;
+    background: var(--olive); flex: none; margin-top: 26px;
+}
+#s1 .card .name { display: block; font: 400 italic 66px/1.15 var(--serif); color: var(--ink); }
+#s1 .card .meta {
+    display: block; font: 700 27px var(--sans); letter-spacing: .14em;
+    color: var(--taupe); margin-top: 16px;
+}
+/* Back of the pile → front. Offsets (190px) are well under the ~250px card
+   height, so each leaves only its name showing. */
+#s1 .card-6 { top:   0px; transform: rotate(-2.4deg) scale(0.895); }
+#s1 .card-5 { top: 190px; transform: rotate( 1.7deg) scale(0.917); }
+#s1 .card-4 { top: 380px; transform: rotate(-1.9deg) scale(0.939); }
+#s1 .card-3 { top: 570px; transform: rotate( 1.3deg) scale(0.961); }
+#s1 .card-2 { top: 760px; transform: rotate(-1.2deg) scale(0.982); }
+/* The front pair gets a wider gap and gentler counter-rotation than the rest:
+   at -1.5°/+2.0° over 1110px their left corners converge and card-1 rides up
+   over card-2's meta line, which reads as a rendering fault rather than depth.
+   Deepest shadow too — this card is nearest the viewer. */
+#s1 .card-1 {
+    top: 985px; transform: rotate( 1.5deg);
+    box-shadow: 0 44px 110px rgba(0,0,0,0.55), 0 10px 28px rgba(0,0,0,0.34);
+}
+/* sticker on the front card's shoulder, the rec'd holo-sticker equivalent */
+#s1 .chip { right: 96px; top: 2300px; transform: rotate(3deg); z-index: 3; }
 
 /* ════════ shared UI-slide anatomy (2–5) ════════ */
 .ui-slide .headline { position: absolute; top: 320px; left: 96px; }
@@ -316,14 +381,58 @@ body {
     <div class="photo-bg"></div>
     <div class="wordmark"><span class="rule"></span><span class="word">Napkin</span><span class="rule"></span></div>
     <h1 class="headline">save <em class="hl hl-amber">every spot</em> you see on TikTok</h1>
-    <div class="chip chip-amber">PINNED · JUST NOW</div>
-    <div class="notecard">
-        <span class="dot"></span>
-        <span>
-            <span class="name">Café Deco</span>
-            <span class="meta">FROM TIKTOK · WAN CHAI · $$</span>
-        </span>
+    <!-- The stack IS the artwork: saves piling up from clips you watched.
+         Ordered back-to-front so the newest card sits on top of the pile. -->
+    <div class="stack">
+        <!-- Real, currently-hyped LONDON rooms, one per neighbourhood, areas
+             checked against Hot Dinners' July 2026 list rather than guessed —
+             a wrong postcode on a real restaurant is the kind of thing a London
+             user spots instantly. Founder's pick (Osteria Angelina) sits on the
+             front card. Sources mixed TikTok/Instagram: the app imports both. -->
+        <div class="card card-6">
+            <span class="dot"></span>
+            <span>
+                <span class="name">Vesper</span>
+                <span class="meta">FROM INSTAGRAM · CLERKENWELL · $$$</span>
+            </span>
+        </div>
+        <div class="card card-5">
+            <span class="dot"></span>
+            <span>
+                <span class="name">Teal</span>
+                <span class="meta">FROM TIKTOK · HACKNEY · $$$</span>
+            </span>
+        </div>
+        <div class="card card-4">
+            <span class="dot"></span>
+            <span>
+                <span class="name">Lagana</span>
+                <span class="meta">FROM INSTAGRAM · SHOREDITCH · $$</span>
+            </span>
+        </div>
+        <div class="card card-3">
+            <span class="dot"></span>
+            <span>
+                <span class="name">Impala</span>
+                <span class="meta">FROM TIKTOK · SOHO · $$</span>
+            </span>
+        </div>
+        <div class="card card-2">
+            <span class="dot"></span>
+            <span>
+                <span class="name">Camille</span>
+                <span class="meta">FROM TIKTOK · BOROUGH · $$</span>
+            </span>
+        </div>
+        <div class="card card-1">
+            <span class="dot"></span>
+            <span>
+                <span class="name">Osteria Angelina</span>
+                <span class="meta">FROM TIKTOK · SPITALFIELDS · $$$</span>
+            </span>
+        </div>
     </div>
+    <div class="chip chip-amber">PINNED · JUST NOW</div>
 </section>
 
 <!-- ════════════ 2 · your taste, not strangers' stars ════════════ -->

@@ -18,6 +18,9 @@ export interface ExhaustedCompletenessItem {
   job_id: string;
   item_nonce: string;
   restaurant_id: string | null;
+  import_nonce: string | null;
+  resolution_id: string | null;
+  external_id: string | null;
   restaurant_name: string | null;
   restaurant_city: string | null;
   last_error: string | null;
@@ -82,7 +85,7 @@ export async function listExhaustedCompletenessItems(
   let query = supabase
     .from("restaurant_completeness_queue")
     .select(
-      "id,job_id,item_nonce,restaurant_id,client_facts,last_error,created_at",
+      "id,job_id,item_nonce,restaurant_id,resolution_id,external_id,client_facts,last_error,created_at",
     )
     .eq("owner_id", ownerId)
     .eq("state", "exhausted")
@@ -134,6 +137,29 @@ export async function listExhaustedCompletenessItems(
     }
   }
 
+  const jobIds = [
+    ...new Set(
+      rawPage.rows
+        .map((row) => row.job_id)
+        .filter((id): id is string => typeof id === "string"),
+    ),
+  ];
+  const importNonceByJobId = new Map<string, string | null>();
+  if (jobIds.length > 0) {
+    const { data: jobs, error: jobError } = await supabase
+      .from("import_jobs")
+      .select("job_id,import_nonce")
+      .in("job_id", jobIds)
+      .eq("user_id", ownerId);
+    if (jobError) throw jobError;
+    for (const job of jobs ?? []) {
+      importNonceByJobId.set(
+        job.job_id,
+        typeof job.import_nonce === "string" ? job.import_nonce : null,
+      );
+    }
+  }
+
   const items = rawPage.rows.map((row): ExhaustedCompletenessItem => {
     const restaurant = typeof row.restaurant_id === "string"
       ? restaurantById.get(row.restaurant_id)
@@ -143,6 +169,9 @@ export async function listExhaustedCompletenessItems(
       job_id: row.job_id,
       item_nonce: row.item_nonce,
       restaurant_id: row.restaurant_id ?? null,
+      import_nonce: importNonceByJobId.get(row.job_id) ?? null,
+      resolution_id: row.resolution_id ?? null,
+      external_id: row.external_id ?? null,
       restaurant_name: restaurant?.name ?? factString(row.client_facts, "name"),
       restaurant_city: restaurant?.city ?? factString(row.client_facts, "city"),
       last_error: row.last_error ?? null,

@@ -162,10 +162,53 @@ async function main() {
 
     // Display names + usernames (separate actions per user-profile contract).
     const soft = (p: Promise<any>, label: string) => p.catch((e) => console.log(`  (${label}: ${e.message.slice(0, 120)})`));
-    await soft(edge(a, 'user-profile', { action: 'update_profile', display_name: 'Alex Reviewer' }), 'profile A');
+    const profileA = await soft(edge(a, 'user-profile', { action: 'update_profile', display_name: 'Alex Reviewer' }), 'profile A');
     await soft(edge(a, 'user-profile', { action: 'update_username', username: 'alexeats' }), 'username A');
-    await soft(edge(b, 'user-profile', { action: 'update_profile', display_name: 'Billie Tablemate' }), 'profile B');
+    const profileB = await soft(edge(b, 'user-profile', { action: 'update_profile', display_name: 'Billie Tablemate' }), 'profile B');
     await soft(edge(b, 'user-profile', { action: 'update_username', username: 'billietries' }), 'username B');
+
+    // ── Clear the onboarding gate ────────────────────────────────────────────
+    // MUST NOT be soft-failed, and must run for BOTH accounts.
+    //
+    // `onboarded_at` is stamped by exactly one action — `complete_onboarding`
+    // (user-profile). `update_profile` does NOT stamp it. Without this call the
+    // seeded accounts carry onboarded_at = NULL, and app/_layout.tsx routes any
+    // sign-in straight into /onboarding.
+    //
+    // That is a submission blocker, not a cosmetic one: onboarding's photo step
+    // is MANDATORY as of 2026-07-26 (the Skip affordance was removed so every
+    // account has an avatar). An App Review tester signing in with the demo
+    // credentials would be walled behind a photo picker on a device whose
+    // library they don't control, with Cloud Vision moderation in the path —
+    // i.e. a Guideline 2.1 "unable to sign in / app incomplete" rejection.
+    //
+    // complete_onboarding also stamps terms_accepted_at and sets
+    // account_privacy='public', both of which the reviewer's account wants.
+    //
+    // avatar_url is threaded back through DELIBERATELY. fn_complete_onboarding
+    // assigns `avatar_url = v_avatar` UNCONDITIONALLY, so omitting it writes
+    // NULL. This script is idempotent by design and meant to be re-run to top
+    // the accounts up — without this, the second run would silently strip an
+    // avatar someone had set on the review account by hand.
+    const carryAvatar = (profile: any) =>
+        typeof profile?.avatar_url === 'string' && profile.avatar_url
+            ? { avatar_url: profile.avatar_url }
+            : {};
+
+    console.log('→ completing onboarding (clears the /onboarding gate)…');
+    await edge(a, 'user-profile', {
+        action: 'complete_onboarding',
+        display_name: 'Alex Reviewer',
+        home_city: 'London',
+        ...carryAvatar(profileA),
+    });
+    await edge(b, 'user-profile', {
+        action: 'complete_onboarding',
+        display_name: 'Billie Tablemate',
+        home_city: 'London',
+        ...carryAvatar(profileB),
+    });
+    console.log('  ✓ onboarded_at stamped on both accounts');
 
     console.log('→ mutual follow…');
     await edge(a, 'user-profile', { action: 'follow', target_user_id: b.user_id });
