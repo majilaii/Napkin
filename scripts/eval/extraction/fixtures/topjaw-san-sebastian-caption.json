@@ -1,0 +1,34 @@
+{
+  "name": "topjaw-san-sebastian-caption",
+  "source_url": "https://www.tiktok.com/@topjaw/video/7670828280068508950",
+  "notes": "TICKET-209 founder repro (2026-08-06): the import over-detected on a video whose caption is a COMPLETE, machine-readable listicle. The [caption] section is the verbatim oEmbed title (verified live). The [video text] section is RECONSTRUCTED scene noise, not a prod capture — prod forensics were unavailable for this ticket (Supabase MCP token scoped to the wrong project), so it recreates the failure shape: pintxos menu items, street signage and OTHER real San Sebastián bars visible in frame. Those neighbouring bars are the hallucination class that made this bug invisible downstream — they are real venues in the same city, so they resolve cleanly through Places and no later gate catches them. fail_on_extras is the point of this fixture: the caption enumerates the complete set, so ANY unlisted candidate is a hallucination. The caption says 10 but names 9; the cap is an upper bound, so 9 under a cap of 10 is correct. min_recall 0.88 (8/9) tolerates a single tail merge — the names are space-joined with no delimiters, so 'Gabarron Antonio Taberna' can legitimately parse as one venue.",
+  "fused_text": "[caption]\n10 San Sebastián food spots that I LOVED last weekend: Casa Urola Bar Txepetxa La Cuchara de San Telmo Akerbetlz Bar Sport El Patio de Simona Casa Julián Gabarron Antonio Taberna\n\n[video text]\nPARTE VIEJA\nGILDA 3,50\nTXAKOLI\nPINTXOS DEL DIA\nGAMBA A LA PLANCHA 4,00\nBAR\nGANBARA\nSETAS · FOIE\nLA VIÑA\nTARTA DE QUESO\nBORDA BERRI\nKEBAB DE COSTILLA\nCALLE 31 DE AGOSTO\nNESTOR\nTORTILLA 13:00\nSIDRERIA\nMENU DEL DIA 22€\nZURRIOLA\nSAN SEBASTIAN\nTOPJAW\nSUBSCRIBE TO TOPJAW\nDOWNLOAD THE STEP APP\nSo we started at Casa Urola for the tuna. Then Txepetxa, the anchovies are unreal. La Cuchara de San Telmo, get the pig cheek. Akerbetlz for the txakoli. Bar Sport, the txuleta. El Patio de Simona is the one nobody knows. Casa Julian in Tolosa for the steak. Gabarron. And Antonio Taberna to finish.",
+  "cap": 10,
+  "context": {
+    "source_kind": "video",
+    "has_video_text": true,
+    "caption_cap": 10
+  },
+  "expected": [
+    { "name": "Casa Urola" },
+    { "name": "Bar Txepetxa" },
+    { "name": "La Cuchara de San Telmo" },
+    { "name": "Akerbetlz" },
+    { "name": "Bar Sport" },
+    { "name": "El Patio de Simona" },
+    { "name": "Casa Julián" },
+    { "name": "Gabarron" },
+    { "name": "Antonio Taberna" }
+  ],
+  "forbidden": [
+    { "name": "Ganbara", "why": "neighbouring storefront signage — a real San Sebastián bar, absent from the caption's enumerated list" },
+    { "name": "La Viña", "why": "storefront signage in frame, absent from the caption's list" },
+    { "name": "Borda Berri", "why": "storefront signage in frame, absent from the caption's list" },
+    { "name": "Nestor", "why": "storefront signage in frame, absent from the caption's list" },
+    { "name": "Topjaw", "why": "channel branding" },
+    { "name": "Gilda", "why": "pintxo on a menu board, not a venue" },
+    { "name": "Txakoli", "why": "a drink on a menu board, not a venue" }
+  ],
+  "fail_on_extras": true,
+  "min_recall": 0.88
+}

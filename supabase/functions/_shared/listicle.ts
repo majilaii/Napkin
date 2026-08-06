@@ -26,6 +26,37 @@ export interface ListMarkerResult {
 }
 
 /**
+ * TICKET-209 pattern 2: `N` + up to four intervening words + a list-noun.
+ *
+ * `u` is load-bearing: the gap class uses \p{L}/\p{M} so accented city names
+ * ("San Sebastián") count as ordinary words. `\p{L}` is inert without `u`.
+ * Group 1 = the digits, group 2 = the (possibly empty) intervening words.
+ */
+const N_LIST_RE =
+    /\b(\d+)\s+((?:[\p{L}\p{M}'’-]+\s+){0,4})(?:best|spots?|places?|restaurants?|must(?:\s+try)?|favou?rites?)\b/giu;
+
+/**
+ * Units of time/distance/percentage — plus rating words. A digit qualifying one
+ * of these is a duration, a measure or a rating ("5 star spots", "2 michelin
+ * star places"), never an advertised spot count. Rejecting a rating word costs
+ * at worst a disabled cap ("7 michelin restaurants" loses its ceiling) — the
+ * safe direction; a false COUNT truncates real spots.
+ */
+const UNIT_TOKEN_RE =
+    /^(?:days?|nights?|hours?|hrs?|mins?|minutes?|weeks?|months?|years?|km|miles?|%|stars?|michelin)$/iu;
+
+/**
+ * Series/ordinal qualifiers BEFORE the digit: "part 2 of the best pizza spots",
+ * "day 3 in tokyo best ramen", "vol 3 of my favourite spots". The digit numbers
+ * the POST, not the venues — reading it as a spot count truncates a full-length
+ * listicle to 2–3 and (on IG) can flip the fast-path count gate into
+ * auto-saving the truncated set. The old adjacency pattern never matched these;
+ * the widened gap must not either.
+ */
+const SERIES_TOKEN_RE =
+    /^(?:part|pt|day|night|week|month|year|episode|ep|vol|volume|series|season|round|chapter|no|number)$/iu;
+
+/**
  * Detect a listicle marker in text.
  * Returns isList=true and count=N when the text mentions "top N" / "N best spots"
  * or has at least 2 numbered lines (1. … 2. …).
@@ -49,10 +80,34 @@ export function detectListMarker(text: string): ListMarkerResult {
         };
     }
 
-    // Pattern 2: "N best/spots/places/restaurants/must/favourites"
-    const nBestMatch = trimmed.match(/\b(\d+)\s+(?:best|spots?|places?|restaurants?|must(?:\s+try)?|favou?rites?)\b/i);
-    if (nBestMatch) {
-        const n = parseInt(nBestMatch[1], 10);
+    // Pattern 2: "N [up to 4 words] best/spots/places/restaurants/must/favourites"
+    // TICKET-209: the digit no longer has to sit adjacent to the list-noun —
+    // "10 San Sebastián food spots", "7 underrated Lisbon restaurants". Two
+    // guards keep the widened gap from reading a DURATION as a spot count:
+    //   - unit/measure blocklist on every token in the gap (which includes the
+    //     token immediately after the digit): "3 days in Lisbon spots" → 3 would
+    //     truncate a 10-spot video to 3.
+    //   - currency prefix: "£10 spots in London" is a price, not a count.
+    // A rejected match NEVER nulls the whole caption — scanning continues so a
+    // mixed caption stays countable ("24 hours in NYC: 8 spots you need" → 8).
+    N_LIST_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = N_LIST_RE.exec(trimmed)) !== null) {
+        const before = trimmed.slice(0, m.index);
+        // Currency-prefixed digits are prices, never counts — whitespace
+        // between the symbol and the digit ("£ 5 spots") still counts.
+        if (/[£$€]\s*$/u.test(before)) continue;
+        // Series/ordinal qualifier immediately before the digit ("part 2",
+        // "day 3", "no. 5") — the digit numbers the post, not the venues.
+        const prevToken = (before.match(/([\p{L}\p{M}'’.-]+)\s*$/u)?.[1] ?? '')
+            .replace(/[.‐-―-]+$/, '');
+        if (SERIES_TOKEN_RE.test(prevToken)) continue;
+        // Every gap token (the first of which is the token right after the
+        // digit) must be a plain word, not a unit/measure/rating token.
+        const gapTokens = (m[2] ?? '').split(/\s+/).filter(Boolean);
+        if (gapTokens.some((t) => UNIT_TOKEN_RE.test(t))) continue;
+
+        const n = parseInt(m[1], 10);
         const finite = Number.isFinite(n);
         return {
             isList: true,

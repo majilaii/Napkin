@@ -12,9 +12,13 @@
  */
 
 // Matches a hashtag token: # followed by word characters (letters, digits, underscore)
-const HASHTAG_RE = /#\w+/g;
+// TICKET-209: exported so the import fusion strips the SAME tokens this note
+// sanitizer does — never a second, drifting copy of these patterns. Both are
+// `g`-flagged: only use them with String.replace (which resets lastIndex) or
+// via `.source`; never call .test()/.exec() on them directly.
+export const HASHTAG_RE = /#\w+/g;
 // Matches a mention token: @ followed by word characters + dots/hyphens (handles)
-const MENTION_RE = /@[\w.−-]+/g;
+export const MENTION_RE = /@[\w.−-]+/g;
 
 export function captionToNote(caption: string): string {
     if (!caption || typeof caption !== 'string') return '';

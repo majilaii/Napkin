@@ -89,6 +89,10 @@ export interface ResolveUrlData {
     list_count_raw?: number | null;
     /** TICKET-195: candidates dropped by the import-only Places type backstop. */
     type_rejected?: number;
+    /** TICKET-209 follow-up: caption-derived cap that governed a video-text
+     * extraction (handleVideoText only). null = no cap fired; ABSENT = old
+     * server or a non-video-text response. Diagnostic only — never gate on it. */
+    caption_cap?: number | null;
 }
 
 export type ResolveUrlState = 'idle' | 'loading' | 'success' | 'error';

@@ -786,3 +786,160 @@ export function evaluateLegacySaveSunset(
     reject: belowFloor && enforcementRaw?.trim().toLowerCase() === "reject",
   };
 }
+
+// ── TICKET-209: caption authority + labeled video-text fusion ────────────────
+
+import { HASHTAG_RE, MENTION_RE } from "../_shared/captionToNote.ts";
+import { detectListMarker } from "../_shared/listicle.ts";
+import { LISTICLE_CANDIDATE_CAP } from "../_shared/visionExtract.ts";
+
+/** The caption section's own budget inside the fused window. */
+export const CAPTION_SECTION_CAP = 3000;
+/** Total fused-text window handed to the extractor (unchanged from TICKET-082). */
+export const VIDEO_FUSION_CAP = 8000;
+
+const VIDEO_TEXT_HEADER = "\n\n[video text]\n";
+
+/**
+ * Trailing hashtag/mention block, e.g. "…Casa Julián\n\n#sansebastian @topjaw".
+ * Composed from captionToNote's canonical token patterns — never a second copy.
+ * (Their `g` flag is dropped here: this regex is used with .replace on a fresh
+ * instance, so no lastIndex state is shared.)
+ */
+const TRAILING_TAG_BLOCK_RE = new RegExp(
+  `(?:\\s|${HASHTAG_RE.source}|${MENTION_RE.source})+$`,
+);
+
+/**
+ * Drop the trailing hashtag/mention spam so the caption BUDGET is spent on
+ * content. An enumerated listicle puts its venue names AFTER the preamble, so a
+ * naive tail cut would remove the ground truth this whole ticket depends on.
+ *
+ * A caption that is ONLY tags keeps its raw text: hashtags/handles carry the
+ * city signal Places needs ("#londonfood"), and dropping them entirely would
+ * lose a channel today's bare join preserves.
+ */
+export function stripTrailingTagBlock(caption: string): string {
+  const trimmed = caption.trim();
+  const stripped = trimmed.replace(TRAILING_TAG_BLOCK_RE, "").trim();
+  return stripped || trimmed;
+}
+
+export interface VideoFusion {
+  fullText: string;
+  /** True iff a NON-EMPTY [video text] section is actually painted. */
+  hasVideoText: boolean;
+}
+
+/**
+ * Fuse caption + on-device video text into ONE labeled document.
+ *
+ * ```
+ * [caption]
+ * <caption>
+ *
+ * [video text]
+ * <extracted_text>
+ * ```
+ *
+ * Budgeted PER SECTION, never join-then-slice: a huge caption used to evict the
+ * entire OCR channel — the very channel the caption-authority rule needs to
+ * split undelimited names. The [video text] header is emitted only when that
+ * section is non-empty, so the prompt never references a section that isn't
+ * painted and `hasVideoText` always agrees with what the model actually sees.
+ *
+ * No caption → today's bare join (byte-identical to the pre-209 behaviour).
+ */
+export function buildVideoFusion(
+  caption: string | null | undefined,
+  extractedText: string | null | undefined,
+): VideoFusion {
+  // typeof guards, not `?? ""`: the caption arrives straight off an untrusted
+  // JSON body, and a non-string used to be harmlessly dropped by filter(Boolean).
+  const videoText = typeof extractedText === "string" ? extractedText.trim() : "";
+  const rawCaption = typeof caption === "string" ? caption.trim() : "";
+  const captionText = rawCaption
+    ? stripTrailingTagBlock(rawCaption).slice(0, CAPTION_SECTION_CAP)
+    : "";
+
+  if (!captionText) {
+    const fullText = videoText.slice(0, VIDEO_FUSION_CAP);
+    return { fullText, hasVideoText: fullText.length > 0 };
+  }
+
+  const captionBlock = `[caption]\n${captionText}`;
+  const remaining = VIDEO_FUSION_CAP - captionBlock.length -
+    VIDEO_TEXT_HEADER.length;
+  if (!videoText || remaining <= 0) {
+    return { fullText: captionBlock, hasVideoText: false };
+  }
+  return {
+    fullText: `${captionBlock}${VIDEO_TEXT_HEADER}${
+      videoText.slice(0, remaining)
+    }`,
+    hasVideoText: true,
+  };
+}
+
+/**
+ * Captions that legitimately feature MORE venues than their headline count —
+ * "6 spots and 2 to avoid" must keep the warned tail the product deliberately
+ * surfaces. Any of these markers disables the caption cap entirely.
+ */
+const CAP_EXEMPTION_RE =
+  /\bbonus\b|\bplus\b|\+|honou?rable\s+mention|to\s+avoid|\bskip\b|and\s+\d+\s+(?:to\s+avoid|not)/i;
+
+/**
+ * The creator's OWN declared spot count, derived EXCLUSIVELY from the `caption`
+ * body field. Returns null when no legitimate ceiling exists.
+ *
+ * TICKET-204 distinction: a photo slide count is a transport artifact and must
+ * NEVER become a numeric ceiling. A caption count is different in kind — the
+ * creator states how many venues the post features — so it IS a legitimate
+ * ceiling. It is still refused when:
+ *  - the count came from anywhere but the caption body field (OCR text that
+ *    happens to read "TOP 10" is scene noise, and old clients send no caption);
+ *  - photo context is present (photo mode overrides the caller cap inside
+ *    visionExtract, so a caption cap would apply at dedupe only — incoherent);
+ *  - the count is outside [2, 12] (1 is a teaser, >12 exceeds the shared cap);
+ *  - the caption carries a bonus/exclusion marker.
+ */
+export function deriveCaptionCap(
+  caption: string | null | undefined,
+  hasPhotoContext: boolean,
+): number | null {
+  if (hasPhotoContext) return null;
+  const text = typeof caption === "string" ? caption.trim() : "";
+  if (!text) return null;
+  if (CAP_EXEMPTION_RE.test(text)) return null;
+  // Runs on the UNTRUNCATED caption body field — never the fused/budgeted text.
+  const countRaw = detectListMarker(text).countRaw;
+  if (countRaw === null || !Number.isInteger(countRaw)) return null;
+  if (countRaw < 2 || countRaw > LISTICLE_CANDIDATE_CAP) return null;
+  return Math.min(LISTICLE_CANDIDATE_CAP, countRaw);
+}
+
+/**
+ * TICKET-209 A.1 — does this body belong to the video-text route?
+ *
+ * `extracted_text` alone routed before; a caption-only body (all Instagram
+ * imports and every ASR-less TikTok, post-209) must route here too. But
+ * `caption` is a first-class MODIFIER on three live routes that sit AFTER this
+ * gate — the Instagram nudge, the vision/screenshot branch, and the URL
+ * pipeline — so the caption arm requires that neither `url` nor `image_path`
+ * was sent. The url/image predicates mirror the fall-through checks below the
+ * gate EXACTLY, so no body that reaches those routes today is hijacked.
+ */
+export function routesToVideoText(
+  body: Record<string, unknown> | null | undefined,
+): boolean {
+  const extractedText = typeof body?.extracted_text === "string"
+    ? body.extracted_text.trim()
+    : "";
+  if (extractedText) return true;
+  const caption = typeof body?.caption === "string" ? body.caption.trim() : "";
+  if (!caption) return false;
+  const hasUrl = typeof body?.url === "string" && !!body.url;
+  const hasImage = typeof body?.image_path === "string";
+  return !hasUrl && !hasImage;
+}

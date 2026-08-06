@@ -1,0 +1,21 @@
+{
+  "name": "instagram-caption-only",
+  "source_url": "(synthetic — Instagram Reel shape, TICKET-209)",
+  "notes": "TICKET-209: measures ONE-CHANNEL recall. Instagram never carries a platform transcript (instagramPerception's transcript is always ''), so after TICKET-209 every IG import whose video download flaked arrives as a caption-ONLY body: no [video text] section at all. This fixture is SYNTHETIC (a realistic IG caption shape, real Lisbon venues) — it exists to prove that the caption channel alone still yields full recall and that the video OCR noise block, which is suppressed when has_video_text is false, is not silently required for extraction to work. fail_on_extras is on: an enumerated caption is complete ground truth, and the trailing hashtag/mention block (stripped by buildVideoFusion before this text is built) must not reappear as venues.",
+  "fused_text": "[caption]\n5 Lisbon spots I still think about, in order: Taberna da Rua das Flores, Cervejaria Ramiro, O Velho Eurico, Prado, Sem Palavras. Save this for your next trip — the queue at Ramiro is worth it, go at 6pm.",
+  "cap": 5,
+  "context": {
+    "source_kind": "video",
+    "has_video_text": false,
+    "caption_cap": 5
+  },
+  "expected": [
+    { "name": "Taberna da Rua das Flores" },
+    { "name": "Cervejaria Ramiro" },
+    { "name": "O Velho Eurico" },
+    { "name": "Prado" },
+    { "name": "Sem Palavras" }
+  ],
+  "fail_on_extras": true,
+  "min_recall": 1
+}
