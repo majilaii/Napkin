@@ -1,4 +1,7 @@
 import { evaluateFastPath, isContentGate, type FastPathCandidate } from '../importFastPath';
+// The server's caption-count detector — imported directly so the fast-path
+// impact of TICKET-209's widened pattern is proven, not assumed.
+import { detectListMarker } from '../../../supabase/functions/_shared/listicle';
 
 // A fast-path-ELIGIBLE candidate: resolved to a real Place, high confidence,
 // recommended. Every gate test flips exactly one field so the FIRST failure is
@@ -242,5 +245,76 @@ describe('isContentGate — R3 content vs structural classification', () => {
         // Nor is a failed cheap-tier call (review-1 Codex-4: it fails OPEN into
         // the ladder and must never review-hold on its own).
         expect(isContentGate('cheap_error')).toBe(false);
+    });
+});
+
+// ── TICKET-209 fast-path impact ──────────────────────────────────────────────
+// detectListMarker now counts captions whose digit sits up to four words from
+// the list-noun. Those captions previously produced list_count_raw = null (the
+// count gate was a no-op) and could fast-path; they now advertise a real count,
+// so a short cheap tier escalates instead. That is the CORRECT direction — the
+// cost is one extra ladder run per such import. evaluateFastPath's gates are
+// deliberately untouched (TICKET-164/175 remain locked).
+
+describe('evaluateFastPath — newly countable captions (TICKET-209)', () => {
+    const REPRO_CAPTION =
+        '10 San Sebastián food spots that I LOVED last weekend: Casa Urola Bar ' +
+        'Txepetxa La Cuchara de San Telmo Akerbetlz Bar Sport El Patio de Simona ' +
+        'Casa Julián Gabarron Antonio Taberna';
+
+    it('the founder repro caption now advertises 10 → a 1-candidate cheap tier escalates', () => {
+        const listCountRaw = detectListMarker(REPRO_CAPTION).countRaw;
+        expect(listCountRaw).toBe(10);
+        expect(
+            evaluateFastPath({
+                provider: 'tiktok',
+                candidates: [ok()],
+                listCountRaw,
+                transcriptChars: 900,
+            }),
+        ).toBe('count_short');
+    });
+
+    it('"7 underrated Lisbon restaurants" on Instagram: short cheap tier escalates', () => {
+        const listCountRaw = detectListMarker(
+            '7 underrated Lisbon restaurants the tourists always walk past',
+        ).countRaw;
+        expect(listCountRaw).toBe(7);
+        expect(
+            evaluateFastPath({
+                provider: 'instagram',
+                candidates: [ok(), ok(), ok()],
+                listCountRaw,
+                transcriptChars: 0,
+            }),
+        ).toBe('count_short');
+    });
+
+    it('a duration caption stays uncounted → the count gate remains a no-op', () => {
+        const listCountRaw = detectListMarker('24 hours in NYC: best bites, no filler').countRaw;
+        expect(listCountRaw).toBeNull();
+        expect(
+            evaluateFastPath({
+                provider: 'tiktok',
+                candidates: [ok()],
+                listCountRaw,
+                transcriptChars: 0,
+            }),
+        ).toBe('pass');
+    });
+
+    it('a fully satisfied caption count still passes on Instagram (TICKET-164 gate intact)', () => {
+        const listCountRaw = detectListMarker(
+            '3 natural wine spots in Bermondsey worth the trek',
+        ).countRaw;
+        expect(listCountRaw).toBe(3);
+        expect(
+            evaluateFastPath({
+                provider: 'instagram',
+                candidates: [ok(), ok(), ok()],
+                listCountRaw,
+                transcriptChars: 0,
+            }),
+        ).toBe('pass');
     });
 });

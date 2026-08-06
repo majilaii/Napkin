@@ -72,6 +72,7 @@ import {
     type ImportDestinationTarget,
 } from '@/lib/importProtocol';
 import { evaluateFastPath, isContentGate } from '@/lib/importFastPath';
+import { buildVideoTextResolveBody } from '@/lib/importResolveBody';
 import {
     allowsGenericUrlFallback,
     capPhotoImportCandidates,
@@ -866,6 +867,18 @@ export function useProcessImportQueue() {
                     // by design and returns zero candidates, so without this an
                     // IG share died instantly.
                     let extractedText: string | null = null;
+                    // TICKET-209: the caption now rides as its own `caption`
+                    // field, so BOTH consumers below (the escalation resolve and
+                    // the R5 recovery guard) need the channels the refresh may
+                    // have recovered. They used to be consts INSIDE the refresh
+                    // branch; re-deriving from the `desc`/`transcript` consts at
+                    // the consumer would drop a channel the retry rescued.
+                    let mergedDesc = '';
+                    let mergedTranscript = '';
+                    // Photo-mode marker, hoisted for the same reason: the photo
+                    // path must stay byte-identical (no caption field, and its
+                    // zero-slide degenerate case keeps the {url} tier).
+                    let photoPost = false;
                     const provider = isTikTokUrl(m.url)
                         ? 'tiktok'
                         : isInstagramUrl(m.url)
@@ -903,6 +916,7 @@ export function useProcessImportQueue() {
                         // blob shape.
                         const isPhotoPost =
                             (perception as { isPhotoPost?: boolean })?.isPhotoPost === true;
+                        photoPost = isPhotoPost;
 
                         // ── TICKET-164 FAST PATH: caption + platform-ASR text ONLY ──
                         // Resolve the cheap tier (NO video download) and auto-save iff
@@ -912,6 +926,8 @@ export function useProcessImportQueue() {
                         // uncertain ⇒ escalate to today's download → OCR → STT ladder.
                         const desc = (perception as { desc?: string })?.desc ?? '';
                         const transcript = (perception as { transcript?: string })?.transcript ?? '';
+                        mergedDesc = desc;
+                        mergedTranscript = transcript;
                         if (!isPhotoPost && (desc || transcript)) {
                             cheapTierRan = true;
                             // TICKET-180 stage 5/6: resolving candidates against text.
@@ -927,9 +943,17 @@ export function useProcessImportQueue() {
                                 cheap = await callImportResolveUrl<ResolveUrlData>(
                                     m,
                                     undefined,
+                                    // TICKET-209: the no-transcript arm (ALL
+                                    // Instagram, every ASR-less TikTok) now
+                                    // sends the desc as `caption`, not as
+                                    // `extracted_text` — without this the
+                                    // caption authority rule and the
+                                    // caption-derived cap are unreachable
+                                    // exactly where the caption is most
+                                    // reliable.
                                     transcript
                                         ? { caption: desc || undefined, extracted_text: transcript }
-                                        : { extracted_text: desc },
+                                        : { caption: desc },
                                 );
                             } catch (err) {
                                 if (isSessionError(err) || isTransientError(err)) throw err;
@@ -1103,8 +1127,8 @@ export function useProcessImportQueue() {
                                             // tier never saw counts as R3 evidence
                                             // (string inequality read channel loss /
                                             // whitespace drift as "new evidence").
-                                            const mergedDesc = refreshed.desc || desc;
-                                            const mergedTranscript =
+                                            mergedDesc = refreshed.desc || desc;
+                                            mergedTranscript =
                                                 refreshed.transcript || transcript;
                                             if (
                                                 (refreshed.desc && !desc) ||
@@ -1165,9 +1189,16 @@ export function useProcessImportQueue() {
                             // so slide_count and the prompt's boundaries stay aligned.
                             // A zero-candidate photo-aware pass stays empty rather than
                             // retrying through a generic prompt. Videos are unaffected.
+                            // TICKET-209: the DESC no longer rides inside
+                            // extracted_text — it is sent as `caption` so the
+                            // server can label it, budget it, and read a real
+                            // spot count off it. extracted_text is now purely
+                            // the perception channels (OCR + on-device/platform
+                            // transcript). The photo branch is untouched:
+                            // fusePhotoSlideText already labels its [caption].
                             extractedText = isPhotoPost
                                 ? ocrText
-                                : [ocrText, latestPageText]
+                                : [ocrText, mergedTranscript]
                                     .filter(Boolean)
                                     .join('\n')
                                     .trim() || null;
@@ -1239,21 +1270,19 @@ export function useProcessImportQueue() {
                         // Maps list over the sync cap ENUMERATES (no Places call) instead
                         // of truncating at 20. Harmless for non-maps urls (server ignores
                         // the flag below the cap / for non-list sources).
+                        // TICKET-209: caption as a first-class field; a
+                        // caption-ONLY body when no perception text survived.
+                        const { body: resolveBody, sentVideoTextResolve } =
+                            buildVideoTextResolveBody({
+                                extractedText,
+                                mergedDesc,
+                                photoImportContext,
+                                photoPost,
+                                url: m.url as string,
+                            });
                         const resolved = await callImportResolveUrl<
                             ResolveUrlData & Partial<LargeListEnumeration>
-                        >(
-                            m,
-                            undefined,
-                            extractedText
-                                ? {
-                                    extracted_text: extractedText,
-                                    ...(photoImportContext ?? {}),
-                                }
-                                : {
-                                    url: m.url,
-                                    supports_large_lists: true,
-                                },
-                        );
+                        >(m, undefined, resolveBody);
                         mergeTypeRejected(resolved);
                         // A large Maps list → build the durable job + HOLD for the kickoff
                         // sheet. Feature-detect on `mode` (never a version): an old server
@@ -1290,9 +1319,13 @@ export function useProcessImportQueue() {
                         // drift) may fall back: the server's url tier adds oEmbed +
                         // thumbnail vision the client never had. A photo-aware pass
                         // may not: the generic tier lacks its scene-noise rules.
+                        // TICKET-209: guard on "we sent a video-text body", not
+                        // on extractedText — a caption-only body has no
+                        // extracted_text, and gating on it would silently kill
+                        // this recovery tier for a failed-download TikTok.
                         if (
                             candidates.length === 0 &&
-                            extractedText &&
+                            sentVideoTextResolve &&
                             provider !== 'instagram' &&
                             allowsGenericUrlFallback(photoImportContext) &&
                             !(cheapTierRan && downloadOk)
