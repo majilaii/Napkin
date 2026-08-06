@@ -41,9 +41,10 @@
     "check:typography": "node scripts/check-typography.mjs",
     "check:route-tree": "node scripts/check-route-tree.mjs",
     "test:functions": "~/.deno/bin/deno test --allow-env supabase/functions/",
+    "test:eval": "~/.deno/bin/deno test --allow-env --allow-read scripts/eval/extraction/",
     "eval:extraction": "~/.deno/bin/deno run --allow-env --allow-read --allow-net=api.anthropic.com scripts/eval/extraction/run.ts",
     "test:app": "cd napkin-app && npm test",
-    "test": "npm run test:functions && npm run test:app",
+    "test": "npm run test:functions && npm run test:eval && npm run test:app",
     "lint": "npm run check:typography && cd napkin-app && npm run lint",
     "lint:fix": "cd napkin-app && npm run lint -- --fix",
     "prepare": "husky"

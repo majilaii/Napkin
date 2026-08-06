@@ -2,8 +2,9 @@
  * Extraction regression eval (TICKET-086c).
  *
  * Replays checked-in FUSED PERCEPTION TEXT fixtures (caption + on-device OCR
- * lines + ASR transcript — exactly what the client ships as `extracted_text`)
- * through the real server extractor (extractFromTextMulti) and scores recall /
+ * lines + ASR transcript — exactly what the client ships as `extracted_text`,
+ * post-TICKET-209 in its labeled `[caption]` / `[video text]` sections) through
+ * the real server extractor (extractFromTextMulti) and scores recall /
  * forbidden-name violations. No videos needed in the corpus; a bad real-world
  * import becomes a fixture by copying `raw_text` out of extraction_cache.
  *
@@ -13,59 +14,36 @@
  *
  * Skips green when no key is set (safe for CI / pre-commit shells).
  * Deliberately OUTSIDE supabase/functions/ — the pre-commit deno pass runs
- * without --allow-net and must never hit the Anthropic API.
+ * without --allow-net and must never hit the Anthropic API. The scoring rules
+ * live in score.ts (pure, unit-tested by score.test.ts).
  *
  * Fixture schema (fixtures/*.json):
  *   {
  *     "name": string, "source_url": string, "notes": string,
  *     "fused_text": string, "cap": number,
+ *     "context": {                                          // optional, TICKET-209
+ *       "source_kind": "video" | "photo",
+ *       "has_video_text"?: boolean, "caption_cap"?: number | null,  // video
+ *       "slide_count"?: number                                      // photo
+ *     },
  *     "expected":  [{ "name": string, "area"?: string }],   // must be extracted
  *     "optional":  [{ "name": string }],                    // fine either way
  *     "forbidden": [{ "name": string, "why": string,
  *                     "allow_if_warned"?: boolean }],       // must be absent
  *                     // (or extracted with stance 'warned' when allowed)
+ *     "fail_on_extras": boolean,                            // TICKET-209
  *     "min_recall": number                                  // 0..1
  *   }
+ *
+ * TICKET-209: `fail_on_extras` promotes ANY unlisted candidate to a violation.
+ * Named `forbidden` entries only catch hallucinations we already predicted; an
+ * over-detection nobody anticipated (the exact bug this ticket fixes) used to
+ * print as a harmless "extras:" line and still PASS. `context` replays the real
+ * extraction context so a fixture exercises the prompt block the server would
+ * actually have sent.
  */
 import { extractFromTextMulti } from '../../../supabase/functions/_shared/visionExtract.ts';
-
-interface FixtureSpot { name: string; area?: string }
-interface ForbiddenSpot { name: string; why: string; allow_if_warned?: boolean }
-interface Fixture {
-    name: string;
-    source_url: string;
-    notes?: string;
-    fused_text: string;
-    cap: number;
-    expected: FixtureSpot[];
-    optional?: FixtureSpot[];
-    forbidden?: ForbiddenSpot[];
-    min_recall: number;
-}
-
-function normalize(name: string): string {
-    return name
-        .normalize('NFD')
-        .replace(/[̀-ͯ]/g, '')
-        .toLowerCase()
-        .replace(/[^\w\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/^the /, '');
-}
-
-/** Fuzzy name match: equality, or every token of the shorter name in the longer. */
-function namesMatch(a: string, b: string): boolean {
-    const na = normalize(a);
-    const nb = normalize(b);
-    if (!na || !nb) return false;
-    if (na === nb) return true;
-    const ta = na.split(' ');
-    const tb = nb.split(' ');
-    const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
-    const longSet = new Set(long);
-    return short.every((t) => longSet.has(t));
-}
+import { type Fixture, scoreFixture, toExtractionContext } from './score.ts';
 
 if (!Deno.env.get('ANTHROPIC_API_KEY')) {
     console.log('eval:extraction — ANTHROPIC_API_KEY not set, skipping (export it to run).');
@@ -87,33 +65,13 @@ console.log(`eval:extraction — ${fixtures.length} fixtures, model ${model}\n`)
 let failed = false;
 
 for (const f of fixtures) {
-    const candidates = await extractFromTextMulti(f.fused_text, undefined, f.cap);
-    const names = candidates.map((c) => c.name ?? '');
-
-    const hits: string[] = [];
-    const misses: string[] = [];
-    for (const exp of f.expected) {
-        if (names.some((n) => namesMatch(n, exp.name))) hits.push(exp.name);
-        else misses.push(exp.name);
-    }
-
-    const knowns = [...f.expected, ...(f.optional ?? []), ...(f.forbidden ?? [])];
-    const extras = candidates.filter(
-        (c) => c.name && !knowns.some((k) => namesMatch(c.name!, k.name)),
+    const candidates = await extractFromTextMulti(
+        f.fused_text,
+        undefined,
+        f.cap,
+        toExtractionContext(f.context),
     );
-
-    const violations: string[] = [];
-    for (const fb of f.forbidden ?? []) {
-        const match = candidates.find((c) => c.name && namesMatch(c.name, fb.name));
-        if (!match) continue;
-        if (fb.allow_if_warned && match.stance === 'warned') continue;
-        violations.push(
-            `${fb.name} (${fb.why}) extracted${fb.allow_if_warned ? ` with stance '${match.stance ?? 'none'}'` : ''}`,
-        );
-    }
-
-    const recall = f.expected.length === 0 ? 1 : hits.length / f.expected.length;
-    const pass = recall >= f.min_recall && violations.length === 0;
+    const { pass, hits, misses, extras, violations } = scoreFixture(f, candidates);
     if (!pass) failed = true;
 
     console.log(`${pass ? 'PASS' : 'FAIL'}  ${f.name}`);
