@@ -26,6 +26,23 @@ export interface ListMarkerResult {
 }
 
 /**
+ * TICKET-209 pattern 2: `N` + up to four intervening words + a list-noun.
+ *
+ * `u` is load-bearing: the gap class uses \p{L}/\p{M} so accented city names
+ * ("San Sebastián") count as ordinary words. `\p{L}` is inert without `u`.
+ * Group 1 = the digits, group 2 = the (possibly empty) intervening words.
+ */
+const N_LIST_RE =
+    /\b(\d+)\s+((?:[\p{L}\p{M}'’-]+\s+){0,4})(?:best|spots?|places?|restaurants?|must(?:\s+try)?|favou?rites?)\b/giu;
+
+/**
+ * Units of time/distance/percentage. A digit qualifying one of these is a
+ * duration or a measure, never an advertised spot count.
+ */
+const UNIT_TOKEN_RE =
+    /^(?:days?|nights?|hours?|hrs?|mins?|minutes?|weeks?|months?|years?|km|miles?|%)$/iu;
+
+/**
  * Detect a listicle marker in text.
  * Returns isList=true and count=N when the text mentions "top N" / "N best spots"
  * or has at least 2 numbered lines (1. … 2. …).
@@ -49,10 +66,28 @@ export function detectListMarker(text: string): ListMarkerResult {
         };
     }
 
-    // Pattern 2: "N best/spots/places/restaurants/must/favourites"
-    const nBestMatch = trimmed.match(/\b(\d+)\s+(?:best|spots?|places?|restaurants?|must(?:\s+try)?|favou?rites?)\b/i);
-    if (nBestMatch) {
-        const n = parseInt(nBestMatch[1], 10);
+    // Pattern 2: "N [up to 4 words] best/spots/places/restaurants/must/favourites"
+    // TICKET-209: the digit no longer has to sit adjacent to the list-noun —
+    // "10 San Sebastián food spots", "7 underrated Lisbon restaurants". Two
+    // guards keep the widened gap from reading a DURATION as a spot count:
+    //   - unit/measure blocklist on every token in the gap (which includes the
+    //     token immediately after the digit): "3 days in Lisbon spots" → 3 would
+    //     truncate a 10-spot video to 3.
+    //   - currency prefix: "£10 spots in London" is a price, not a count.
+    // A rejected match NEVER nulls the whole caption — scanning continues so a
+    // mixed caption stays countable ("24 hours in NYC: 8 spots you need" → 8).
+    N_LIST_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = N_LIST_RE.exec(trimmed)) !== null) {
+        // Currency-prefixed digits are prices, never counts.
+        const prevChar = m.index > 0 ? trimmed[m.index - 1] : '';
+        if (prevChar === '£' || prevChar === '$' || prevChar === '€') continue;
+        // Every gap token (the first of which is the token right after the
+        // digit) must be a plain word, not a unit of time/distance.
+        const gapTokens = (m[2] ?? '').split(/\s+/).filter(Boolean);
+        if (gapTokens.some((t) => UNIT_TOKEN_RE.test(t))) continue;
+
+        const n = parseInt(m[1], 10);
         const finite = Number.isFinite(n);
         return {
             isList: true,

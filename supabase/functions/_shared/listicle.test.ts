@@ -165,3 +165,74 @@ Deno.test('7 numbered lines → count clamps to 6, countRaw=7', () => {
     assertEquals(result.count, 6);
     assertEquals(result.countRaw, 7);
 });
+
+// ── TICKET-209 Decision D — gapped "N … list-noun" + measure guards ───────────
+// Full realistic captions, not fragments: the founder repro is an enumerated
+// caption whose digit sits three words away from the list-noun.
+
+Deno.test('repro caption (@topjaw San Sebastián) → isList=true, countRaw=10', () => {
+    const result = detectListMarker(
+        '10 San Sebastián food spots that I LOVED last weekend: Casa Urola Bar ' +
+            'Txepetxa La Cuchara de San Telmo Akerbetlz Bar Sport El Patio de ' +
+            'Simona Casa Julián Gabarron Antonio Taberna',
+    );
+    assertEquals(result.isList, true);
+    assertEquals(result.countRaw, 10);
+    assertEquals(result.count, 6); // legacy clamp untouched
+});
+
+Deno.test('"7 underrated Lisbon restaurants" → countRaw=7 (2-word gap)', () => {
+    const result = detectListMarker(
+        '7 underrated Lisbon restaurants the tourists always walk straight past',
+    );
+    assertEquals(result.isList, true);
+    assertEquals(result.countRaw, 7);
+});
+
+Deno.test('duration caption "3 days in Lisbon: the spots I ate" → null', () => {
+    const result = detectListMarker('3 days in Lisbon: the spots I ate my way through');
+    assertEquals(result.isList, false);
+    assertEquals(result.countRaw, null);
+});
+
+Deno.test('duration caption "2 days in Rome — best pasta" → null', () => {
+    const result = detectListMarker('2 days in Rome — best pasta of my life honestly');
+    assertEquals(result.isList, false);
+    assertEquals(result.countRaw, null);
+});
+
+Deno.test('"24 hours in NYC: best bites" → null (a duration, not a count)', () => {
+    const result = detectListMarker('24 hours in NYC: best bites, no filler');
+    assertEquals(result.isList, false);
+    assertEquals(result.countRaw, null);
+});
+
+Deno.test('"3 days of spots" → null (unit token adjacent to the digit)', () => {
+    const result = detectListMarker('3 days of spots in Copenhagen, all walkable');
+    assertEquals(result.isList, false);
+    assertEquals(result.countRaw, null);
+});
+
+Deno.test('currency-prefixed digit "£10 spots in London" → null', () => {
+    const result = detectListMarker('£10 spots in London that still feel special');
+    assertEquals(result.isList, false);
+    assertEquals(result.countRaw, null);
+});
+
+Deno.test('mixed caption "24 hours in NYC: 8 spots you need" → countRaw=8 (kept scanning)', () => {
+    const result = detectListMarker('24 hours in NYC: 8 spots you need to eat at');
+    assertEquals(result.isList, true);
+    assertEquals(result.countRaw, 8);
+});
+
+Deno.test('mixed caption "12 hours of eating — 7 spots" → countRaw=7 (kept scanning)', () => {
+    const result = detectListMarker('12 hours of eating in Paris — 7 spots, one day');
+    assertEquals(result.isList, true);
+    assertEquals(result.countRaw, 7);
+});
+
+Deno.test('measure reject does not null a later valid marker after a price', () => {
+    const result = detectListMarker('£20 spots? nah. 5 best places under a tenner');
+    assertEquals(result.isList, true);
+    assertEquals(result.countRaw, 5);
+});
