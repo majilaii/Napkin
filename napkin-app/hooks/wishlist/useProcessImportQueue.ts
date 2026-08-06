@@ -829,6 +829,11 @@ export function useProcessImportQueue() {
                     ? Math.max(0, Math.floor(m.diag.type_rejected))
                     : 0;
             let channelDiagnostics: Record<string, unknown> | null = null;
+            // TICKET-209 follow-up: cap from the LAST video-text resolve that
+            // answered (undefined = none ran / old server) — rides the final
+            // manifest diag so "did the caption cap fire?" is answerable from
+            // prod without a local repro.
+            let captionCap: number | null | undefined;
             const mergeTypeRejected = (data: Pick<ResolveUrlData, 'type_rejected'> | null) => {
                 const count = data?.type_rejected;
                 if (typeof count !== 'number' || !Number.isFinite(count)) return;
@@ -961,6 +966,7 @@ export function useProcessImportQueue() {
                             }
                             if (cheap) {
                                 mergeTypeRejected(cheap);
+                                captionCap = cheap.caption_cap;
                                 const cheapCandidates = cheap.candidates ?? [];
                                 fastPathGate = evaluateFastPath({
                                     provider,
@@ -1284,6 +1290,7 @@ export function useProcessImportQueue() {
                             ResolveUrlData & Partial<LargeListEnumeration>
                         >(m, undefined, resolveBody);
                         mergeTypeRejected(resolved);
+                        captionCap = resolved?.caption_cap;
                         // A large Maps list → build the durable job + HOLD for the kickoff
                         // sheet. Feature-detect on `mode` (never a version): an old server
                         // or a ≤20 list returns normal candidates and falls through to
@@ -1380,6 +1387,7 @@ export function useProcessImportQueue() {
                         { extracted_text: extractedText },
                     );
                     mergeTypeRejected(resolved);
+                    captionCap = resolved?.caption_cap;
                     candidates = resolved?.candidates ?? [];
                 }
 
@@ -1396,6 +1404,9 @@ export function useProcessImportQueue() {
                     ...(channelDiagnostics ?? {}),
                     slide_count: photoSlideCount,
                     type_rejected: typeRejected,
+                    // ABSENT (old server / no video-text resolve ran) is meaningful
+                    // — mirror list_count_raw's convention, never write null for it.
+                    ...(captionCap !== undefined ? { caption_cap: captionCap } : {}),
                 };
                 console.log('[import] channels', JSON.stringify(finalDiagnostics));
                 setImportDiagnostics(m.jobId, finalDiagnostics);

@@ -235,6 +235,13 @@ interface ResolveUrlResponse {
    * no marker found → the count gate passes. Only handleVideoText emits it.
    */
   list_count_raw?: number | null;
+  /**
+   * TICKET-209 follow-up: the caption-derived candidate ceiling that governed
+   * this extraction (null = no cap fired; the shared 12 applied). Additive +
+   * diagnostic only — old clients ignore it, callers must never gate on it.
+   * Only handleVideoText emits it.
+   */
+  caption_cap?: number | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -3644,6 +3651,7 @@ async function handleVideoText(
         list_count: listMarker.count,
         list_count_raw: listCountRaw,
         type_rejected: 0,
+        caption_cap: captionCap,
       } satisfies ResolveUrlResponse,
     });
   }
@@ -3798,6 +3806,7 @@ async function handleVideoText(
       list_count: listMarker.count,
       list_count_raw: listCountRaw,
       type_rejected: typeRejectedCount,
+      caption_cap: captionCap,
     } satisfies ResolveUrlResponse,
   });
 }
