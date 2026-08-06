@@ -406,3 +406,151 @@ Deno.test('extractFromTextMulti: five-slide scene carousel retains at-most-one-p
         else Deno.env.set('ANTHROPIC_API_KEY', originalKey);
     }
 });
+
+// ── TICKET-209: zero-context prompt is a FROZEN contract ─────────────────────
+// The non-photo/non-video branch of buildMultiSystemPrompt is the shared default
+// MULTI_SYSTEM_PROMPT used by the oEmbed caption tier, the thumbnail vision tier
+// and the async screenshot path. Those tiers' caches (hashTextSource / image
+// hash) carry NO contract token, so a wording change there would silently serve
+// stale rows forever. Every new prompt clause must be gated behind an explicit
+// extraction context; this snapshot is the guard.
+const ZERO_CONTEXT_PROMPT_SNAPSHOT = `You are a restaurant extraction assistant. Given an image and/or text, extract ALL distinct restaurants mentioned or visible.
+Respond with ONLY a JSON array — no prose, no markdown, no wrapper object. Each element matches this schema:
+{
+  "name": string | null,
+  "city": string | null,
+  "city_inferred": boolean,
+  "area": string | null,
+  "cuisine": string | null,
+  "address": string | null,
+  "booking_url": string | null,
+  "hours": string | null,
+  "confidence": "high" | "low",
+  "stance": "recommended" | "warned" | "neutral",
+  "google_place_id": string | null
+}
+
+The text often combines TWO noisy channels from a food video:
+- on-screen OCR fragments — the creator's own overlays, usually "Name, Area"
+  with correct spelling ("Cinder, Belsize Park"), mixed with menu/sign noise
+- an automatic speech-recognition (ASR) transcript — proper nouns get garbled
+  ("the pickle ring" for "The Picklery"; "Lucky. Enjoy." for "Lucky & Joy";
+  "Lang Zhou noodles" for "Lanzhou Lamian Noodle Bar")
+
+Interview/Q&A videos overlay a QUESTION ("BEST PUB?", "MOST OVERRATED SPOT IN
+LONDON?") immediately before the answer's "Name, Area" overlay — pair each name
+with the question that precedes it; the question sets that place's stance.
+
+Rules:
+- stance: "warned" when the place is the answer to a negative question or the
+  speaker warns against it ("most overrated?", "skip it", "don't bother",
+  "worst") — STILL extract these, never omit them. "recommended" when endorsed
+  (praise, any "best X" answer). "neutral" for passing mentions and comparisons
+  ("is it a bit like Berenjak?" → Berenjak is neutral).
+- Watermarks: a short token recurring through the text in garbled variants
+  ("PICANTE", "PICAN", "PICA", "PICANTI") is on-screen channel branding, NOT a
+  restaurant — ignore it unless it also appears with an area tag or a spoken
+  endorsement.
+- Extract EVERY distinct restaurant visible or mentioned. Do NOT collapse multiple restaurants into one.
+- When the two channels describe the same place, they are ONE restaurant: prefer
+  the OCR spelling ("Name, Area" patterns with proper capitalization) for the
+  name; use the spoken context for cuisine/city hints.
+- Reconstruct ASR-garbled names to the most plausible REAL restaurant name;
+  use surrounding clues (dishes, comparisons, area) to denoise. If you cannot
+  confidently reconstruct, keep the garbled name verbatim with confidence "low"
+  — never invent a restaurant that isn't grounded in the text.
+- area: the neighborhood/district if given ("Dalston", "Belsize Park", "Brixton",
+  a UK postcode district like "E11") — distinct from city. Null when absent.
+- confidence "high": you are reasonably certain of the restaurant name AND city.
+- confidence "low": name is uncertain, or city cannot be determined even by inference.
+- city: include the city name when known OR inferable. If the caption/title/hashtags signal a city (e.g. "#londonfood", "@nycfoodie", "my faves in soho"), use that city and set city_inferred=true.
+- city_inferred: set true when you inferred the city from context clues (hashtags, handle, phrases like "in soho", "my nyc picks") rather than an explicit label. Set false when the city is stated outright.
+- booking_url: only if explicitly visible (Resy, OpenTable URL). Otherwise null.
+- google_place_id: only if a Google Maps place_id is visible. Otherwise null.
+- If no restaurant is identifiable, return an empty array: []
+- Cap at 6 restaurants. If more are present, include only the first 6 mentioned.
+- Output ONLY the JSON array. No explanation. No markdown fences.`;
+
+
+Deno.test('buildMultiSystemPrompt: zero-context prompt is byte-identical to the frozen snapshot', async () => {
+    const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
+    assertEquals(buildMultiSystemPrompt(6), ZERO_CONTEXT_PROMPT_SNAPSHOT);
+});
+
+Deno.test('buildMultiSystemPrompt: no context carries neither the video nor the photo block', async () => {
+    const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
+    for (const cap of [6, 12]) {
+        const prompt = buildMultiSystemPrompt(cap);
+        assertEquals(prompt.includes('VIDEO IMPORT MODE'), false);
+        assertEquals(prompt.includes('PHOTO CAROUSEL MODE'), false);
+        assertEquals(prompt.includes('exhaustive and authoritative'), false);
+        assertEquals(prompt.includes('do not return more than'), false);
+    }
+});
+
+// ── TICKET-209 Decision C — gated video blocks ───────────────────────────────
+
+Deno.test('buildMultiSystemPrompt: video + video text → noise block AND authority rule', async () => {
+    const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
+    const prompt = buildMultiSystemPrompt(12, {
+        sourceKind: 'video',
+        hasVideoText: true,
+        captionCap: null,
+    });
+
+    assertStringIncludes(prompt, 'VIDEO IMPORT MODE');
+    assertStringIncludes(prompt, 'inside the [video text] section are scene');
+    assertStringIncludes(prompt, 'subtitles of');
+    assertStringIncludes(prompt, 'channel watermarks');
+    assertStringIncludes(prompt, 'exhaustive and authoritative');
+    assertStringIncludes(prompt, 'in caption order');
+    assertStringIncludes(prompt, 'split undelimited names');
+    assertStringIncludes(prompt, 'NOT enumerating');
+    assertStringIncludes(prompt, 'Cap at 12 restaurants');
+    // No caption cap → no count sentence.
+    assertEquals(prompt.includes('do not return more than'), false);
+    assertEquals(prompt.includes('PHOTO CAROUSEL MODE'), false);
+});
+
+Deno.test('buildMultiSystemPrompt: caption-only video (no video text) drops the OCR noise block, keeps authority', async () => {
+    const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
+    const prompt = buildMultiSystemPrompt(12, {
+        sourceKind: 'video',
+        hasVideoText: false,
+        captionCap: null,
+    });
+
+    assertStringIncludes(prompt, 'VIDEO IMPORT MODE');
+    assertStringIncludes(prompt, 'exhaustive and authoritative');
+    // 100% of Instagram imports and every ASR-less TikTok land here: a noise
+    // block written for a fused OCR channel must not suppress the ONE channel
+    // those requests actually carry.
+    assertEquals(prompt.includes('[video text] section are scene'), false);
+    assertEquals(prompt.includes('incidental scene text, OMIT it'), false);
+});
+
+Deno.test('buildMultiSystemPrompt: caption cap adds the count sentence and the numeric cap', async () => {
+    const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
+    const prompt = buildMultiSystemPrompt(10, {
+        sourceKind: 'video',
+        hasVideoText: true,
+        captionCap: 10,
+    });
+
+    assertStringIncludes(
+        prompt,
+        'The caption states this video features 10 venues — do not return more than 10.',
+    );
+    assertStringIncludes(prompt, 'Cap at 10 restaurants');
+    assertEquals(prompt.includes('Cap at 12 restaurants'), false);
+});
+
+Deno.test('buildMultiSystemPrompt: photo block gains the caption authority rule (photo cache bumped to g2)', async () => {
+    const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
+    const prompt = buildMultiSystemPrompt(12, { sourceKind: 'photo', slideCount: 5 });
+
+    assertStringIncludes(prompt, 'PHOTO CAROUSEL MODE');
+    assertStringIncludes(prompt, 'exhaustive and authoritative');
+    // The video block never rides along with a photo carousel.
+    assertEquals(prompt.includes('VIDEO IMPORT MODE'), false);
+});

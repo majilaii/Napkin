@@ -77,6 +77,27 @@ export interface PhotoExtractionContext {
     slideCount: number;
 }
 
+/**
+ * TICKET-209 — context for the on-device video/caption tier.
+ *
+ * `hasVideoText`: a non-empty `[video text]` section is actually painted in the
+ * fused text. Instagram (no platform ASR) and ASR-less TikToks send
+ * caption-ONLY bodies; a noise block written for a fused OCR channel must never
+ * suppress the one authoritative channel on those requests.
+ *
+ * `captionCap`: the creator's OWN declared spot count, sourced exclusively from
+ * the caption body field. Unlike a photo slide count (a transport artifact that
+ * must never become a ceiling — TICKET-204), a caption count is a legitimate
+ * numeric ceiling. null = no valid caption count; the shared 12 cap applies.
+ */
+export interface VideoExtractionContext {
+    sourceKind: 'video';
+    hasVideoText: boolean;
+    captionCap: number | null;
+}
+
+export type ExtractionContext = PhotoExtractionContext | VideoExtractionContext;
+
 /** Shared numeric ceiling for video and photo listicles. */
 export const LISTICLE_CANDIDATE_CAP = 12;
 
@@ -93,7 +114,7 @@ const MAX_PHOTO_SLIDE_COUNT = 12;
  *   2. Infer city from hashtags/handle/context when explicit city is absent
  *   3. Return a top-level JSON array, one object per restaurant
  */
-export function validPhotoSlideCount(context?: PhotoExtractionContext): number | null {
+export function validPhotoSlideCount(context?: ExtractionContext): number | null {
     if (
         context?.sourceKind !== 'photo' ||
         !Number.isFinite(context.slideCount) ||
@@ -106,12 +127,59 @@ export function validPhotoSlideCount(context?: PhotoExtractionContext): number |
     return context.slideCount;
 }
 
+/**
+ * TICKET-209 — caption authority. Shared verbatim by the photo and video blocks.
+ *
+ * Worded on caption CONTENT, never on section presence: fusePhotoSlideText
+ * always emits a `[caption]` line (empty or not), so "there is a caption
+ * section" proves nothing. A caption that merely teases a count is not a list.
+ */
+const CAPTION_AUTHORITY_RULE =
+    `- If the [caption] text explicitly enumerates the featured venues (e.g. "N
+  spots …: A, B, C"), that list is exhaustive and authoritative — extract
+  exactly those venues, in caption order; use the other channels only to fix
+  spelling, split undelimited names (an enumerated caption may run the names
+  together with no commas), or fill area/city/cuisine. Do NOT add venues absent
+  from the caption's list. A caption that only teases a count without naming
+  venues is NOT enumerating.`;
+
+/**
+ * TICKET-209 — video OCR noise rules. Gated on an actually-painted
+ * `[video text]` section; every clause names that section explicitly so a
+ * caption-only request can never read them as suppressing the caption.
+ */
+const VIDEO_NOISE_RULES =
+    `- Menu items, dish names, prices, street/storefront signage, subtitles of
+  speech, and channel watermarks inside the [video text] section are scene
+  noise, NOT recommendations. Do not extract them merely because they look
+  name-shaped or belong to a real place in the same city.
+- Extract a venue from the [video text] section only when the creator presents
+  it as a featured spot: the "Name, Area" overlay grammar, or a name that also
+  appears in the [caption] or is spoken as an endorsement.
+- When unsure whether a string in the [video text] section is a creator
+  recommendation or incidental scene text, OMIT it. Do not emit a
+  low-confidence candidate for ambiguous scene text.`;
+
 export function buildMultiSystemPrompt(
     cap: number,
-    context?: PhotoExtractionContext,
+    context?: ExtractionContext,
 ): string {
     const photoSlideCount = validPhotoSlideCount(context);
     const effectiveCap = photoSlideCount === null ? cap : LISTICLE_CANDIDATE_CAP;
+    const videoContext = context?.sourceKind === 'video' ? context : null;
+    // Every clause below is gated behind an explicit extraction context: the
+    // zero-context prompt is the shared default used by the oEmbed caption tier,
+    // the thumbnail vision tier and the async screenshot path, whose caches
+    // carry no contract token. It MUST stay byte-identical (snapshot test).
+    const videoModeBlock = videoContext === null ? '' : `
+
+VIDEO IMPORT MODE — these rules OVERRIDE the general recall rules above:${
+        videoContext.hasVideoText ? `\n${VIDEO_NOISE_RULES}` : ''
+    }
+${CAPTION_AUTHORITY_RULE}${
+        videoContext.captionCap === null ? '' : `
+- The caption states this video features ${videoContext.captionCap} venues — do not return more than ${videoContext.captionCap}.`
+    }`;
     const photoModeBlock = photoSlideCount === null
         ? ''
         : `
@@ -127,7 +195,8 @@ PHOTO CAROUSEL MODE — these rules OVERRIDE the video/general recall rules abov
 - Return AT MOST ONE venue per slide unless that slide's overlay or the [caption]
   explicitly lists multiple venue recommendations.
 - When unsure whether a string is a creator recommendation or incidental scene
-  text, OMIT it. Do not emit a low-confidence candidate for ambiguous scene text.`;
+  text, OMIT it. Do not emit a low-confidence candidate for ambiguous scene text.
+${CAPTION_AUTHORITY_RULE}`;
 
     return `You are a restaurant extraction assistant. Given an image and/or text, extract ALL distinct restaurants mentioned or visible.
 Respond with ONLY a JSON array — no prose, no markdown, no wrapper object. Each element matches this schema:
@@ -182,7 +251,7 @@ Rules:
 - city_inferred: set true when you inferred the city from context clues (hashtags, handle, phrases like "in soho", "my nyc picks") rather than an explicit label. Set false when the city is stated outright.
 - booking_url: only if explicitly visible (Resy, OpenTable URL). Otherwise null.
 - google_place_id: only if a Google Maps place_id is visible. Otherwise null.
-- If no restaurant is identifiable, return an empty array: []${photoModeBlock}
+- If no restaurant is identifiable, return an empty array: []${videoModeBlock}${photoModeBlock}
 - Cap at ${effectiveCap} restaurants. If more are present, include only the first ${effectiveCap} mentioned.
 - Output ONLY the JSON array. No explanation. No markdown fences.`;
 }
@@ -405,7 +474,7 @@ export async function extractFromTextMulti(
     caption: string,
     signal?: AbortSignal,
     max = 6,
-    context?: PhotoExtractionContext,
+    context?: ExtractionContext,
 ): Promise<ExtractedCandidate[]> {
     if (signal?.aborted) return [];
 
