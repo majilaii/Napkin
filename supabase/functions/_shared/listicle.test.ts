@@ -276,3 +276,12 @@ Deno.test('series qualifier does not null the whole caption — later real count
         8,
     );
 });
+
+Deno.test('hyphenated/dotted series marker ("part-2", "pt.2") → not a count', () => {
+    for (const caption of [
+        'part-2 best pizza spots in NYC',
+        'pt.2 of the best spots in London',
+    ]) {
+        assertEquals(detectListMarker(caption).countRaw, null, caption);
+    }
+});

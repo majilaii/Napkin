@@ -100,7 +100,7 @@ export function detectListMarker(text: string): ListMarkerResult {
         // Series/ordinal qualifier immediately before the digit ("part 2",
         // "day 3", "no. 5") — the digit numbers the post, not the venues.
         const prevToken = (before.match(/([\p{L}\p{M}'’.-]+)\s*$/u)?.[1] ?? '')
-            .replace(/\.+$/, '');
+            .replace(/[.‐-―-]+$/, '');
         if (SERIES_TOKEN_RE.test(prevToken)) continue;
         // Every gap token (the first of which is the token right after the
         // digit) must be a plain word, not a unit/measure/rating token.
