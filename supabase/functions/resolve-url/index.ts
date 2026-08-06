@@ -51,6 +51,7 @@ import { contentKey } from "../_shared/videoUrlKey.ts";
 import { captionToNote } from "../_shared/captionToNote.ts";
 import {
   type ExtractedCandidate,
+  type ExtractionContext,
   extractFromText,
   extractFromTextMulti,
   extractFromVision,
@@ -656,6 +657,9 @@ import {
   buildGhostExternalId,
   buildInlineCompletenessClaims,
   buildResolveSpotDecisionResult,
+  // TICKET-209: caption-authority fusion + cap derivation + route gate.
+  buildVideoFusion,
+  deriveCaptionCap,
   // TICKET-187: photo-field quarantine — the one upsert-input mapping (no
   // photo fields, ever) + the deferred-job id collection.
   buildVerifiedUpsertInput,
@@ -679,6 +683,7 @@ import {
   resolutionDecisionForCandidate,
   resolveImportPlaceSearch,
   resolveSpotsRateGate,
+  routesToVideoText,
   type SaveSpotPlacePayload,
   type SourceType,
   // TICKET-152: resolve_spots + pin_wishlist decision helpers.
@@ -3542,13 +3547,23 @@ async function handleVideoText(
   const photoSlideCount = validPhotoSlideCount(photoContext);
   const CAP = LISTICLE_CANDIDATE_CAP;
 
-  // Caption (hashtags/handle → city hints) joins the on-device text. The cheap
-  // tier (TICKET-164 fast path) sends caption=desc + extracted_text=transcript,
-  // so this fusion is [desc, transcript] — never double-fused (R6).
-  const fullText = [caption, extractedText].filter(Boolean).join("\n").slice(
-    0,
-    8000,
-  );
+  // TICKET-209: the caption is GROUND TRUTH, not a hint. It rides in its own
+  // labeled section (budgeted separately so a long caption can't evict the OCR
+  // channel), and when it enumerates its own spot count that count becomes a
+  // real ceiling. The cheap tier (TICKET-164 fast path) sends caption=desc +
+  // extracted_text=transcript, so this fusion is still [desc, transcript] —
+  // never double-fused (R6).
+  const { fullText, hasVideoText } = buildVideoFusion(caption, extractedText);
+  // Derived from the caption BODY FIELD only (never the fused text, never OCR),
+  // and never in photo mode — see deriveCaptionCap for the TICKET-204 rationale.
+  // An INVALID photo context still counts as photo mode: it keeps today's
+  // "photo request, generic prompt" behaviour byte-for-byte.
+  const hasPhotoContext = photoContext !== undefined;
+  const captionCap = deriveCaptionCap(caption, hasPhotoContext);
+  const effectiveCap = captionCap ?? CAP;
+  const extractionContext: ExtractionContext = hasPhotoContext
+    ? photoContext
+    : { sourceKind: "video", hasVideoText, captionCap };
   const listMarker = detectListMarker(fullText);
   // TICKET-164: the count gate reads the UNCLAMPED total, computed CAPTION-FIRST
   // (a "top 12" marker lives in the caption; the spoken transcript's stray
@@ -3559,11 +3574,14 @@ async function handleVideoText(
   // Content hash for cache + stable candidate ids (re-importing a clip is free).
   // Namespace photo rows by mode + validated count + candidate-cap contract.
   // Including the cap invalidates TICKET-195 rows that were already truncated to
-  // slide count; otherwise a repeat import would bypass this fix via cache. No
-  // photo context keeps the historical `video:${fullText}` identity exactly.
+  // slide count; otherwise a repeat import would bypass this fix via cache.
+  // TICKET-209: BOTH namespaces gain the `g2` extraction-contract token (the
+  // prompt's caption-authority/noise blocks changed video AND photo results),
+  // and the video namespace ALWAYS embeds the effective cap — including the
+  // default 12 — so a future cap-derivation change can never serve stale rows.
   const cacheNamespace = photoSlideCount === null
-    ? "video"
-    : `photo:listicle-${CAP}:${photoSlideCount}`;
+    ? `video:g2:cap${effectiveCap}`
+    : `photo:listicle-${CAP}:g2:${photoSlideCount}`;
   const hashBuf = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(`${cacheNamespace}:${fullText}`)
@@ -3589,8 +3607,8 @@ async function handleVideoText(
       textCandidates = await extractFromTextMulti(
         fullText,
         extractAc.signal,
-        CAP,
-        photoContext,
+        effectiveCap,
+        extractionContext,
       );
     } catch {
       textCandidates = [];
@@ -3610,9 +3628,11 @@ async function handleVideoText(
     }
   }
 
-  // Video and photo listicles stay at 12. dedupeAndRank's default cap is 6
-  // (right for the URL path), so this path passes the listicle cap explicitly.
-  const staged = dedupeAndRank(textCandidates ?? [], [], CAP);
+  // Video and photo listicles stay at 12 unless the caption declared fewer.
+  // dedupeAndRank's default cap is 6 (right for the URL path), so this path
+  // passes the effective listicle cap explicitly — one of the four layers
+  // (prompt · parser · dedupe · final slice) that must agree.
+  const staged = dedupeAndRank(textCandidates ?? [], [], effectiveCap);
   if (staged.length === 0) {
     return jsonResponse({
       data: {
@@ -3696,7 +3716,7 @@ async function handleVideoText(
   }
 
   const candidates: ResolvedCandidate[] = await Promise.all(
-    deduped.slice(0, CAP).map(async ({ s, place, decision }, idx) => {
+    deduped.slice(0, effectiveCap).map(async ({ s, place, decision }, idx) => {
       const restaurantId = place
         ? (placeIdToRestaurantId.get(place.id) ?? null)
         : null;
@@ -3950,10 +3970,14 @@ serve(async (req) => {
   // ── Video text path (TICKET-082): on-device OCR/transcript supplied ────────
   // The phone did the heavy perception (Vision OCR + Speech) for free; we only
   // run the cheap text extractor + Places resolution here. No URL required.
+  // TICKET-209: a caption-ONLY body routes here too (every Instagram import and
+  // every ASR-less TikTok) — but only when neither `url` nor `image_path` was
+  // sent, because `caption` stays a first-class MODIFIER on the IG-nudge,
+  // vision/screenshot and URL routes below. routesToVideoText owns that gate.
   const extractedText = typeof body?.extracted_text === "string"
     ? body.extracted_text.trim()
     : "";
-  if (extractedText) {
+  if (routesToVideoText(body)) {
     // Fail-CLOSED (TICKET-091): RPC error or missing row denies.
     const { data: rlRows, error: rlErr } = await supabase.rpc(
       "check_and_increment_rate_limit",
