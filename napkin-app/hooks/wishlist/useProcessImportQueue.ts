@@ -1290,7 +1290,12 @@ export function useProcessImportQueue() {
                             ResolveUrlData & Partial<LargeListEnumeration>
                         >(m, undefined, resolveBody);
                         mergeTypeRejected(resolved);
-                        captionCap = resolved?.caption_cap;
+                        // Only a video-text resolve can answer the cap question —
+                        // the {url} tier never emits the field and must not
+                        // clobber a cheap-tier capture back to undefined.
+                        if (sentVideoTextResolve) {
+                            captionCap = resolved?.caption_cap;
+                        }
                         // A large Maps list → build the durable job + HOLD for the kickoff
                         // sheet. Feature-detect on `mode` (never a version): an old server
                         // or a ≤20 list returns normal candidates and falls through to

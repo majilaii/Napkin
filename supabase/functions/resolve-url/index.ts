@@ -3568,9 +3568,15 @@ async function handleVideoText(
   const hasPhotoContext = photoContext !== undefined;
   const captionCap = deriveCaptionCap(caption, hasPhotoContext);
   const effectiveCap = captionCap ?? CAP;
+  // captionPresent gates the entire video prompt block: a no-caption body (old
+  // client / paste sheet / shared-.mov) has NO labeled sections painted, so it
+  // must run on the pre-209 generic prompt — labeled-section rules against
+  // unlabeled text would judge the fused caption as OCR noise.
+  const captionPresent = typeof caption === "string" &&
+    caption.trim().length > 0;
   const extractionContext: ExtractionContext = hasPhotoContext
     ? photoContext
-    : { sourceKind: "video", hasVideoText, captionCap };
+    : { sourceKind: "video", captionPresent, hasVideoText, captionCap };
   const listMarker = detectListMarker(fullText);
   // TICKET-164: the count gate reads the UNCLAMPED total, computed CAPTION-FIRST
   // (a "top 12" marker lives in the caption; the spoken transcript's stray

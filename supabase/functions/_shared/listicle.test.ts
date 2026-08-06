@@ -236,3 +236,43 @@ Deno.test('measure reject does not null a later valid marker after a price', () 
     assertEquals(result.isList, true);
     assertEquals(result.countRaw, 5);
 });
+
+// ── TICKET-209 review R1: series/ordinal/rating digits are never spot counts ──
+
+Deno.test('series/ordinal qualifier before the digit → not a count (truncation guard)', () => {
+    for (const caption of [
+        'part 2 of the best pizza spots in NYC',
+        'pt 2 of the best spots in London',
+        'day 3 in tokyo best ramen — every stop below',
+        'week 3 of my favourite restaurants in Melbourne',
+        'vol 3 of my favourite spots in Paris',
+        'no. 4 of the best bakeries in Lisbon',
+        'episode 2 of underrated Soho restaurants',
+    ]) {
+        assertEquals(detectListMarker(caption).countRaw, null, caption);
+    }
+});
+
+Deno.test('rating digits ("5 star", "2 michelin star") → not a count', () => {
+    for (const caption of [
+        '5 star spots in London',
+        '2 michelin star places worth it in London',
+    ]) {
+        assertEquals(detectListMarker(caption).countRaw, null, caption);
+    }
+    // Deliberate trade-off: rejecting rating words also disables the cap for
+    // "7 michelin restaurants…" — a disabled cap never truncates, so this is
+    // the safe direction (the authority prompt still governs those imports).
+    assertEquals(detectListMarker('7 michelin restaurants you must try').countRaw, null);
+});
+
+Deno.test('currency symbol separated by whitespace → still a price, not a count', () => {
+    assertEquals(detectListMarker('£ 5 spots in London').countRaw, null);
+});
+
+Deno.test('series qualifier does not null the whole caption — later real count still found', () => {
+    assertEquals(
+        detectListMarker('part 2 of my food tour: 8 spots you need').countRaw,
+        8,
+    );
+});

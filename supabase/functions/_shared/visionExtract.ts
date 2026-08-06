@@ -89,9 +89,19 @@ export interface PhotoExtractionContext {
  * the caption body field. Unlike a photo slide count (a transport artifact that
  * must never become a ceiling — TICKET-204), a caption count is a legitimate
  * numeric ceiling. null = no valid caption count; the shared 12 cap applies.
+ *
+ * `captionPresent`: a non-empty `caption` body field arrived, so the fusion
+ * painted a `[caption]` section. When FALSE (old clients, the paste-a-link
+ * sheet, the shared-.mov branch — all of which fuse the caption inside
+ * extracted_text unlabeled), NO video block is emitted at all: every clause of
+ * the authority/noise rules names the `[caption]`/`[video text]` labels, and
+ * citing sections that were never painted makes the caption channel judgeable
+ * as OCR noise with an unsatisfiable whitelist. Those bodies get the exact
+ * pre-209 generic prompt instead.
  */
 export interface VideoExtractionContext {
     sourceKind: 'video';
+    captionPresent: boolean;
     hasVideoText: boolean;
     captionCap: number | null;
 }
@@ -166,7 +176,13 @@ export function buildMultiSystemPrompt(
 ): string {
     const photoSlideCount = validPhotoSlideCount(context);
     const effectiveCap = photoSlideCount === null ? cap : LISTICLE_CANDIDATE_CAP;
-    const videoContext = context?.sourceKind === 'video' ? context : null;
+    // Labeled-section rules require the labels to exist: without a caption
+    // body field no `[caption]` section is painted, so the whole block is
+    // withheld and the request runs on the pre-209 generic prompt.
+    const videoContext =
+        context?.sourceKind === 'video' && context.captionPresent
+            ? context
+            : null;
     // Every clause below is gated behind an explicit extraction context: the
     // zero-context prompt is the shared default used by the oEmbed caption tier,
     // the thumbnail vision tier and the async screenshot path, whose caches

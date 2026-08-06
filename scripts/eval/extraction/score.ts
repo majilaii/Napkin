@@ -22,6 +22,8 @@ export interface ForbiddenSpot {
 }
 export interface FixtureContext {
     source_kind: 'video' | 'photo';
+    /** Default true — set false to replay an old-client/fused-body shape. */
+    caption_present?: boolean;
     has_video_text?: boolean;
     caption_cap?: number | null;
     slide_count?: number;
@@ -61,6 +63,10 @@ export function toExtractionContext(
     }
     return {
         sourceKind: 'video',
+        // Fixtures model the post-209 labeled-body shape; a fused/no-caption
+        // fixture opts out explicitly with caption_present: false and runs on
+        // the generic prompt, mirroring old clients (review R1).
+        captionPresent: c.caption_present ?? true,
         hasVideoText: c.has_video_text ?? true,
         captionCap: c.caption_cap ?? null,
     };

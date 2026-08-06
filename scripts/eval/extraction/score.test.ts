@@ -104,11 +104,16 @@ Deno.test('toExtractionContext: fixture wire shape → the extractor union', () 
     assertEquals(toExtractionContext(undefined), undefined);
     assertEquals(
         toExtractionContext({ source_kind: 'video', has_video_text: false, caption_cap: 5 }),
-        { sourceKind: 'video', hasVideoText: false, captionCap: 5 },
+        { sourceKind: 'video', captionPresent: true, hasVideoText: false, captionCap: 5 },
     );
     assertEquals(
         toExtractionContext({ source_kind: 'video' }),
-        { sourceKind: 'video', hasVideoText: true, captionCap: null },
+        { sourceKind: 'video', captionPresent: true, hasVideoText: true, captionCap: null },
+    );
+    // Review R1: old-client/fused-body replay opts out and runs the generic prompt.
+    assertEquals(
+        toExtractionContext({ source_kind: 'video', caption_present: false }),
+        { sourceKind: 'video', captionPresent: false, hasVideoText: true, captionCap: null },
     );
     assertEquals(
         toExtractionContext({ source_kind: 'photo', slide_count: 4 }),

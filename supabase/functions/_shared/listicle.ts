@@ -36,11 +36,25 @@ const N_LIST_RE =
     /\b(\d+)\s+((?:[\p{L}\p{M}'’-]+\s+){0,4})(?:best|spots?|places?|restaurants?|must(?:\s+try)?|favou?rites?)\b/giu;
 
 /**
- * Units of time/distance/percentage. A digit qualifying one of these is a
- * duration or a measure, never an advertised spot count.
+ * Units of time/distance/percentage — plus rating words. A digit qualifying one
+ * of these is a duration, a measure or a rating ("5 star spots", "2 michelin
+ * star places"), never an advertised spot count. Rejecting a rating word costs
+ * at worst a disabled cap ("7 michelin restaurants" loses its ceiling) — the
+ * safe direction; a false COUNT truncates real spots.
  */
 const UNIT_TOKEN_RE =
-    /^(?:days?|nights?|hours?|hrs?|mins?|minutes?|weeks?|months?|years?|km|miles?|%)$/iu;
+    /^(?:days?|nights?|hours?|hrs?|mins?|minutes?|weeks?|months?|years?|km|miles?|%|stars?|michelin)$/iu;
+
+/**
+ * Series/ordinal qualifiers BEFORE the digit: "part 2 of the best pizza spots",
+ * "day 3 in tokyo best ramen", "vol 3 of my favourite spots". The digit numbers
+ * the POST, not the venues — reading it as a spot count truncates a full-length
+ * listicle to 2–3 and (on IG) can flip the fast-path count gate into
+ * auto-saving the truncated set. The old adjacency pattern never matched these;
+ * the widened gap must not either.
+ */
+const SERIES_TOKEN_RE =
+    /^(?:part|pt|day|night|week|month|year|episode|ep|vol|volume|series|season|round|chapter|no|number)$/iu;
 
 /**
  * Detect a listicle marker in text.
@@ -79,11 +93,17 @@ export function detectListMarker(text: string): ListMarkerResult {
     N_LIST_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = N_LIST_RE.exec(trimmed)) !== null) {
-        // Currency-prefixed digits are prices, never counts.
-        const prevChar = m.index > 0 ? trimmed[m.index - 1] : '';
-        if (prevChar === '£' || prevChar === '$' || prevChar === '€') continue;
+        const before = trimmed.slice(0, m.index);
+        // Currency-prefixed digits are prices, never counts — whitespace
+        // between the symbol and the digit ("£ 5 spots") still counts.
+        if (/[£$€]\s*$/u.test(before)) continue;
+        // Series/ordinal qualifier immediately before the digit ("part 2",
+        // "day 3", "no. 5") — the digit numbers the post, not the venues.
+        const prevToken = (before.match(/([\p{L}\p{M}'’.-]+)\s*$/u)?.[1] ?? '')
+            .replace(/\.+$/, '');
+        if (SERIES_TOKEN_RE.test(prevToken)) continue;
         // Every gap token (the first of which is the token right after the
-        // digit) must be a plain word, not a unit of time/distance.
+        // digit) must be a plain word, not a unit/measure/rating token.
         const gapTokens = (m[2] ?? '').split(/\s+/).filter(Boolean);
         if (gapTokens.some((t) => UNIT_TOKEN_RE.test(t))) continue;
 
