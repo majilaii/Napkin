@@ -359,8 +359,14 @@ export function ScopedListMap({
                 ref={mapRef}
                 style={[StyleSheet.absoluteFillObject, { backgroundColor: CREAM }]}
                 provider={isAndroid ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
-                customMapStyle={isAndroid ? heirloomMapStyle : undefined}
-                mapType={!tilesOn && Platform.OS === 'ios' ? 'mutedStandard' : undefined}
+                customMapStyle={isAndroid && !tilesOn ? heirloomMapStyle : undefined}
+                mapType={
+                    tilesOn && isAndroid
+                        ? 'none'
+                        : !tilesOn && Platform.OS === 'ios'
+                          ? 'mutedStandard'
+                          : undefined
+                }
                 userInterfaceStyle="light"
                 initialRegion={initialRegion}
                 mapPadding={mapPadding}

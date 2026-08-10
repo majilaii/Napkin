@@ -16,7 +16,7 @@
  * Ionicons outline; one accent (terracotta).
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Platform, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors } from '@/constants/theme';
@@ -30,6 +30,12 @@ import {
 } from './activationHubUtils';
 
 type Palette = typeof Colors.light;
+
+const LINK_IMPORT_COPY = {
+    kicker: 'IMPORT A LINK',
+    gesture: 'paste a restaurant or Google Maps list link',
+    compact: 'import restaurant and Google Maps list links',
+} as const;
 
 export interface ImportActivationHubProps {
     palette: Palette;
@@ -47,6 +53,8 @@ export function ImportActivationHub({
     showHubLink = false,
 }: ImportActivationHubProps) {
     const resolved = resolveHubVariant(variant, hasImported);
+    const hasShareExtension = Platform.OS === 'ios';
+    const compactLine = hasShareExtension ? COMPACT_LINE : LINK_IMPORT_COPY.compact;
 
     // ── Compact — one standing row → the imports hub (gap 9) ──────────────────
     // Always a Pressable (View has no function-style prop); `disabled` makes it a
@@ -62,11 +70,15 @@ export function ImportActivationHub({
                     { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.7 : 1 },
                 ]}
                 accessibilityRole={interactive ? 'button' : undefined}
-                accessibilityLabel={interactive ? 'open your imports' : COMPACT_LINE}
+                accessibilityLabel={interactive ? 'open your imports' : compactLine}
             >
-                <Ionicons name="share-outline" size={16} color={palette.textMuted} />
+                <Ionicons
+                    name={hasShareExtension ? 'share-outline' : 'link-outline'}
+                    size={16}
+                    color={palette.textMuted}
+                />
                 <Text style={[styles.compactLabel, { color: palette.textSecondary }]} numberOfLines={1}>
-                    {COMPACT_LINE}
+                    {compactLine}
                 </Text>
                 {interactive ? (
                     <Ionicons name="chevron-forward" size={15} color={palette.textMuted} />
@@ -78,20 +90,26 @@ export function ImportActivationHub({
     // ── Full — the show-don't-tell activation block ───────────────────────────
     return (
         <View style={styles.fullRoot}>
-            <Text style={[styles.kicker, { color: palette.textMuted }]}>{HUB_COPY.kicker}</Text>
+            <Text style={[styles.kicker, { color: palette.textMuted }]}>
+                {hasShareExtension ? HUB_COPY.kicker : LINK_IMPORT_COPY.kicker}
+            </Text>
 
-            <View style={styles.sourceRow}>
-                {SOURCE_APPS.map((source) => (
-                    <ShareGlyph
-                        key={source}
-                        source={source}
-                        glyph={GLYPH_FOR_SOURCE[source]}
-                        palette={palette}
-                    />
-                ))}
-            </View>
+            {hasShareExtension ? (
+                <View style={styles.sourceRow}>
+                    {SOURCE_APPS.map((source) => (
+                        <ShareGlyph
+                            key={source}
+                            source={source}
+                            glyph={GLYPH_FOR_SOURCE[source]}
+                            palette={palette}
+                        />
+                    ))}
+                </View>
+            ) : null}
 
-            <Text style={[styles.gesture, { color: palette.textMuted }]}>{HUB_COPY.gesture}</Text>
+            <Text style={[styles.gesture, { color: palette.textMuted }]}>
+                {hasShareExtension ? HUB_COPY.gesture : LINK_IMPORT_COPY.gesture}
+            </Text>
             <Text style={[styles.mode, { color: palette.textSecondary }]}>{HUB_COPY.modeReview}</Text>
 
             {showHubLink && onOpenHub ? (

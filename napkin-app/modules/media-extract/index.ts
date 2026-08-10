@@ -1,4 +1,5 @@
 import { requireNativeModule } from 'expo';
+import { Platform } from 'react-native';
 
 import type {
     ExtractOptions,
@@ -81,6 +82,10 @@ function getNative(): NativeMediaExtract {
  * didn't link, we hide the entry point rather than show a button that errors.
  */
 export function isVideoImportAvailable(): boolean {
+    // MediaExtract is backed exclusively by Apple Vision/Speech + App Groups.
+    // Do not ask Expo's module registry for it on Android, even if a stale CNG
+    // output accidentally advertises the package there.
+    if (Platform.OS !== 'ios') return false;
     try {
         getNative();
         return true;

@@ -13,24 +13,28 @@
  * Later upgrade: a custom "Heirloom Cream" style in the MapTiler dashboard is a
  * one-line MAPTILER_STYLE swap here.
  */
+import { Platform } from 'react-native';
+
 export const MAPTILER_KEY = 'aPEg35JhkM1BCFcqQkR7';
 
 /**
  * Which tile skin the Map surface renders (TICKET-137).
  *
  *  - `'apple'`    — plain Apple `mutedStandard`, light-pinned; NO UrlTile, cream
- *    tint, or attribution caption. Android reverts to Google + `heirloomMapStyle`.
+ *    tint, or attribution caption. This remains the iOS presentation.
  *    (Founder device pass, 2026-07-08: his original "grey map" was system dark
  *    mode — already fixed by the #169 light pin — so he wants to SEE plain Apple:
  *    "remove whatever's overlaid onto it.")
  *  - `'maptiler'` — the cream `landscape` raster below, drawn via `UrlTile` +
- *    the always-on cream tint + the ToS attribution caption (both platforms).
+ *    the always-on cream tint + the ToS attribution caption. Android uses this
+ *    path because its Google Maps API key is intentionally empty.
  *
- * One-line flip. Everything MapTiler stays wired but dormant while `'apple'`; the
- * attribution caption only renders in `'maptiler'` mode (ToS requires it solely
- * when their tiles are on screen).
+ * The attribution caption only renders in `'maptiler'` mode (ToS requires it
+ * solely when their tiles are on screen). Non-native targets retain the iOS
+ * presentation so this constant stays deterministic in static tooling/tests.
  */
-export const MAP_TILE_MODE: 'apple' | 'maptiler' = 'apple';
+export const MAP_TILE_MODE: 'apple' | 'maptiler' =
+    Platform.OS === 'android' ? 'maptiler' : 'apple';
 
 /** Raster style id — verified live central-London z12–z15 with the founder's key. */
 export const MAPTILER_STYLE = 'landscape';

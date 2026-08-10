@@ -19,7 +19,7 @@
  * drawer (they live on the Map tab's List sheet + the profile).
  */
 import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Alert, ScrollView, Linking, Switch } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Alert, ScrollView, Linking, Platform, Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -150,6 +150,9 @@ export default function SettingsScreen() {
     const profile = result?.data?.profile;
     const homeCity = (profile as { home_city?: string | null } | undefined)?.home_city ?? null;
     const isPublic = (profile?.account_privacy ?? 'public') === 'public';
+    const showImportTutorial = Platform.OS === 'ios';
+    const showOnboardingPreviewToggle = !FRIEND_TEST.hideOnboardingPreviewToggle;
+    const showHelpSection = showImportTutorial || showOnboardingPreviewToggle;
 
     // Real OS permission state — refreshed whenever the screen regains focus
     // (so a trip out to system Settings and back reflects immediately).
@@ -319,34 +322,38 @@ export default function SettingsScreen() {
                     />
                 </Section>
 
-                <Section title="help" palette={palette}>
-                    <Row
-                        label="How to save from videos"
-                        value="Replay"
-                        palette={palette}
-                        onPress={() => router.push('/settings/import-tutorial' as any)}
-                        last={FRIEND_TEST.hideOnboardingPreviewToggle}
-                    />
-                    {!FRIEND_TEST.hideOnboardingPreviewToggle ? (
-                        <Row
-                            label="show onboarding on launch"
-                            palette={palette}
-                            trailing={
-                                <Switch
-                                    value={previewOnLaunch}
-                                    onValueChange={updatePreviewOnLaunch}
-                                    trackColor={{
-                                        false: palette.outlineVariant,
-                                        true: palette.primary,
-                                    }}
-                                    thumbColor="#fff"
-                                    accessibilityLabel="show onboarding on launch"
-                                />
-                            }
-                            last
-                        />
-                    ) : null}
-                </Section>
+                {showHelpSection ? (
+                    <Section title="help" palette={palette}>
+                        {showImportTutorial ? (
+                            <Row
+                                label="How to save from videos"
+                                value="Replay"
+                                palette={palette}
+                                onPress={() => router.push('/settings/import-tutorial' as any)}
+                                last={!showOnboardingPreviewToggle}
+                            />
+                        ) : null}
+                        {showOnboardingPreviewToggle ? (
+                            <Row
+                                label="show onboarding on launch"
+                                palette={palette}
+                                trailing={
+                                    <Switch
+                                        value={previewOnLaunch}
+                                        onValueChange={updatePreviewOnLaunch}
+                                        trackColor={{
+                                            false: palette.outlineVariant,
+                                            true: palette.primary,
+                                        }}
+                                        thumbColor="#fff"
+                                        accessibilityLabel="show onboarding on launch"
+                                    />
+                                }
+                                last
+                            />
+                        ) : null}
+                    </Section>
+                ) : null}
 
                 <Section title="about" palette={palette}>
                     <Row

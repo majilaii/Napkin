@@ -162,6 +162,11 @@ export default function AuthScreen() {
     // handle_new_user leaves onboarded_at NULL → RootLayoutNav routes /onboarding;
     // returning → /wishlist. A pending share/handoff resumes via resumeAfterAuth.
     const signInWithProvider = async (provider: 'apple' | 'google') => {
+        // Apple Authentication has no Android native implementation. The button
+        // is hidden below, and this guard keeps a future programmatic caller from
+        // reaching oauth.ts's lazy native require on a non-Apple platform.
+        if (provider === 'apple' && Platform.OS !== 'ios') return;
+
         setLoading(true);
         // Hoisted so the catch can re-stash if signInWithIdToken THROWS after the
         // stash was consumed (the {error} branch below covers the non-throw case).
@@ -319,7 +324,7 @@ export default function AuthScreen() {
                             </View>
 
                             {/* TICKET-126: one implicit-acceptance line governing
-                                email submit AND both OAuth buttons. Manrope, muted,
+                                email submit AND the available OAuth buttons. Manrope, muted,
                                 not italic serif (an instruction, not a brand moment);
                                 Terms + Privacy tap out to the legal pages. */}
                             <Text style={[styles.legal, { color: palette.textMuted }]}>
@@ -368,18 +373,21 @@ export default function AuthScreen() {
                                 <View style={[styles.orRule, { backgroundColor: 'rgba(138, 114, 108, 0.2)' }]} />
                             </View>
 
-                            {/* Apple — HIG-compliant black button. */}
-                            <Pressable
-                                onPress={() => signInWithProvider('apple')}
-                                disabled={loading}
-                                style={({ pressed }) => [
-                                    styles.oauthBtn,
-                                    { backgroundColor: '#000000', opacity: pressed || loading ? 0.85 : 1 },
-                                ]}
-                            >
-                                <Ionicons name="logo-apple" size={18} color="#ffffff" style={styles.oauthIcon} />
-                                <Text style={[Type.label, { color: '#ffffff' }]}>Continue with Apple</Text>
-                            </Pressable>
+                            {/* Apple Authentication is iOS-only. Android shows
+                                email + Google without a dead native affordance. */}
+                            {Platform.OS === 'ios' ? (
+                                <Pressable
+                                    onPress={() => signInWithProvider('apple')}
+                                    disabled={loading}
+                                    style={({ pressed }) => [
+                                        styles.oauthBtn,
+                                        { backgroundColor: '#000000', opacity: pressed || loading ? 0.85 : 1 },
+                                    ]}
+                                >
+                                    <Ionicons name="logo-apple" size={18} color="#ffffff" style={styles.oauthIcon} />
+                                    <Text style={[Type.label, { color: '#ffffff' }]}>Continue with Apple</Text>
+                                </Pressable>
+                            ) : null}
 
                             {/* Google — light surface, hairline warm rule. */}
                             <Pressable
@@ -391,9 +399,9 @@ export default function AuthScreen() {
                                         backgroundColor: palette.surfaceNote,
                                         borderWidth: StyleSheet.hairlineWidth,
                                         borderColor: 'rgba(138, 114, 108, 0.35)',
-                                        marginTop: Spacing.md,
                                         opacity: pressed || loading ? 0.85 : 1,
                                     },
+                                    Platform.OS === 'ios' ? { marginTop: Spacing.md } : null,
                                 ]}
                             >
                                 <Ionicons name="logo-google" size={18} color={palette.text} style={styles.oauthIcon} />

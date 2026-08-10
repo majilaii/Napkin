@@ -21,8 +21,8 @@
  *   - tiles (TICKET-134): MapTiler `landscape` raster via UrlTile on BOTH
  *     platforms — cream land, butter roads, warm-brown labels. iOS replaces the
  *     Apple base (shouldReplaceMapContent — kills the grey dark tiles ⑧);
- *     Android draws over the Google base with heirloomMapStyle beneath as the
- *     load-window fallback. An always-on cream tint (~15%) warms residual blue
+ *     Android renders the raster over `mapType="none"`, so a Google tile key is
+ *     not needed. An always-on cream tint (~15%) warms residual blue
  *     water; dark mode keeps the cream tiles (the map reads as a paper object).
  *     userInterfaceStyle='light' (#169) pins the NATIVE base light too, so the
  *     tile-load window never flashes grey in system dark mode.
@@ -30,7 +30,7 @@
  *
  * Provider:
  *   iOS     → PROVIDER_DEFAULT (Apple) + UrlTile shouldReplaceMapContent
- *   Android → PROVIDER_GOOGLE + UrlTile draw-over (heirloom fallback beneath)
+ *   Android → PROVIDER_GOOGLE + mapType none + UrlTile (no Google tile key)
  *
  * react-native-maps is autolinked (pod installed). The map frames on the user
  * (or first pin) once per open; the locate FAB animates to the user (lazy
@@ -613,10 +613,8 @@ export function WishlistMapView({
 
     // TICKET-137: tile skin is flag-gated. `MAP_TILE_MODE==='maptiler'` draws the
     // cream `landscape` raster via UrlTile + cream tint + attribution (the 134
-    // path); `'apple'` (shipping) leaves plain Apple `mutedStandard` (light-pinned)
-    // on iOS and Google + heirloomMapStyle on Android — no UrlTile, no tint, no
-    // caption. #169's userInterfaceStyle='light' (on the MapView) pins the base
-    // light in BOTH modes so the map never flashes grey in system dark mode.
+    // path); `'apple'` leaves plain Apple `mutedStandard` (light-pinned) on iOS.
+    // Android is platform-pinned to MapTiler and suppresses Google base tiles.
     const isAndroid = Platform.OS === 'android';
     const tilesOn = MAP_TILE_MODE === 'maptiler';
 
@@ -1045,20 +1043,24 @@ export function WishlistMapView({
                 ref={mapRef}
                 style={[StyleSheet.absoluteFillObject, { backgroundColor: CREAM }]}
                 provider={isAndroid ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
-                // Android always keeps the heirloom skin (the base in apple mode,
-                // the load-window fallback beneath the tiles in maptiler mode).
-                customMapStyle={isAndroid ? heirloomMapStyle : undefined}
+                // Keep the old Google skin available only for a non-MapTiler
+                // Android mode. Shipping Android suppresses Google base tiles.
+                customMapStyle={isAndroid && !tilesOn ? heirloomMapStyle : undefined}
                 // Apple mode (TICKET-137): plain, de-saturated `mutedStandard` on
                 // iOS — a calm paper-adjacent base with POIs already suppressed.
                 // In maptiler mode the base is replaced anyway (shouldReplaceMapContent).
-                mapType={!tilesOn && Platform.OS === 'ios' ? 'mutedStandard' : undefined}
+                mapType={
+                    tilesOn && isAndroid
+                        ? 'none'
+                        : !tilesOn && Platform.OS === 'ios'
+                          ? 'mutedStandard'
+                          : undefined
+                }
                 // The map NEVER goes dark (founder, 2026-07-08; TICKET-134 ⑧:
                 // the map reads as a paper object). Apple tiles follow the
                 // SYSTEM appearance — not our light-forced palette — so system
                 // dark mode was swapping grey tiles under the cream chrome.
-                // (#169; still load-bearing with MapTiler: it pins the NATIVE
-                // base light during the pre-tile load window + Android's Google
-                // base under our draw-over.)
+                // (#169; still load-bearing for the native map chrome.)
                 userInterfaceStyle="light"
                 initialRegion={initialRegion}
                 showsPointsOfInterest={false}
@@ -1071,8 +1073,8 @@ export function WishlistMapView({
                 onPress={() => setSelectedId(null)}
             >
                 {/* MapTiler cream raster — first child, beneath the markers. iOS
-                    replaces the base (kills grey dark tiles ⑧); Android draws over
-                    Google. @2x endpoint + tileSize 512 → crisp labels. Rendered
+                    replaces the base; Android is mapType none so this is the only
+                    basemap. @2x endpoint + tileSize 512 → crisp labels. Rendered
                     only in maptiler mode (TICKET-137); apple mode shows plain Apple. */}
                 {tilesOn ? (
                     <UrlTile
