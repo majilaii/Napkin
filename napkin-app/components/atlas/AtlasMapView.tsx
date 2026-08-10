@@ -281,7 +281,9 @@ const styles = StyleSheet.create({
         right: 8,
         bottom: 6,
         fontFamily: 'Manrope_500Medium',
-        fontSize: 9,
+        // 11 = the functional-type floor (typography guard has a zero budget
+        // for new tiny fonts); matches ScopedListMap's attribution.
+        fontSize: 11,
         letterSpacing: 0.2,
     },
 });

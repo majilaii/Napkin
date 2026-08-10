@@ -1860,7 +1860,8 @@ const styles = StyleSheet.create({
         right: 0,
         textAlign: 'center',
         fontFamily: 'Manrope_500Medium',
-        fontSize: 9,
+        // 11 = the functional-type floor; matches the other map surfaces.
+        fontSize: 11,
         letterSpacing: 0.2,
     },
     // ── Peek carousel ──────────────────────────────────────────────────────────
