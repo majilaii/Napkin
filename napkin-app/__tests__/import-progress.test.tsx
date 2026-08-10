@@ -135,7 +135,7 @@ jest.mock('@/modules/media-extract', () => ({
     deleteAppGroupFile: jest.fn(),
 }));
 
-import ImportProgressScreen from '../import-progress';
+import ImportProgressScreen from '../app/import-progress';
 
 const IMPORT_NONCE = '00000000-0000-4000-8000-000000000010';
 
