@@ -88,6 +88,9 @@ export default ({ config }: ConfigContext): ExpoConfig =>
             : {}),
     },
     android: {
+        // Permanent once published to Play (hyphens illegal, so the iOS bundle id
+        // can't be mirrored). Decided 2026-08-10, GOOGLE-PLAY-RUNBOOK §0.1.
+        package: 'com.majilaii.napkin',
         adaptiveIcon: {
             backgroundColor: '#E6F4FE',
             foregroundImage: './assets/images/android-icon-foreground.png',
