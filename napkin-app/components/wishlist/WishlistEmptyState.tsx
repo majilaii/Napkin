@@ -6,7 +6,7 @@
  * scroll), under the live Pinned/Lists toggle.
  */
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, Platform, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Shadow } from '@/constants/theme';
@@ -31,7 +31,9 @@ export function WishlistEmptyState({ palette, onImport, onSearch, hasImported = 
 
             <Text style={[styles.title, { color: palette.text }]}>Nothing pinned yet</Text>
             <Text style={[styles.copy, { color: palette.textSecondary }]}>
-                Save a place from a TikTok, a video, or a friend — it lands here, ready when you are.
+                {Platform.OS === 'ios'
+                    ? 'Save a place from a TikTok, a video, or a friend — it lands here, ready when you are.'
+                    : 'Import a restaurant or Google Maps list link — it lands here, ready when you are.'}
             </Text>
 
             <View style={styles.actions}>

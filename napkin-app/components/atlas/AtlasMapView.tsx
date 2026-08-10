@@ -3,7 +3,7 @@
  *
  * Provider:
  *   iOS  → PROVIDER_DEFAULT (Apple Maps, free)
- *   Android → PROVIDER_GOOGLE (requires API key in app.json)
+ *   Android → PROVIDER_GOOGLE with MapTiler UrlTile over mapType none
  *
  * Initial region:
  *   - If ≥2 pins with valid coords: fitToCoordinates with edge padding
@@ -26,11 +26,13 @@ import React, {
 } from 'react';
 import {
     View,
+    Text,
     StyleSheet,
     Platform,
 } from 'react-native';
 import MapView, {
     Marker,
+    UrlTile,
     PROVIDER_GOOGLE,
     PROVIDER_DEFAULT,
     LatLng,
@@ -42,6 +44,7 @@ import type MapViewType from 'react-native-maps';
 import { PersonCluster, SimplePin } from './AtlasPinMarker';
 import { useAuth } from '@/providers/AuthProvider';
 import { Colors } from '@/constants/theme';
+import { MAP_TILE_MODE, MAPTILER_ATTRIBUTION, tileUrlTemplate } from '@/lib/maptiler';
 import type { AtlasRestaurantTile } from '@/hooks/tables/useTableAtlasCity';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -69,6 +72,8 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
     const palette = paletteProp ?? Colors.light;
     const mapRef = useRef<MapViewType>(null);
     const { user } = useAuth();
+    const isAndroid = Platform.OS === 'android';
+    const tilesOn = MAP_TILE_MODE === 'maptiler';
 
     // Detail threshold — latitudeDelta < 0.05 ~ city-block zoom. Below that
     // we show PersonCluster (identities); above that we show SimplePin (type only).
@@ -126,9 +131,12 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
         <View style={[styles.container, { height: mapHeight }]}>
             <MapView
                 ref={mapRef}
-                style={StyleSheet.absoluteFillObject}
-                provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
-                mapType="standard"
+                style={[
+                    StyleSheet.absoluteFillObject,
+                    tilesOn ? { backgroundColor: Colors.light.background } : undefined,
+                ]}
+                provider={isAndroid ? PROVIDER_GOOGLE : PROVIDER_DEFAULT}
+                mapType={tilesOn && isAndroid ? 'none' : 'standard'}
                 // Maps never go dark — Apple tiles follow the SYSTEM
                 // appearance, not the light-forced palette (2026-07-08).
                 userInterfaceStyle="light"
@@ -144,6 +152,14 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
                     if (nextDetail !== detail) setDetail(nextDetail);
                 }}
             >
+                {tilesOn ? (
+                    <UrlTile
+                        urlTemplate={tileUrlTemplate()}
+                        shouldReplaceMapContent={Platform.OS === 'ios'}
+                        tileSize={512}
+                        maximumZ={20}
+                    />
+                ) : null}
                 {validPins.map((restaurant) => (
                     <PinMarker
                         key={restaurant.id}
@@ -155,6 +171,23 @@ export const AtlasMapView = forwardRef<AtlasMapViewRef, Props>(function AtlasMap
                     />
                 ))}
             </MapView>
+            {tilesOn ? (
+                <>
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            { backgroundColor: Colors.light.background, opacity: 0.15 },
+                        ]}
+                    />
+                    <Text
+                        pointerEvents="none"
+                        style={[styles.attribution, { color: Colors.light.textMuted }]}
+                    >
+                        {MAPTILER_ATTRIBUTION}
+                    </Text>
+                </>
+            ) : null}
         </View>
     );
 });
@@ -242,6 +275,14 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.06,
         shadowRadius: 12,
         elevation: 3,
+    },
+    attribution: {
+        position: 'absolute',
+        right: 8,
+        bottom: 6,
+        fontFamily: 'Manrope_500Medium',
+        fontSize: 9,
+        letterSpacing: 0.2,
     },
 });
 

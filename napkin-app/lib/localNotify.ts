@@ -20,6 +20,8 @@ import { Linking, Platform } from 'react-native';
 type ExpoNotifications = typeof import('expo-notifications');
 let notifModule: ExpoNotifications | null | undefined;
 
+const IMPORTS_NOTIFICATION_CHANNEL_ID = 'imports';
+
 function getNotif(): ExpoNotifications | null {
     if (notifModule !== undefined) return notifModule;
     try {
@@ -59,7 +61,7 @@ export function configureNotifications(): void {
             }),
         });
         if (Platform.OS === 'android') {
-            N.setNotificationChannelAsync('imports', {
+            N.setNotificationChannelAsync(IMPORTS_NOTIFICATION_CHANNEL_ID, {
                 name: 'Imports',
                 importance: N.AndroidImportance?.DEFAULT ?? 3,
             }).catch(() => {
@@ -134,7 +136,12 @@ export async function presentImportNotification(content: {
                 body: content.body,
                 data: { url: IMPORT_NOTIF_URL },
             },
-            trigger: null, // present now
+            // A channel-aware trigger still presents immediately; unlike null it
+            // routes Android 8+ notifications through the Imports channel above.
+            trigger:
+                Platform.OS === 'android'
+                    ? { channelId: IMPORTS_NOTIFICATION_CHANNEL_ID }
+                    : null,
         });
     } catch {
         /* best-effort — never break the drain */

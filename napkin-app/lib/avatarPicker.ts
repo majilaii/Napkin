@@ -23,8 +23,14 @@ import * as ImagePicker from 'expo-image-picker';
 const LIBRARY_OPTS: ImagePicker.ImagePickerOptions = {
     mediaTypes: ['images'],
     // NO allowsEditing — it silently swaps in the slow legacy picker (above).
-    preferredAssetRepresentationMode:
-        ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+    // preferredAssetRepresentationMode is UIImagePickerController/PHPicker-only;
+    // Android receives only options its native picker implements.
+    ...(Platform.OS === 'ios'
+        ? {
+              preferredAssetRepresentationMode:
+                  ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+          }
+        : {}),
     quality: 0.85, // recompressed to 512² @0.8 on upload — no need for max here
 };
 
@@ -101,7 +107,7 @@ export function chooseAvatarAsset(
                 },
             );
         } else {
-            // Android ships later — Alert stands in for the sheet. cancelable +
+            // Android uses Alert in place of ActionSheetIOS. cancelable +
             // onDismiss so an outside tap still resolves (never a hung promise).
             Alert.alert(
                 'Profile photo',

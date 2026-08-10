@@ -1,6 +1,39 @@
 import type { ExpoConfig, ConfigContext } from 'expo/config';
 import { withEntitlementsPlist, type ConfigPlugin } from 'expo/config-plugins';
 
+type NativeBuildPlatform = 'android' | 'ios' | null;
+
+/**
+ * Expo evaluates dynamic config before it filters native mods to the requested
+ * platform. Keep Apple-only plugins out of Android-only prebuilds entirely: the
+ * share-target plugin evaluates iOS target metadata eagerly, even though its mods
+ * are iOS-only. EAS supplies EAS_BUILD_PLATFORM; local prebuild exposes the same
+ * choice through --platform/-p, while Expo's native run commands keep their
+ * platform in the `run:android` / `run:ios` argv token.
+ */
+function getNativeBuildPlatform(): NativeBuildPlatform {
+    const environmentPlatform = process.env.EAS_BUILD_PLATFORM ?? process.env.EXPO_OS;
+    if (environmentPlatform === 'android' || environmentPlatform === 'ios') {
+        return environmentPlatform;
+    }
+
+    for (let index = 0; index < process.argv.length; index += 1) {
+        const argument = process.argv[index];
+        if (argument === 'run:android') return 'android';
+        if (argument === 'run:ios') return 'ios';
+        if (argument === '--platform' || argument === '-p') {
+            const value = process.argv[index + 1];
+            return value === 'android' || value === 'ios' ? value : null;
+        }
+        if (argument.startsWith('--platform=')) {
+            const value = argument.slice('--platform='.length);
+            return value === 'android' || value === 'ios' ? value : null;
+        }
+    }
+
+    return null;
+}
+
 // TICKET-120: notifications are device-LOCAL only — no APNs, ever (remote push is
 // explicitly deferred). expo-notifications' plugin unconditionally adds the
 // aps-environment (remote push) entitlement, which our provisioning profiles don't
@@ -88,6 +121,9 @@ export default ({ config }: ConfigContext): ExpoConfig =>
             : {}),
     },
     android: {
+        // Permanent once published to Play (hyphens illegal, so the iOS bundle id
+        // can't be mirrored). Decided 2026-08-10, GOOGLE-PLAY-RUNBOOK §0.1.
+        package: 'com.majilaii.napkin',
         adaptiveIcon: {
             backgroundColor: '#E6F4FE',
             foregroundImage: './assets/images/android-icon-foreground.png',
@@ -98,7 +134,14 @@ export default ({ config }: ConfigContext): ExpoConfig =>
         predictiveBackGestureEnabled: false,
         config: {
             googleMaps: {
-                apiKey: '',
+                // The com.google.android.geo.API_KEY meta-data must EXIST:
+                // react-native-maps always inits the Google provider on Android,
+                // and a missing entry (empty string ⇒ Expo omits it) is a
+                // RuntimeException at first map mount. An unauthorized key only
+                // blanks the Google base tiles — unused, since Android renders
+                // MapTiler over mapType "none" (TICKET-210). Env-driven for the
+                // day a real restricted key exists.
+                apiKey: process.env.GOOGLE_MAPS_ANDROID_KEY ?? 'android-key-unset-maptiler-only',
             },
         },
         permissions: [
@@ -163,16 +206,29 @@ export default ({ config }: ConfigContext): ExpoConfig =>
         // Teach-flow footage playback (components/import-education). Bundled local
         // clips only: no PiP, no background audio, so no plugin options needed.
         'expo-video',
-        // TICKET-120: device-LOCAL import-completion notifications (no APNs/remote
-        // push, no token). Defaults — no custom notification icon/sound/color.
-        'expo-notifications',
+        // TICKET-120/TICKET-210: device-LOCAL import-completion notifications
+        // (no APNs/remote push, no token). Android requires an all-white small icon;
+        // the accent mirrors Colors.light.primary from constants/theme.ts.
+        [
+            'expo-notifications',
+            {
+                icon: './assets/images/android-icon-monochrome.png',
+                color: '#a03f28',
+            },
+        ],
         // TICKET-075: native month-calendar date picker for the logger WHEN row.
         '@react-native-community/datetimepicker',
-        // @bacons/apple-targets auto-discovers targets/ dirs containing
-        // expo-target.config.js. No inline config needed.
-        '@bacons/apple-targets',
-        // TICKET-110: native Sign in with Apple.
-        'expo-apple-authentication',
+        // Expo config plugins are evaluated before platform mods are filtered.
+        // Exclude both Apple-only plugins from an Android-only prebuild so the
+        // share target and Apple-auth entitlement code are true no-ops there.
+        ...(getNativeBuildPlatform() === 'android'
+            ? []
+            : [
+                  // Auto-discovers targets/*/expo-target.config.js on Apple builds.
+                  '@bacons/apple-targets',
+                  // TICKET-110: native Sign in with Apple.
+                  'expo-apple-authentication',
+              ]),
         // TICKET-110: Google sign-in. iosUrlScheme is the REVERSED iOS OAuth
         // client id (from Google Cloud console); env-driven so the real value
         // isn't committed. The placeholder lets prebuild/EAS build succeed —

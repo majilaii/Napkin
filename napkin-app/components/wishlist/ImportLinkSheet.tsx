@@ -82,10 +82,10 @@ import {
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
 
-// Gate the video-import entry point on the native module actually being linked.
-// Computed once at import (safe — never throws). Hidden until the module links,
-// so we never show a button that just errors.
-const VIDEO_IMPORT_AVAILABLE = isVideoImportAvailable();
+// Gate the video-import entry point on the iOS-only native module actually being
+// linked. Computed once at import (safe — never throws). Android keeps the link
+// and screenshot rows but never renders the saved-video row.
+const VIDEO_IMPORT_AVAILABLE = Platform.OS === 'ios' && isVideoImportAvailable();
 import { safeRandomUUID } from '@/lib/uuid';
 import { sourceNoun } from '@/lib/sourceNoun';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
@@ -635,6 +635,14 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     // Extracted so both the picker and retry can invoke it.
     const runVideoExtraction = useCallback(async (uri: string) => {
         const myId = ++videoReqRef.current;
+        // Defensive guard for stale/deferred iOS deep links opened on another
+        // platform. The normal Android UI cannot reach this function because the
+        // video row is absent, but a crafted route must not touch the missing module.
+        if (!VIDEO_IMPORT_AVAILABLE) {
+            setErrorCode('VIDEO_UNAVAILABLE');
+            setSheetState('error');
+            return;
+        }
         setSheetState('video-extracting');
         try {
             const { ocr, transcript } = await extractFromVideo(uri);
@@ -657,6 +665,10 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     }, [resolve]);
 
     const handleRetry = useCallback(() => {
+        if (errorCode === 'VIDEO_UNAVAILABLE') {
+            setSheetState('menu');
+            return;
+        }
         // Video errors have no URL to re-resolve — re-run the on-device extract.
         if ((errorCode === 'VIDEO_FAILED' || errorCode === 'VIDEO_EMPTY') && lastVideoUriRef.current) {
             runVideoExtraction(lastVideoUriRef.current);
@@ -1493,9 +1505,12 @@ function ErrorPanel({ palette, code, onRetry, onSearchManually }: {
     onSearchManually: () => void;
 }) {
     const isTikTokBusy = code === 'UPSTREAM_RATE_LIMITED';
+    const isVideoUnavailable = code === 'VIDEO_UNAVAILABLE';
     const isVideo = code === 'VIDEO_FAILED' || code === 'VIDEO_EMPTY';
     const msg = isTikTokBusy
         ? 'tiktok is busy — try again in a minute'
+        : isVideoUnavailable
+        ? "video imports aren't available on this device"
         : isVideo
         ? "couldn't read that video — try another"
         : `couldn't read that link — try again`;
@@ -1512,9 +1527,11 @@ function ErrorPanel({ palette, code, onRetry, onSearchManually }: {
                     styles.zeroButton,
                     { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 },
                 ]}
-                accessibilityLabel="retry"
+                accessibilityLabel={isVideoUnavailable ? 'back' : 'retry'}
             >
-                <Text style={[Type.label, { color: palette.textInverse }]}>retry</Text>
+                <Text style={[Type.label, { color: palette.textInverse }]}>
+                    {isVideoUnavailable ? 'back' : 'retry'}
+                </Text>
             </Pressable>
             <Pressable onPress={onSearchManually} hitSlop={8} style={styles.textLinkRow}>
                 <Text style={[Type.bodySmall, { color: palette.textMuted }]}>search manually</Text>

@@ -6,8 +6,8 @@
  * terminal action simply returns to Settings.
  */
 import React from 'react';
-import { View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { Platform, View } from 'react-native';
+import { Redirect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TeachShareSheetDemo } from '@/components/import-education';
@@ -21,6 +21,12 @@ export default function ImportTutorialReplayScreen() {
     const router = useRouter();
 
     const close = () => router.back();
+
+    // The walkthrough simulates the iOS share sheet and share extension. Keep
+    // its route harmless if an Android client opens a stale/deep link directly.
+    if (Platform.OS !== 'ios') {
+        return <Redirect href="/settings" />;
+    }
 
     return (
         <View style={{ flex: 1, backgroundColor: palette.background }}>

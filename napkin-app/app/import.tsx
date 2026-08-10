@@ -17,7 +17,7 @@
  * over a black void with a transparent modal.
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -64,6 +64,14 @@ export default function ImportScreen() {
         // drains on sign-in (single buffer; no pendingImport double-fire). ──
         if (rawVideoParam) {
             const signedIn = !!session;
+            // The video deep link is emitted by the iOS share extension. Treat a
+            // stale/crafted copy opened on Android as unsupported before the App
+            // Group queue can reach the missing Apple-only native module.
+            if (Platform.OS !== 'ios') {
+                toast.show("video imports aren't available on this device");
+                router.replace(signedIn ? ('/wishlist' as any) : '/auth');
+                return;
+            }
             enqueueVideoImport(rawVideoParam, session?.user.id ?? null)
                 .then(() => {
                     // Only claim "importing…" once the manifest is actually queued.
