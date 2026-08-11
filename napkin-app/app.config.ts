@@ -166,6 +166,7 @@ export default ({ config }: ConfigContext): ExpoConfig =>
                 ios: { useFrameworks: 'static' },
             },
         ],
+        './plugins/withMapsStaticPods',
         [
             'expo-image-picker',
             {

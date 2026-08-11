@@ -21,8 +21,7 @@ import {
     Pressable,
     KeyboardAvoidingView,
     Platform,
-    TouchableWithoutFeedback,
-    Keyboard,
+    ScrollView,
     ActivityIndicator,
     AppState,
     Alert,
@@ -88,6 +87,20 @@ AppState.addEventListener('change', (state) => {
 
 type Mode = 'sign-in' | 'sign-up';
 
+const AUTH_TIMEOUT_ERROR = new Error(
+    "Couldn't reach Napkin — check your connection and try again.",
+);
+
+function withAuthTimeout<T>(promise: Promise<T>, ms = 20_000): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(AUTH_TIMEOUT_ERROR), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+    });
+}
+
 export default function AuthScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -115,6 +128,7 @@ export default function AuthScreen() {
             return;
         }
         setLoading(true);
+        let winner: postAuthResume.ResumeResult = null;
         try {
             if (mode === 'sign-in') {
                 // TICKET-055/TICKET-072: consume BEFORE signIn so the resume route replace
@@ -122,8 +136,10 @@ export default function AuthScreen() {
                 // session-flip /feed redirect. If signIn fails, we re-stash the winner.
                 // ARCH-REVIEW-2 #11: consumeWinner peeks both pendingImport + pendingHandoff;
                 // the most-recent stashedAt wins; the loser is preserved in its store.
-                const winner = await postAuthResume.consumeWinner();
-                const { error } = await supabase.auth.signInWithPassword({ email, password });
+                winner = await postAuthResume.consumeWinner();
+                const { error } = await withAuthTimeout(
+                    supabase.auth.signInWithPassword({ email, password }),
+                );
                 if (error) {
                     // Re-stash the winner so the next sign-in attempt can resume.
                     // The loser is still in its store (untouched by consumeWinner).
@@ -137,8 +153,10 @@ export default function AuthScreen() {
                 // Launch-readiness (2026-07-03): sign-UP resumes the pending
                 // share too. The highest-intent cold install — shares a TikTok,
                 // creates an account to save it — used to lose the link here.
-                const winner = await postAuthResume.consumeWinner();
-                const { data, error } = await supabase.auth.signUp({ email, password });
+                winner = await postAuthResume.consumeWinner();
+                const { data, error } = await withAuthTimeout(
+                    supabase.auth.signUp({ email, password }),
+                );
                 if (error) {
                     if (winner) await postAuthResume.restashWinner(winner);
                     Alert.alert("Couldn't create account", error.message);
@@ -151,6 +169,16 @@ export default function AuthScreen() {
                     resumeAfterAuth(winner, router);
                 }
             }
+        } catch (err) {
+            if (winner) await postAuthResume.restashWinner(winner);
+            if (err === AUTH_TIMEOUT_ERROR) {
+                Alert.alert("Couldn't reach Napkin", 'Check your connection and try again.');
+                return;
+            }
+            Alert.alert(
+                mode === 'sign-in' ? "Couldn't sign in" : "Couldn't create account",
+                err instanceof Error ? err.message : 'Please try again.',
+            );
         } finally {
             setLoading(false);
         }
@@ -172,14 +200,23 @@ export default function AuthScreen() {
         // stash was consumed (the {error} branch below covers the non-throw case).
         let winner: Awaited<ReturnType<typeof postAuthResume.consumeWinner>> = null;
         try {
-            const token =
+            // The native credential sheet can fail to call back when the
+            // presenting VC is wrong (iPhone-compat mode on iPad) — without a
+            // bound, `loading` stays true and every button on the screen is
+            // disabled forever. Generous limit: a human typing an Apple ID
+            // password legitimately takes a while.
+            const token = await withAuthTimeout(
                 provider === 'apple'
-                    ? (await appleIdToken()).identityToken
-                    : await googleIdToken();
+                    ? appleIdToken().then((c) => c.identityToken)
+                    : googleIdToken(),
+                90_000,
+            );
             // Consume BEFORE signIn so the resume replace beats RootLayoutNav's
             // session-flip redirect; re-stash on failure (mirrors the password path).
             winner = await postAuthResume.consumeWinner();
-            const { error } = await supabase.auth.signInWithIdToken({ provider, token });
+            const { error } = await withAuthTimeout(
+                supabase.auth.signInWithIdToken({ provider, token }),
+            );
             if (error) {
                 if (winner) await postAuthResume.restashWinner(winner);
                 Alert.alert("Couldn't sign in", error.message);
@@ -190,6 +227,10 @@ export default function AuthScreen() {
             // A throw past consumeWinner would otherwise drop the pending
             // import/handoff stash. (Cancel happens before consume — winner null.)
             if (winner) await postAuthResume.restashWinner(winner);
+            if (err === AUTH_TIMEOUT_ERROR) {
+                Alert.alert("Couldn't reach Napkin", 'Check your connection and try again.');
+                return;
+            }
             // User dismissed the native sheet — silent, no Alert.
             if (err instanceof OAuthCancelledError) return;
             Alert.alert(
@@ -231,209 +272,211 @@ export default function AuthScreen() {
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 style={{ flex: 1, backgroundColor: palette.background }}
             >
-                <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-                    <View
-                        style={[
-                            styles.root,
-                            { paddingTop: insets.top + Spacing.xxl, paddingBottom: insets.bottom + Spacing.lg },
-                        ]}
-                    >
-                        {/* Masthead */}
-                        <View style={styles.masthead}>
-                            <View style={[styles.rule, { backgroundColor: 'rgba(160, 63, 40, 0.25)' }]} />
-                            <Text style={[Type.displayLarge, { color: palette.text, textAlign: 'center' }]}>
-                                Napkin
-                            </Text>
-                            <View style={[styles.rule, { backgroundColor: 'rgba(160, 63, 40, 0.25)' }]} />
+                <ScrollView
+                    style={styles.scroll}
+                    contentContainerStyle={[
+                        styles.root,
+                        { paddingTop: insets.top + Spacing.xxl, paddingBottom: insets.bottom + Spacing.lg },
+                    ]}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    showsVerticalScrollIndicator={false}
+                >
+                    {/* Masthead */}
+                    <View style={styles.masthead}>
+                        <View style={[styles.rule, { backgroundColor: 'rgba(160, 63, 40, 0.25)' }]} />
+                        <Text style={[Type.displayLarge, { color: palette.text, textAlign: 'center' }]}>
+                            Napkin
+                        </Text>
+                        <View style={[styles.rule, { backgroundColor: 'rgba(160, 63, 40, 0.25)' }]} />
+                        <Text
+                            style={[
+                                Type.headlineItalic,
+                                { color: palette.textSecondary, textAlign: 'center', marginTop: Spacing.md },
+                            ]}
+                        >
+                            Every meal worth remembering.
+                        </Text>
+                        {/* TICKET-055: shown when arriving from iOS share extension. */}
+                        {hasPendingImport && (
                             <Text
                                 style={[
                                     Type.headlineItalic,
-                                    { color: palette.textSecondary, textAlign: 'center', marginTop: Spacing.md },
+                                    { color: palette.textMuted, textAlign: 'center', marginTop: Spacing.sm },
                                 ]}
                             >
-                                Every meal worth remembering.
+                                your shared link saves right after.
                             </Text>
-                            {/* TICKET-055: shown when arriving from iOS share extension. */}
-                            {hasPendingImport && (
-                                <Text
-                                    style={[
-                                        Type.headlineItalic,
-                                        { color: palette.textMuted, textAlign: 'center', marginTop: Spacing.sm },
-                                    ]}
-                                >
-                                    your shared link saves right after.
-                                </Text>
-                            )}
+                        )}
+                    </View>
+
+                    {/* Form */}
+                    <View style={styles.form}>
+                        <FieldLabel palette={palette}>Email</FieldLabel>
+                        <View
+                            style={[
+                                styles.underline,
+                                {
+                                    borderBottomColor: emailFocused
+                                        ? palette.primary
+                                        : 'rgba(138, 114, 108, 0.25)',
+                                    borderBottomWidth: emailFocused ? 2 : 1,
+                                },
+                            ]}
+                        >
+                            <TextInput
+                                value={email}
+                                onChangeText={setEmail}
+                                onFocus={() => setEmailFocused(true)}
+                                onBlur={() => setEmailFocused(false)}
+                                placeholder="you@somewhere"
+                                placeholderTextColor={palette.textMuted}
+                                autoCapitalize="none"
+                                keyboardType="email-address"
+                                autoComplete="email"
+                                textContentType="emailAddress"
+                                style={[styles.input, Type.body, { color: palette.text }]}
+                            />
                         </View>
 
-                        {/* Form */}
-                        <View style={styles.form}>
-                            <FieldLabel palette={palette}>Email</FieldLabel>
-                            <View
-                                style={[
-                                    styles.underline,
-                                    {
-                                        borderBottomColor: emailFocused
-                                            ? palette.primary
-                                            : 'rgba(138, 114, 108, 0.25)',
-                                        borderBottomWidth: emailFocused ? 2 : 1,
-                                    },
-                                ]}
+                        <View style={{ height: Spacing.lg }} />
+
+                        <FieldLabel palette={palette}>Password</FieldLabel>
+                        <View
+                            style={[
+                                styles.underline,
+                                {
+                                    borderBottomColor: passwordFocused
+                                        ? palette.primary
+                                        : 'rgba(138, 114, 108, 0.25)',
+                                    borderBottomWidth: passwordFocused ? 2 : 1,
+                                },
+                            ]}
+                        >
+                            <TextInput
+                                value={password}
+                                onChangeText={setPassword}
+                                onFocus={() => setPasswordFocused(true)}
+                                onBlur={() => setPasswordFocused(false)}
+                                placeholder="••••••••"
+                                placeholderTextColor={palette.textMuted}
+                                secureTextEntry
+                                autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
+                                textContentType={mode === 'sign-in' ? 'password' : 'newPassword'}
+                                style={[styles.input, Type.body, { color: palette.text }]}
+                            />
+                        </View>
+
+                        {/* TICKET-126: one implicit-acceptance line governing
+                            email submit AND the available OAuth buttons. Manrope, muted,
+                            not italic serif (an instruction, not a brand moment);
+                            Terms + Privacy tap out to the legal pages. */}
+                        <Text style={[styles.legal, { color: palette.textMuted }]}>
+                            by continuing you confirm you&rsquo;re 13+ and agree to the{' '}
+                            <Text
+                                style={[styles.legalLink, { color: palette.textSecondary }]}
+                                onPress={() => Linking.openURL(LEGAL_URLS.terms)}
                             >
-                                <TextInput
-                                    value={email}
-                                    onChangeText={setEmail}
-                                    onFocus={() => setEmailFocused(true)}
-                                    onBlur={() => setEmailFocused(false)}
-                                    placeholder="you@somewhere"
-                                    placeholderTextColor={palette.textMuted}
-                                    autoCapitalize="none"
-                                    keyboardType="email-address"
-                                    autoComplete="email"
-                                    textContentType="emailAddress"
-                                    style={[styles.input, Type.body, { color: palette.text }]}
-                                />
-                            </View>
-
-                            <View style={{ height: Spacing.lg }} />
-
-                            <FieldLabel palette={palette}>Password</FieldLabel>
-                            <View
-                                style={[
-                                    styles.underline,
-                                    {
-                                        borderBottomColor: passwordFocused
-                                            ? palette.primary
-                                            : 'rgba(138, 114, 108, 0.25)',
-                                        borderBottomWidth: passwordFocused ? 2 : 1,
-                                    },
-                                ]}
-                            >
-                                <TextInput
-                                    value={password}
-                                    onChangeText={setPassword}
-                                    onFocus={() => setPasswordFocused(true)}
-                                    onBlur={() => setPasswordFocused(false)}
-                                    placeholder="••••••••"
-                                    placeholderTextColor={palette.textMuted}
-                                    secureTextEntry
-                                    autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
-                                    textContentType={mode === 'sign-in' ? 'password' : 'newPassword'}
-                                    style={[styles.input, Type.body, { color: palette.text }]}
-                                />
-                            </View>
-
-                            {/* TICKET-126: one implicit-acceptance line governing
-                                email submit AND the available OAuth buttons. Manrope, muted,
-                                not italic serif (an instruction, not a brand moment);
-                                Terms + Privacy tap out to the legal pages. */}
-                            <Text style={[styles.legal, { color: palette.textMuted }]}>
-                                by continuing you confirm you&rsquo;re 13+ and agree to the{' '}
-                                <Text
-                                    style={[styles.legalLink, { color: palette.textSecondary }]}
-                                    onPress={() => Linking.openURL(LEGAL_URLS.terms)}
-                                >
-                                    Terms
-                                </Text>
-                                {' & '}
-                                <Text
-                                    style={[styles.legalLink, { color: palette.textSecondary }]}
-                                    onPress={() => Linking.openURL(LEGAL_URLS.privacy)}
-                                >
-                                    Privacy Policy
-                                </Text>
+                                Terms
                             </Text>
-
-                            {/* Primary CTA — terracotta pill */}
-                            <Pressable
-                                onPress={submit}
-                                disabled={loading}
-                                style={({ pressed }) => [
-                                    styles.cta,
-                                    {
-                                        backgroundColor: palette.primary,
-                                        opacity: pressed || loading ? 0.85 : 1,
-                                        marginTop: Spacing.lg,
-                                    },
-                                ]}
+                            {' & '}
+                            <Text
+                                style={[styles.legalLink, { color: palette.textSecondary }]}
+                                onPress={() => Linking.openURL(LEGAL_URLS.privacy)}
                             >
-                                {loading ? (
-                                    <ActivityIndicator color={palette.textInverse} />
-                                ) : (
-                                    <Text style={[Type.label, { color: palette.textInverse }]}>{ctaLabel}</Text>
-                                )}
-                            </Pressable>
+                                Privacy Policy
+                            </Text>
+                        </Text>
 
-                            {/* TICKET-110: OAuth — ghosted "or" rule + Apple/Google. */}
-                            <View style={styles.orRow}>
-                                <View style={[styles.orRule, { backgroundColor: 'rgba(138, 114, 108, 0.2)' }]} />
-                                <Text style={[Type.labelSmall, { color: palette.textMuted, marginHorizontal: Spacing.md }]}>
-                                    or
-                                </Text>
-                                <View style={[styles.orRule, { backgroundColor: 'rgba(138, 114, 108, 0.2)' }]} />
-                            </View>
+                        {/* Primary CTA — terracotta pill */}
+                        <Pressable
+                            onPress={submit}
+                            disabled={loading}
+                            style={({ pressed }) => [
+                                styles.cta,
+                                {
+                                    backgroundColor: palette.primary,
+                                    opacity: pressed || loading ? 0.85 : 1,
+                                    marginTop: Spacing.lg,
+                                },
+                            ]}
+                        >
+                            {loading ? (
+                                <ActivityIndicator color={palette.textInverse} />
+                            ) : (
+                                <Text style={[Type.label, { color: palette.textInverse }]}>{ctaLabel}</Text>
+                            )}
+                        </Pressable>
 
-                            {/* Apple Authentication is iOS-only. Android shows
-                                email + Google without a dead native affordance. */}
-                            {Platform.OS === 'ios' ? (
-                                <Pressable
-                                    onPress={() => signInWithProvider('apple')}
-                                    disabled={loading}
-                                    style={({ pressed }) => [
-                                        styles.oauthBtn,
-                                        { backgroundColor: '#000000', opacity: pressed || loading ? 0.85 : 1 },
-                                    ]}
-                                >
-                                    <Ionicons name="logo-apple" size={18} color="#ffffff" style={styles.oauthIcon} />
-                                    <Text style={[Type.label, { color: '#ffffff' }]}>Continue with Apple</Text>
-                                </Pressable>
-                            ) : null}
+                        {/* TICKET-110: OAuth — ghosted "or" rule + Apple/Google. */}
+                        <View style={styles.orRow}>
+                            <View style={[styles.orRule, { backgroundColor: 'rgba(138, 114, 108, 0.2)' }]} />
+                            <Text style={[Type.labelSmall, { color: palette.textMuted, marginHorizontal: Spacing.md }]}>
+                                or
+                            </Text>
+                            <View style={[styles.orRule, { backgroundColor: 'rgba(138, 114, 108, 0.2)' }]} />
+                        </View>
 
-                            {/* Google — light surface, hairline warm rule. */}
+                        {/* Apple Authentication is iOS-only. Android shows
+                            email + Google without a dead native affordance. */}
+                        {Platform.OS === 'ios' ? (
                             <Pressable
-                                onPress={() => signInWithProvider('google')}
+                                onPress={() => signInWithProvider('apple')}
                                 disabled={loading}
                                 style={({ pressed }) => [
                                     styles.oauthBtn,
-                                    {
-                                        backgroundColor: palette.surfaceNote,
-                                        borderWidth: StyleSheet.hairlineWidth,
-                                        borderColor: 'rgba(138, 114, 108, 0.35)',
-                                        opacity: pressed || loading ? 0.85 : 1,
-                                    },
-                                    Platform.OS === 'ios' ? { marginTop: Spacing.md } : null,
+                                    { backgroundColor: '#000000', opacity: pressed || loading ? 0.85 : 1 },
                                 ]}
                             >
-                                <Ionicons name="logo-google" size={18} color={palette.text} style={styles.oauthIcon} />
-                                <Text style={[Type.label, { color: palette.text }]}>Continue with Google</Text>
+                                <Ionicons name="logo-apple" size={18} color="#ffffff" style={styles.oauthIcon} />
+                                <Text style={[Type.label, { color: '#ffffff' }]}>Continue with Apple</Text>
                             </Pressable>
+                        ) : null}
 
-                            {/* Mode toggle */}
-                            <Pressable
-                                onPress={() => setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
-                                style={styles.toggle}
-                                hitSlop={12}
-                            >
-                                <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
-                                    {toggleLabel}
+                        {/* Google — light surface, hairline warm rule. */}
+                        <Pressable
+                            onPress={() => signInWithProvider('google')}
+                            disabled={loading}
+                            style={({ pressed }) => [
+                                styles.oauthBtn,
+                                {
+                                    backgroundColor: palette.surfaceNote,
+                                    borderWidth: StyleSheet.hairlineWidth,
+                                    borderColor: 'rgba(138, 114, 108, 0.35)',
+                                    opacity: pressed || loading ? 0.85 : 1,
+                                },
+                                Platform.OS === 'ios' ? { marginTop: Spacing.md } : null,
+                            ]}
+                        >
+                            <Ionicons name="logo-google" size={18} color={palette.text} style={styles.oauthIcon} />
+                            <Text style={[Type.label, { color: palette.text }]}>Continue with Google</Text>
+                        </Pressable>
+
+                        {/* Mode toggle */}
+                        <Pressable
+                            onPress={() => setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
+                            style={styles.toggle}
+                            hitSlop={12}
+                        >
+                            <Text style={[Type.bodySmall, { color: palette.textSecondary }]}>
+                                {toggleLabel}
+                            </Text>
+                        </Pressable>
+
+                        {mode === 'sign-in' && (
+                            <Pressable onPress={forgotPassword} style={styles.forgot} hitSlop={12}>
+                                <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
+                                    forgot password?
                                 </Text>
                             </Pressable>
-
-                            {mode === 'sign-in' && (
-                                <Pressable onPress={forgotPassword} style={styles.forgot} hitSlop={12}>
-                                    <Text style={[Type.bodySmall, { color: palette.textMuted }]}>
-                                        forgot password?
-                                    </Text>
-                                </Pressable>
-                            )}
-                        </View>
-
-                        {/* Footer flourish */}
-                        <Text style={[Type.labelSmall, styles.footer, { color: palette.textMuted }]}>
-                            est. at the table
-                        </Text>
+                        )}
                     </View>
-                </TouchableWithoutFeedback>
+
+                    {/* Footer flourish */}
+                    <Text style={[Type.labelSmall, styles.footer, { color: palette.textMuted }]}>
+                        est. at the table
+                    </Text>
+                </ScrollView>
             </KeyboardAvoidingView>
         </>
     );
@@ -454,8 +497,11 @@ function FieldLabel({
 }
 
 const styles = StyleSheet.create({
-    root: {
+    scroll: {
         flex: 1,
+    },
+    root: {
+        flexGrow: 1,
         paddingHorizontal: Spacing.xl,
         justifyContent: 'space-between',
     },
