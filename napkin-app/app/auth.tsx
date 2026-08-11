@@ -91,10 +91,10 @@ const AUTH_TIMEOUT_ERROR = new Error(
     "Couldn't reach Napkin — check your connection and try again.",
 );
 
-function withAuthTimeout<T>(promise: Promise<T>): Promise<T> {
+function withAuthTimeout<T>(promise: Promise<T>, ms = 20_000): Promise<T> {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(AUTH_TIMEOUT_ERROR), 20_000);
+        timeoutId = setTimeout(() => reject(AUTH_TIMEOUT_ERROR), ms);
     });
     return Promise.race([promise, timeout]).finally(() => {
         if (timeoutId !== undefined) clearTimeout(timeoutId);
@@ -200,10 +200,17 @@ export default function AuthScreen() {
         // stash was consumed (the {error} branch below covers the non-throw case).
         let winner: Awaited<ReturnType<typeof postAuthResume.consumeWinner>> = null;
         try {
-            const token =
+            // The native credential sheet can fail to call back when the
+            // presenting VC is wrong (iPhone-compat mode on iPad) — without a
+            // bound, `loading` stays true and every button on the screen is
+            // disabled forever. Generous limit: a human typing an Apple ID
+            // password legitimately takes a while.
+            const token = await withAuthTimeout(
                 provider === 'apple'
-                    ? (await appleIdToken()).identityToken
-                    : await googleIdToken();
+                    ? appleIdToken().then((c) => c.identityToken)
+                    : googleIdToken(),
+                90_000,
+            );
             // Consume BEFORE signIn so the resume replace beats RootLayoutNav's
             // session-flip redirect; re-stash on failure (mirrors the password path).
             winner = await postAuthResume.consumeWinner();
