@@ -1,0 +1,69 @@
+diff --git a/node_modules/react-native-screens/ios/RNSScreen.mm b/node_modules/react-native-screens/ios/RNSScreen.mm
+index b62a2e2..a8d426a 100644
+--- a/node_modules/react-native-screens/ios/RNSScreen.mm
++++ b/node_modules/react-native-screens/ios/RNSScreen.mm
+@@ -153,6 +153,40 @@ RNS_IGNORE_SUPER_CALL_BEGIN
+ RNS_IGNORE_SUPER_CALL_END
+ #endif
+ 
++#ifdef RCT_NEW_ARCH_ENABLED
++/// Re-imposes the screen's own size on our content wrapper when React left a stale frame there.
++///
++/// Symptom this fixes: on a cold launch the first screen mounted in a native stack can end up with a
++/// `RNSScreenContentWrapper` whose native frame is shorter than the screen (e.g. 758 vs 874pt on an
++/// iPhone 17 Pro) while the wrapper's own children already got the final height. The wrapper does not
++/// clip, so the content still paints, but `-hitTest:withEvent:` returns nil below the stale height and
++/// the bottom band of the screen becomes completely untouchable.
++///
++/// Here UIKit owns the screen's size (the size is pushed to the shadow tree from `-updateBounds`), so
++/// `self.bounds` is the source of truth. `formSheet` is excluded: there the wrapper's height is
++/// deliberately content-driven because it drives the sheet detents (see
++/// `-contentWrapper:receivedReactFrame:`). The origin is preserved — with a translucent/large header the
++/// shadow tree offsets the content via `contentOffset`, not by moving the wrapper.
++- (void)syncContentWrapperSizeToScreenBoundsIfNeeded
++{
++  if (_stackPresentation == RNSScreenStackPresentationFormSheet) {
++    return;
++  }
++
++  RNSScreenContentWrapper *_Nullable contentWrapper = _contentWrapperBox.contentWrapper;
++  const CGSize screenSize = self.bounds.size;
++
++  if (contentWrapper == nil || screenSize.width <= 0 || screenSize.height <= 0 ||
++      CGSizeEqualToSize(contentWrapper.bounds.size, screenSize)) {
++    return;
++  }
++
++  CGRect correctedFrame = contentWrapper.frame;
++  correctedFrame.size = screenSize;
++  contentWrapper.frame = correctedFrame;
++}
++#endif // RCT_NEW_ARCH_ENABLED
++
+ - (void)updateBounds
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+@@ -177,6 +211,8 @@ RNS_IGNORE_SUPER_CALL_END
+     UINavigationController *navctr = _controller.navigationController;
+     [navctr.view setNeedsLayout];
+   }
++
++  [self syncContentWrapperSizeToScreenBoundsIfNeeded];
+ #else
+   [_bridge.uiManager setSize:self.bounds.size forView:self];
+ #endif // RCT_NEW_ARCH_ENABLED
+@@ -448,6 +484,14 @@ RNS_IGNORE_SUPER_CALL_END
+ /// This is RNSScreenContentWrapperDelegate method, where we do get notified when React did update frame of our child.
+ - (void)contentWrapper:(RNSScreenContentWrapper *)contentWrapper receivedReactFrame:(CGRect)reactFrame
+ {
++#ifdef RCT_NEW_ARCH_ENABLED
++  // React just wrote a frame to our content wrapper. Outside of formSheet the wrapper must span the
++  // whole screen, so a disagreeing frame is stale and would leave an untouchable band at the bottom of
++  // the screen. Correct it here as well as from `-updateBounds`, because the wrapper can receive its
++  // (stale) frame after the last UIKit layout pass of this screen.
++  [self syncContentWrapperSizeToScreenBoundsIfNeeded];
++#endif // RCT_NEW_ARCH_ENABLED
++
+   // We want to update and animate allowedDetents for FormSheet only if there was a change
+   // in frame's height but sometimes we receive a frame with the same dimensions mutliple times.
+   // In order to prevent visual glitches, we compare new value to the old one and update
