@@ -10,8 +10,16 @@ type VisibleEntryIdRow = {
 export type EntryVisibilityRpcClient = {
     rpc: (
         name: 'fn_visible_entry_ids',
-        args: { p_viewer: string; p_entry_ids: string[] },
+        args: {
+            p_viewer: string;
+            p_entry_ids: string[];
+            p_require_content: boolean;
+        },
     ) => PromiseLike<{ data: VisibleEntryIdRow[] | null; error: unknown }>;
+};
+
+export type EntryVisibilityOptions = {
+    requireContent: boolean;
 };
 
 /**
@@ -23,6 +31,7 @@ export async function loadVisibleEntryIds(
     supabase: EntryVisibilityRpcClient,
     viewerId: string,
     candidates: EntryVisibilityCandidate[],
+    options: EntryVisibilityOptions,
 ): Promise<Set<string>> {
     const visibleIds = new Set<string>();
     const nonSelfIds = new Set<string>();
@@ -42,6 +51,7 @@ export async function loadVisibleEntryIds(
     const { data, error } = await supabase.rpc('fn_visible_entry_ids', {
         p_viewer: viewerId,
         p_entry_ids: entryIds,
+        p_require_content: options.requireContent,
     });
     if (error) throw error;
 
@@ -51,19 +61,4 @@ export async function loadVisibleEntryIds(
     }
 
     return visibleIds;
-}
-
-/** Applies one resolved visibility set to both restaurant-page signal sources. */
-export function filterVisibleEntrySignals<
-    TEntry extends { id: string },
-    TPhoto extends { entry_id: string },
->(
-    visibleIds: ReadonlySet<string>,
-    entries: TEntry[],
-    photos: TPhoto[],
-): { entries: TEntry[]; photos: TPhoto[] } {
-    return {
-        entries: entries.filter((entry) => visibleIds.has(entry.id)),
-        photos: photos.filter((photo) => visibleIds.has(photo.entry_id)),
-    };
 }

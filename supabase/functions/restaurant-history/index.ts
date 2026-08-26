@@ -39,7 +39,7 @@ import { isInstagramUrl } from '../_shared/socialHost.ts';
 // SAME normalizer the capture action and backfill import, so read/capture/
 // backfill keys never diverge.
 import { contentKey } from '../_shared/videoUrlKey.ts';
-import { filterVisibleEntrySignals, loadVisibleEntryIds } from './entryVisibility.ts';
+import { loadVisibleEntryIds } from './entryVisibility.ts';
 import { isPeekCardContext, loadPeekCard } from './peekCard.ts';
 
 type Visit = {
@@ -1357,10 +1357,9 @@ serve(async (req) => {
             const yourTableDist: number[] | null = tableChip ? buildDistribution(tableRatings) : null;
 
             // ── v3: Napkin distribution + photos ──
-            // Both surfaces must share the same canonical entry gate. The service-role
-            // client bypasses RLS, so collect both candidate sets first and resolve all
-            // non-self IDs through one SECURITY DEFINER batch RPC before rendering or
-            // aggregating anything authored by another user.
+            // The service-role client bypasses RLS, so both surfaces need an explicit
+            // viewer gate. Ratings intentionally accept silent logs; photos preserve
+            // can_view_entry's review-content floor. Each source stays batched.
             const { data: napkinEntryRows, error: napkinErr } = await supabase
                 .from('entries')
                 .select('id, user_id, rating')
@@ -1388,23 +1387,25 @@ serve(async (req) => {
 
             const napkinCandidates = napkinErr ? [] : (napkinEntryRows ?? []) as any[];
             const photoCandidates = photoErr ? [] : (entryPhotoRows ?? []) as any[];
-            const visibleEntryIds = await loadVisibleEntryIds(supabase, user.id, [
-                ...napkinCandidates.map((entry: any) => ({
-                    entryId: entry.id as string,
-                    authorId: entry.user_id as string | null,
-                })),
-                ...photoCandidates.map((photo: any) => ({
-                    entryId: photo.entry_id as string,
-                    authorId: photo.entries?.user_id as string | null,
-                })),
+            const aggregateVisibilityCandidates = napkinCandidates.map((entry: any) => ({
+                entryId: entry.id as string,
+                authorId: entry.user_id as string | null,
+            }));
+            const photoVisibilityCandidates = photoCandidates.map((photo: any) => ({
+                entryId: photo.entry_id as string,
+                authorId: photo.entries?.user_id as string | null,
+            }));
+            const [aggregateVisibleEntryIds, photoVisibleEntryIds] = await Promise.all([
+                loadVisibleEntryIds(supabase, user.id, aggregateVisibilityCandidates, {
+                    requireContent: false,
+                }),
+                loadVisibleEntryIds(supabase, user.id, photoVisibilityCandidates, {
+                    requireContent: true,
+                }),
             ]);
 
-            const visibleSignals = filterVisibleEntrySignals(
-                visibleEntryIds,
-                napkinCandidates,
-                photoCandidates,
-            );
-            const napkinRatings = visibleSignals.entries
+            const napkinRatings = napkinCandidates
+                .filter((entry: any) => aggregateVisibleEntryIds.has(entry.id as string))
                 .map((entry: any) => entry.rating as number);
             const napkinDist = buildDistribution(napkinRatings);
             const napkinAverage = napkinRatings.length > 0
@@ -1417,9 +1418,11 @@ serve(async (req) => {
 
             {
                 if (!photoErr && entryPhotoRows) {
-                    // All rows are already restaurant-scoped by the server-side join and now
-                    // share the same viewer-specific gate as the aggregate above.
-                    const relevantPhotos = visibleSignals.photos;
+                    // All rows are restaurant-scoped by the server-side join; this stricter
+                    // set additionally preserves canonical review-content parity.
+                    const relevantPhotos = photoCandidates.filter((photo: any) =>
+                        photoVisibleEntryIds.has(photo.entry_id as string)
+                    );
 
                     // Collect all user IDs to fetch profiles
                     const photoUserIds = [...new Set(relevantPhotos.map((p: any) => p.entries?.user_id as string).filter(Boolean))];

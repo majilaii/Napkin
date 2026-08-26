@@ -238,10 +238,14 @@ export default function RestaurantScreen() {
 
     const restaurant: RestaurantPageRestaurant | null =
         pageData?.restaurant ?? ghostRestaurant ?? null;
+    // TICKET-217 adversarial review: a ghost deep link whose Place lookup
+    // failed has nothing to render either — the ghost exemption only holds
+    // while the payload/lookup path is still viable.
+    const ghostLookupFailed = needsPlaceLookup && placeLookup.isError;
     const showRestaurantErrorShell = shouldShowRestaurantErrorShell({
-        hasError: !!error,
+        hasError: !!error || ghostLookupFailed,
         hasRestaurant: !!restaurant,
-        isGhost,
+        isGhost: isGhost && !ghostLookupFailed,
     });
 
     // ── Lazy backfill ─────────────────────────────────────────────────────
@@ -652,7 +656,10 @@ export default function RestaurantScreen() {
                     <View style={styles.errorBody}>
                         <ErrorState
                             message="could not load this restaurant."
-                            onRetry={() => void refetch()}
+                            onRetry={() => {
+                                if (ghostLookupFailed) void placeLookup.refetch();
+                                if (restaurantId) void refetch();
+                            }}
                         />
                     </View>
                 </View>

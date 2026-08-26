@@ -1,14 +1,19 @@
 import { assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
-    filterVisibleEntrySignals,
     loadVisibleEntryIds,
     type EntryVisibilityRpcClient,
 } from './entryVisibility.ts';
 
 const VIEWER = 'viewer-id';
 
+type RpcArgs = {
+    p_viewer: string;
+    p_entry_ids: string[];
+    p_require_content: boolean;
+};
+
 function fakeClient(
-    visibleIds: string[] = [],
+    visibleIds: string[] | ((args: RpcArgs) => string[]) = [],
     error: Error | null = null,
 ): { client: EntryVisibilityRpcClient; calls: Array<{ name: string; args: Record<string, unknown> }> } {
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -17,8 +22,11 @@ function fakeClient(
         client: {
             rpc(name, args) {
                 calls.push({ name, args });
+                const resolvedIds = typeof visibleIds === 'function'
+                    ? visibleIds(args)
+                    : visibleIds;
                 return Promise.resolve({
-                    data: visibleIds.map((entry_id) => ({ entry_id })),
+                    data: resolvedIds.map((entry_id) => ({ entry_id })),
                     error,
                 });
             },
@@ -30,45 +38,57 @@ Deno.test('restaurant page visibility: self-only candidates skip the batch RPC',
     const { client, calls } = fakeClient();
     const visible = await loadVisibleEntryIds(client, VIEWER, [
         { entryId: 'self-entry', authorId: VIEWER },
-    ]);
+    ], { requireContent: false });
 
     assertEquals([...visible], ['self-entry']);
     assertEquals(calls, []);
 });
 
-Deno.test('restaurant page visibility: aggregate and photos share one deduplicated batch gate', async () => {
-    const { client, calls } = fakeClient(['visible-entry', 'not-requested']);
-    const visible = await loadVisibleEntryIds(client, VIEWER, [
-        { entryId: 'self-entry', authorId: VIEWER },
-        { entryId: 'visible-entry', authorId: 'author-a' },
-        { entryId: 'visible-entry', authorId: 'author-a' },
-        { entryId: 'withheld-entry', authorId: 'author-b' },
-    ]);
-
-    assertEquals([...visible], ['self-entry', 'visible-entry']);
-    assertEquals(calls, [{
-        name: 'fn_visible_entry_ids',
-        args: {
-            p_viewer: VIEWER,
-            p_entry_ids: ['visible-entry', 'withheld-entry'],
-        },
-    }]);
-
-    const signals = filterVisibleEntrySignals(
-        visible,
-        [
-            { id: 'visible-entry', rating: 4.5 },
-            { id: 'withheld-entry', rating: 2.0 },
-        ],
-        [
-            { entry_id: 'visible-entry', photo_url: 'visible.jpg' },
-            { entry_id: 'withheld-entry', photo_url: 'withheld.jpg' },
-        ],
+Deno.test('restaurant page visibility: aggregate and photos request separate content modes', async () => {
+    const { client, calls } = fakeClient((args) =>
+        args.p_require_content
+            ? ['review-entry', 'not-requested']
+            : ['silent-rating', 'review-entry', 'not-requested']
     );
-    assertEquals(signals, {
-        entries: [{ id: 'visible-entry', rating: 4.5 }],
-        photos: [{ entry_id: 'visible-entry', photo_url: 'visible.jpg' }],
-    });
+    const candidates = [
+        { entryId: 'silent-rating', authorId: 'author-a' },
+        { entryId: 'silent-rating', authorId: 'author-a' },
+        { entryId: 'review-entry', authorId: 'author-b' },
+    ];
+
+    const aggregateVisible = await loadVisibleEntryIds(
+        client,
+        VIEWER,
+        candidates,
+        { requireContent: false },
+    );
+    const photoVisible = await loadVisibleEntryIds(
+        client,
+        VIEWER,
+        candidates,
+        { requireContent: true },
+    );
+
+    assertEquals([...aggregateVisible], ['silent-rating', 'review-entry']);
+    assertEquals([...photoVisible], ['review-entry']);
+    assertEquals(calls, [
+        {
+            name: 'fn_visible_entry_ids',
+            args: {
+                p_viewer: VIEWER,
+                p_entry_ids: ['silent-rating', 'review-entry'],
+                p_require_content: false,
+            },
+        },
+        {
+            name: 'fn_visible_entry_ids',
+            args: {
+                p_viewer: VIEWER,
+                p_entry_ids: ['silent-rating', 'review-entry'],
+                p_require_content: true,
+            },
+        },
+    ]);
 });
 
 Deno.test('restaurant page visibility: batch RPC errors fail closed', async () => {
@@ -77,7 +97,7 @@ Deno.test('restaurant page visibility: batch RPC errors fail closed', async () =
     await assertRejects(
         () => loadVisibleEntryIds(client, VIEWER, [
             { entryId: 'other-entry', authorId: 'author-a' },
-        ]),
+        ], { requireContent: true }),
         Error,
         'visibility lookup failed',
     );
@@ -88,7 +108,7 @@ Deno.test({
     ignore: true,
     fn() {
         // Requires a migrated Postgres fixture: fn_visible_entry_ids is SECURITY
-        // DEFINER and its account/block/Table branches cannot be simulated by
-        // the hermetic Edge Function client seam above.
+        // DEFINER and its account/block/Table/content-mode branches cannot be
+        // simulated by the hermetic Edge Function client seam above.
     },
 });

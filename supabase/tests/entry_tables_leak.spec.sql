@@ -3,8 +3,8 @@
 -- Validates the core privacy invariant: a member of Table B must NEVER learn
 -- that an entry is also posted to Table A, even when entries.table_id = A (legacy).
 --
--- Run after all TICKET-043 migrations are applied.
--- Assumes the same three users created for rls-entries-seed.sql:
+-- Run after all repository migrations are applied. The spec self-seeds these
+-- three auth users and their profiles:
 --   A (Alice): 11111111-1111-1111-1111-111111111111
 --   B (Bob):   22222222-2222-2222-2222-222222222222
 --   C (Carol): 33333333-3333-3333-3333-333333333333
@@ -16,6 +16,19 @@
 -- SEED
 -- ─────────────────────────────────────────────────────────────────────────────
 BEGIN;
+
+-- Fixture users. Replay databases start with auth.users empty, and profiles
+-- has a foreign key to auth.users(id), so this seed must precede profiles.
+INSERT INTO auth.users (instance_id, id, aud, role, email, created_at, updated_at, raw_app_meta_data, raw_user_meta_data)
+SELECT
+  '00000000-0000-0000-0000-000000000000', u.id, 'authenticated', 'authenticated',
+  u.email, now(), now(), '{"provider":"email","providers":["email"]}', jsonb_build_object('display_name', u.dn)
+FROM (VALUES
+  ('11111111-1111-1111-1111-111111111111'::uuid, 'alice@entry-tables-test.invalid', 'Alice'),
+  ('22222222-2222-2222-2222-222222222222'::uuid, 'bob@entry-tables-test.invalid', 'Bob'),
+  ('33333333-3333-3333-3333-333333333333'::uuid, 'carol@entry-tables-test.invalid', 'Carol')
+) AS u(id, email, dn)
+ON CONFLICT (id) DO NOTHING;
 
 -- Ensure profiles exist (idempotent merge).
 INSERT INTO public.profiles (user_id, display_name, account_privacy)
@@ -313,6 +326,19 @@ DECLARE
 BEGIN
   RESET ROLE; -- service_role for RPC
 
+  ASSERT (
+    SELECT p.pronargdefaults = 1
+    FROM pg_catalog.pg_proc p
+    WHERE p.oid = 'public.fn_visible_entry_ids(uuid,uuid[],boolean)'::regprocedure
+  ), 'FAIL [visibility helper]: p_require_content must be the single defaulted argument';
+
+  -- The two-argument form must continue to resolve to p_require_content=true.
+  PERFORM *
+  FROM public.fn_visible_entry_ids(
+    '11111111-1111-1111-1111-111111111111'::uuid,
+    ARRAY[]::uuid[]
+  );
+
   SELECT entry_id INTO table_entry_id
   FROM public.fn_create_entry_with_tables(
     '11111111-1111-1111-1111-111111111111'::uuid,
@@ -374,4 +400,8 @@ DELETE FROM public.tables WHERE id IN (
 
 COMMIT;
 
-RAISE NOTICE 'All entry_tables leak tests passed.';
+DO $done$
+BEGIN
+  RAISE NOTICE 'All entry_tables leak tests passed.';
+END;
+$done$;

@@ -1704,10 +1704,12 @@ serve(async (req) => {
                 value_profile: value_profile ?? null,
                 visited_at: visitedAtValue,
                 // Founder order 2026-07-22: an omitted visibility on CREATE means
-                // the user made no privacy choice — default public-eligible
-                // ('friends'), not 'private'. Explicit 'private' still wins; the
-                // edit/merge and supper-take paths keep their own semantics.
-                visibility: visibility ?? 'friends',
+                // the user made no privacy choice — default 'table' when the
+                // request carries tables, else public-eligible 'friends', never
+                // 'private'. Explicit 'private' still wins; the edit/merge and
+                // supper-take paths keep their own semantics. (TICKET-217
+                // adversarial review: keep in sync with fn_create_entry_with_tables.)
+                visibility: visibility ?? (effectiveTableIds.length > 0 ? 'table' : 'friends'),
                 ...(vibe_rating != null ? { vibe_rating } : {}),
                 ...(flavor_rating != null ? { flavor_rating } : {}),
                 ...(service_rating != null ? { service_rating } : {}),

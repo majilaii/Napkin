@@ -6,7 +6,8 @@
 -- endpoint with an explicit viewer.
 CREATE OR REPLACE FUNCTION public.fn_visible_entry_ids(
     p_viewer uuid,
-    p_entry_ids uuid[]
+    p_entry_ids uuid[],
+    p_require_content boolean DEFAULT true
 )
 RETURNS TABLE (entry_id uuid)
 LANGUAGE sql
@@ -43,12 +44,17 @@ AS $visible_entry_ids$
                   -- Branch 3: tagged companion.
                   OR public.is_entry_companion(e.id, p_viewer)
 
-                  -- Branch 4: public-eligible entry from a public account.
+                  -- Branch 4: public-account entry. Photo rails keep exact
+                  -- can_view_entry content parity; rating aggregates opt out
+                  -- because silent ratings are still valid palate signals.
                   OR (
                       e.visibility <> 'private'
                       AND e.restaurant_id IS NOT NULL
                       AND e.rating IS NOT NULL
-                      AND pg_catalog.char_length(pg_catalog.btrim(COALESCE(e.content, ''))) >= 1
+                      AND (
+                          NOT COALESCE(p_require_content, true)
+                          OR pg_catalog.char_length(pg_catalog.btrim(COALESCE(e.content, ''))) >= 1
+                      )
                       AND EXISTS (
                           SELECT 1
                           FROM public.profiles p
@@ -68,15 +74,16 @@ AS $visible_entry_ids$
       );
 $visible_entry_ids$;
 
-COMMENT ON FUNCTION public.fn_visible_entry_ids(uuid, uuid[]) IS
+COMMENT ON FUNCTION public.fn_visible_entry_ids(uuid, uuid[], boolean) IS
     'TICKET-217 service-role batch counterpart to can_view_entry: returns only '
     'requested entries visible to p_viewer, with bidirectional blocks enforced '
-    'across every non-author branch. Keep its five branches synchronized with '
-    'the canonical can_view_entry predicate.';
+    'across every non-author branch. p_require_content defaults true for exact '
+    'can_view_entry photo parity; rating aggregates pass false so silent ratings '
+    'remain valid. Keep the remaining five-branch predicate synchronized.';
 
-REVOKE ALL ON FUNCTION public.fn_visible_entry_ids(uuid, uuid[])
+REVOKE ALL ON FUNCTION public.fn_visible_entry_ids(uuid, uuid[], boolean)
     FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.fn_visible_entry_ids(uuid, uuid[]) TO service_role;
+GRANT EXECUTE ON FUNCTION public.fn_visible_entry_ids(uuid, uuid[], boolean) TO service_role;
 
 -- TICKET-217 P1-4: newest definition copied from
 -- 20260716123000_image_moderation_writers.sql. The only behavioral change is
