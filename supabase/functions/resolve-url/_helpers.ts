@@ -81,6 +81,73 @@ export function isGhostExternalId(id: string | null | undefined): boolean {
   return !id || id === "ghost_pending" || id === "";
 }
 
+export interface V2SaveSpotIdentityInput {
+  client_nonce: string;
+  restaurant_id?: string | null;
+  external_id?: string | null;
+  resolution_id?: string | null;
+}
+
+export interface V2RestaurantExternalIdentity {
+  id: string;
+  external_id: string | null;
+}
+
+export interface V2CompletenessItemIdentity {
+  item_nonce: string;
+  restaurant_id: string | null;
+  external_id: string | null;
+  resolution_id: string | null | undefined;
+}
+
+function v2ProviderExternalId(
+  externalId: string | null | undefined,
+): string | null {
+  if (!externalId || isGhostExternalId(externalId)) return null;
+  if (externalId.startsWith("ghost_") || externalId.startsWith("merged_")) {
+    return null;
+  }
+  return externalId;
+}
+
+export function v2RestaurantIdsNeedingExternalId(
+  spots: readonly V2SaveSpotIdentityInput[],
+): string[] {
+  const restaurantIds = new Set<string>();
+  for (const spot of spots) {
+    if (
+      spot.restaurant_id && v2ProviderExternalId(spot.external_id) === null
+    ) {
+      restaurantIds.add(spot.restaurant_id);
+    }
+  }
+  return [...restaurantIds];
+}
+
+export function buildV2CompletenessItemIdentities(
+  spots: readonly V2SaveSpotIdentityInput[],
+  restaurantRows: readonly V2RestaurantExternalIdentity[],
+): V2CompletenessItemIdentity[] {
+  const externalIdByRestaurantId = new Map<string, string>();
+  for (const row of restaurantRows) {
+    const externalId = v2ProviderExternalId(row.external_id);
+    if (externalId) externalIdByRestaurantId.set(row.id, externalId);
+  }
+
+  return spots.map((spot) => {
+    const suppliedExternalId = v2ProviderExternalId(spot.external_id);
+    return {
+      item_nonce: spot.client_nonce,
+      restaurant_id: spot.restaurant_id ?? null,
+      external_id: suppliedExternalId ??
+        (spot.restaurant_id
+          ? externalIdByRestaurantId.get(spot.restaurant_id) ?? null
+          : null),
+      resolution_id: spot.resolution_id,
+    };
+  });
+}
+
 /**
  * Builds the stable ghost external_id for a (user, nonce) pair.
  * Pattern mirrors the SQL in fn_save_import_spot:

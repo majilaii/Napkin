@@ -664,6 +664,7 @@ import {
   buildGhostExternalId,
   buildInlineCompletenessClaims,
   buildResolveSpotDecisionResult,
+  buildV2CompletenessItemIdentities,
   // TICKET-209: caption-authority fusion + cap derivation + route gate.
   buildVideoFusion,
   deriveCaptionCap,
@@ -696,6 +697,7 @@ import {
   // TICKET-152: resolve_spots + pin_wishlist decision helpers.
   validateResolveSpotsArgs,
   validateV2SaveProtocol,
+  v2RestaurantIdsNeedingExternalId,
 } from "./_helpers.ts";
 export { buildGhostExternalId, filterUnauthorizedTableIds, isGhostExternalId };
 
@@ -1719,35 +1721,64 @@ async function handleSaveSpotsV2(
       }
     }
   }
-  const items = spots.map((spot) => ({
-    item_nonce: spot.client_nonce,
-    restaurant_id: spot.restaurant_id ?? null,
-    external_id: isGhostExternalId(spot.external_id)
-      ? null
-      : (spot.external_id ?? null),
-    resolution_id: spot.resolution_id,
-    // Advisory only. The worker derives identity, coordinates, and media
-    // from its own attestation; these facts are resolution hints at most.
-    client_facts: {
-      candidate_id: spot.candidate_id,
-      name: spot.restaurant_name ?? spot.place?.name ?? null,
-      city: spot.restaurant_city ?? spot.place?.location?.locality ?? null,
-      address: spot.place?.location?.address ?? null,
-      // Unlike the surrounding advisory facts, this retry hint is reloaded
-      // from append-only server evidence and cannot be supplied by the client.
-      attempted_external_id: spot.resolution_id
-        ? attemptedExternalIdByResolution.get(spot.resolution_id) ?? null
-        : null,
-      // Reloaded from the caller-owned append-only resolution row, never from
-      // the save payload. Terminal auto-rejects can therefore seal the v2 job
-      // without being re-searched or turned into a ghost venue.
-      resolution_decision: spot.resolution_id
-        ? decisionByResolution.get(spot.resolution_id) ?? null
-        : null,
-      source: body["source"] ?? null,
-      note: typeof body["note"] === "string" ? body["note"] : null,
-    },
-  }));
+
+  // V2 clients omit external_id for already-persisted venues. Restore those
+  // identities in one read; fn_enqueue_completeness still validates equality.
+  const restaurantIdsNeedingExternalId = v2RestaurantIdsNeedingExternalId(
+    spots,
+  );
+  let restaurantRows: Array<{ id: string; external_id: string | null }> = [];
+  if (restaurantIdsNeedingExternalId.length > 0) {
+    const { data, error } = await supabase
+      .from("restaurants")
+      .select("id,external_id")
+      .in("id", restaurantIdsNeedingExternalId);
+    if (error) {
+      return errorResponse(
+        "V2_IDENTITY_UNAVAILABLE",
+        "Could not load restaurant identity",
+        500,
+      );
+    }
+    restaurantRows = data ?? [];
+  }
+
+  const itemIdentities = buildV2CompletenessItemIdentities(
+    spots,
+    restaurantRows,
+  );
+  const items = itemIdentities.map((identity, index) => {
+    const spot = spots[index];
+    // client_facts feed the deferred Text Search — a misaligned merge would
+    // resolve the wrong venue, so refuse if the identity zip ever drifts.
+    if (identity.item_nonce !== spot.client_nonce) {
+      throw new Error("v2 item identities misaligned with spot order");
+    }
+    return {
+      ...identity,
+      // Advisory only. The worker derives identity, coordinates, and media
+      // from its own attestation; these facts are resolution hints at most.
+      client_facts: {
+        candidate_id: spot.candidate_id,
+        name: spot.restaurant_name ?? spot.place?.name ?? null,
+        city: spot.restaurant_city ?? spot.place?.location?.locality ?? null,
+        address: spot.place?.location?.address ?? null,
+        // Unlike the surrounding advisory facts, this retry hint is reloaded
+        // from append-only server evidence and cannot be supplied by the client.
+        attempted_external_id: spot.resolution_id
+          ? attemptedExternalIdByResolution.get(spot.resolution_id) ?? null
+          : null,
+        // Reloaded from the caller-owned append-only resolution row, never from
+        // the save payload. Terminal auto-rejects can therefore seal the v2 job
+        // without being re-searched or turned into a ghost venue.
+        resolution_decision: spot.resolution_id
+          ? decisionByResolution.get(spot.resolution_id) ?? null
+          : null,
+        source: body["source"] ?? null,
+        note: typeof body["note"] === "string" ? body["note"] : null,
+      },
+    };
+  });
 
   const { data, error } = await supabase.rpc("fn_enqueue_completeness", {
     p_owner: user.id,
