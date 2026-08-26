@@ -34,6 +34,7 @@ import { type DateTimePickerEvent } from '@react-native-community/datetimepicker
 import { Colors, Spacing, Radius, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { useUserProfile } from '@/hooks/users/useUserProfile';
 import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
 import { useTables } from '@/hooks/tables/useTables';
 import { useRecentlyPostedTables } from '@/hooks/tables/useRecentlyPostedTables';
@@ -121,6 +122,11 @@ export default function CreateEntryScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user, signOut } = useAuth();
+    // TICKET-217 P1-1: solo logs default 'friends' (public-eligible) — the
+    // composer must disclose that at save time when the account is public.
+    const { data: ownProfileResult } = useUserProfile(user?.id);
+    const isAccountPublic =
+        ownProfileResult?.data?.profile.account_privacy === 'public';
 
     const {
         tableId: tableIdParam,
@@ -1062,6 +1068,11 @@ export default function CreateEntryScreen() {
                     ) : null}
 
                     {/* SECTION 10: Primary CTA */}
+                    {isAccountPublic && (
+                        <Text style={[Type.metadata, { color: palette.textMuted, textAlign: 'center' }]}>
+                            also appears on your public profile
+                        </Text>
+                    )}
                     <Pressable
                         disabled={!canSubmit || isSubmitting}
                         onPress={handleSubmit}

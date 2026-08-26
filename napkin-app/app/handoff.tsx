@@ -41,6 +41,7 @@ import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
+import { dismissHandoff } from '@/lib/handoffNavigation';
 import { CandidatePickerPanel } from '@/components/wishlist/CandidatePickerPanel';
 import { buildInitialTicked, keyFor } from '@/components/wishlist/candidatePickerUtils';
 import { useResolveHandoff, type ResolveHandoffSpot } from '@/hooks/wishlist/useResolveHandoff';
@@ -129,6 +130,7 @@ export default function HandoffScreen() {
     const insets = useSafeAreaInsets();
     const { session, user } = useAuth();
     const { show: showToast } = useToast();
+    const dismiss = useCallback(() => dismissHandoff(router), [router]);
 
     const token = Array.isArray(t) ? t[0] : t;
 
@@ -231,13 +233,13 @@ export default function HandoffScreen() {
 
             const savedCount = result.summary.saved;
             showToast(`pinned ${savedCount} spot${savedCount !== 1 ? 's' : ''}`);
-            router.back();
+            dismiss();
         } catch {
             showToast('could not pin spots');
         } finally {
             setIsSaving(false);
         }
-    }, [token, resolveData, saveSpotsAsync, showToast, router]);
+    }, [token, resolveData, saveSpotsAsync, showToast, dismiss]);
 
     // ── Render guards ─────────────────────────────────────────────────────────
 
@@ -248,7 +250,7 @@ export default function HandoffScreen() {
                 <TombstoneScreen
                     murmur="— the link's closed. ask whoever shared it for a fresh one."
                     palette={palette}
-                    onClose={() => router.back()}
+                    onClose={dismiss}
                     insets={insets}
                 />
             </>
@@ -283,7 +285,7 @@ export default function HandoffScreen() {
                 <TombstoneScreen
                     murmur={murmur}
                     palette={palette}
-                    onClose={() => router.back()}
+                    onClose={dismiss}
                     insets={insets}
                 />
             </>
@@ -317,7 +319,7 @@ export default function HandoffScreen() {
                     ]}
                 >
                     <Pressable
-                        onPress={() => router.back()}
+                        onPress={dismiss}
                         hitSlop={12}
                         accessibilityLabel="back"
                     >

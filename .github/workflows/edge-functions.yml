@@ -1,0 +1,34 @@
+name: edge-functions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.2
+
+      - name: Install npm dependencies for deno type resolution
+        # deno resolves npm:-specifier types through root node_modules;
+        # without the install it dies on npm:@types/node before any test runs
+        # (same requirement as migration-replay.yml).
+        run: npm ci --ignore-scripts
+
+      - name: Guard table_members member id
+        run: deno run --allow-read=. scripts/lint-tm-member-id.ts
+
+      - name: Run hermetic Edge Function tests
+        # Dependencies are integrity-checked by deno.lock. The test runtime gets
+        # env access for test-owned fixtures, but deliberately no network access.
+        run: deno test --allow-env --frozen supabase/functions/

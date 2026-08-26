@@ -41,8 +41,10 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, IconSize, Spacing } from '@/constants/theme';
+import { ErrorState } from '@/components/ErrorState';
 import { pickDefaultTier, populatedTiers } from '@/lib/restaurantSignal';
 import { derivePlaceTags } from '@/lib/placeTags';
 import { FRIEND_TEST } from '@/constants/flags';
@@ -90,6 +92,7 @@ import { SetTableSheet } from '@/components/suppers';
 // TICKET-095: gather the table (propose a future date here)
 import { GatherSheet } from '@/components/gatherings';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
+import { shouldShowRestaurantErrorShell } from '@/lib/screenLoadState';
 
 type Palette = typeof Colors.light;
 
@@ -183,7 +186,7 @@ export default function RestaurantScreen() {
     const isGhost = !!placeId;
 
     // ── Data ─────────────────────────────────────────────────────────────
-    const { data: pageData, isLoading, error, fetchStatus } = useRestaurantPage(
+    const { data: pageData, isLoading, error, fetchStatus, refetch } = useRestaurantPage(
         restaurantId,
         tableId ?? undefined,
     );
@@ -235,6 +238,15 @@ export default function RestaurantScreen() {
 
     const restaurant: RestaurantPageRestaurant | null =
         pageData?.restaurant ?? ghostRestaurant ?? null;
+    // TICKET-217 adversarial review: a ghost deep link whose Place lookup
+    // failed has nothing to render either — the ghost exemption only holds
+    // while the payload/lookup path is still viable.
+    const ghostLookupFailed = needsPlaceLookup && placeLookup.isError;
+    const showRestaurantErrorShell = shouldShowRestaurantErrorShell({
+        hasError: !!error || ghostLookupFailed,
+        hasRestaurant: !!restaurant,
+        isGhost: isGhost && !ghostLookupFailed,
+    });
 
     // ── Lazy backfill ─────────────────────────────────────────────────────
     // TICKET-081 fix-pass (Codex MEDIUM): gate the backfill on the DURABLE
@@ -621,6 +633,40 @@ export default function RestaurantScreen() {
         });
     }, [router, logSheetRestaurant, tableId, id]);
 
+    if (showRestaurantErrorShell) {
+        return (
+            <>
+                <Stack.Screen options={{ headerShown: false }} />
+                <StatusBar style="dark" />
+                <View
+                    style={[
+                        styles.errorShell,
+                        { backgroundColor: palette.background, paddingTop: insets.top + Spacing.sm },
+                    ]}
+                >
+                    <Pressable
+                        onPress={() => router.back()}
+                        hitSlop={12}
+                        style={styles.errorBack}
+                        accessibilityRole="button"
+                        accessibilityLabel="back"
+                    >
+                        <Ionicons name="chevron-back" size={IconSize.lg} color={palette.textMuted} />
+                    </Pressable>
+                    <View style={styles.errorBody}>
+                        <ErrorState
+                            message="could not load this restaurant."
+                            onRetry={() => {
+                                if (ghostLookupFailed) void placeLookup.refetch();
+                                if (restaurantId) void refetch();
+                            }}
+                        />
+                    </View>
+                </View>
+            </>
+        );
+    }
+
     // ── Render ────────────────────────────────────────────────────────────
     return (
         <>
@@ -882,9 +928,10 @@ export default function RestaurantScreen() {
                     {/* Error state */}
                     {error && !isGhost ? (
                         <View style={styles.section}>
-                            <Text style={[styles.murmur, { color: palette.textMuted }]}>
-                                could not load visit history.
-                            </Text>
+                            <ErrorState
+                                message="could not load visit history."
+                                onRetry={() => void refetch()}
+                            />
                         </View>
                     ) : null}
                 </ScrollView>
@@ -957,6 +1004,20 @@ export default function RestaurantScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+    },
+    errorShell: {
+        flex: 1,
+    },
+    errorBack: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: Spacing.xxl,
+        height: Spacing.xxl,
+        marginLeft: Spacing.sm,
+    },
+    errorBody: {
+        flex: 1,
+        justifyContent: 'center',
     },
     scrollContent: {
         paddingBottom: 150, // clears the action dock + its fade

@@ -27,6 +27,7 @@ import {
     ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
+    RefreshControl,
     ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,6 +36,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, IconSize, Type, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { ErrorState } from '@/components/ErrorState';
 import {
     ImportLinkSheet,
     PendingSaveCard,
@@ -89,6 +91,10 @@ import { useTables } from '@/hooks/tables/useTables';
 import { fetchTableMembers } from '@/hooks/tables/useTableMembers';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
+import {
+    isWishlistPullRefreshing,
+    resolveWishlistPrimaryState,
+} from '@/lib/screenLoadState';
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import { OwnerActionsSheet } from '@/components/common';
 import { useToast } from '@/providers/ToastProvider';
@@ -311,7 +317,16 @@ export default function WishlistScreen() {
         count: number;
     } | null>(null);
 
-    const { data: wishlistPages, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMyWishlist(user?.id);
+    const {
+        data: wishlistPages,
+        isLoading,
+        isError,
+        isRefetching,
+        refetch,
+        fetchNextPage,
+        hasNextPage,
+        isFetchingNextPage,
+    } = useMyWishlist(user?.id);
 
     // YOUR LISTS — TICKET-074 lists area. FRIEND_TEST.hideLists is deliberately
     // bypassed at THIS call-site only — the flag still curtains the old standalone
@@ -851,6 +866,15 @@ export default function WishlistScreen() {
     }, [handleSelectView, router, selectedListId]);
 
     const totalPinned = pinnedRows.length;
+    const wishlistPrimaryState = resolveWishlistPrimaryState({
+        isLoading,
+        isError,
+        cachedItemCount: allItems.length,
+        pinnedCount: totalPinned,
+        hasActiveFilters,
+        hasSearchQuery,
+    });
+    const wishlistUnavailable = wishlistPrimaryState === 'error';
     const listsCount = (myLists?.length ?? 0) + (savedLists?.length ?? 0);
 
     // "{N} spots · italian · $$" — the active filters spelled out after the count.
@@ -882,7 +906,9 @@ export default function WishlistScreen() {
     // loses filters (founder, 2026-07-03).
     const mapSurface = (
         <WishlistMapView
-            items={activeMapItems}
+            items={wishlistUnavailable && mapSource === 'your' && !selectedListId
+                ? []
+                : activeMapItems}
             // Unmappable murmur is a saved-layer concern only. Tapping it opens
             // the which-spots + fix sheet (founder ask 2026-07-12).
             unmappableCount={
@@ -924,11 +950,15 @@ export default function WishlistScreen() {
                         : isSelectedListError
                             ? 'couldn’t load this List.'
                             : 'this List has no mappable places for the current filters.'
+                    : mapSource === 'your' && wishlistUnavailable
+                        ? 'could not load your spots.'
                     : undefined
             }
             emptyAction={
                 mapSource === 'your' && selectedListId && isSelectedListError
                     ? { label: 'Try again', onPress: () => void refetchSelectedList() }
+                    : mapSource === 'your' && wishlistUnavailable
+                        ? { label: 'try again', onPress: () => void refetch() }
                     : undefined
             }
             unmappableLabel={
@@ -1106,11 +1136,16 @@ export default function WishlistScreen() {
                     ) : null}
 
                     {activeTab === 'pinned' ? (
-                        isLoading && allItems.length === 0 ? (
+                        wishlistPrimaryState === 'loading' ? (
                             <View style={styles.loadingCenter}>
                                 <ActivityIndicator color={palette.primary} />
                             </View>
-                        ) : totalPinned === 0 && !hasActiveFilters && !hasSearchQuery ? (
+                        ) : wishlistPrimaryState === 'error' ? (
+                            <ErrorState
+                                message="could not load your spots."
+                                onRetry={() => void refetch()}
+                            />
+                        ) : wishlistPrimaryState === 'empty' ? (
                             <WishlistEmptyState
                                 palette={palette}
                                 onImport={() => setImportSheetVisible(true)}
@@ -1139,6 +1174,17 @@ export default function WishlistScreen() {
                                     { paddingBottom: insets.bottom + 150 },
                                 ]}
                                 showsVerticalScrollIndicator={false}
+                                refreshControl={(
+                                    <RefreshControl
+                                        refreshing={isWishlistPullRefreshing(
+                                            isRefetching,
+                                            isFetchingNextPage,
+                                        )}
+                                        onRefresh={() => void refetch()}
+                                        tintColor={palette.primary}
+                                        colors={[palette.primary]}
+                                    />
+                                )}
                                 onEndReached={() => {
                                     if (!hasSearchQuery && hasNextPage && !isFetchingNextPage) void fetchNextPage();
                                 }}

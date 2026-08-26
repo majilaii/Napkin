@@ -916,15 +916,25 @@ export default function LogMealScreen() {
                                     </Pressable>
                                 );
                             })}
-                            {/* TICKET-093 (decision a): table-shared entries are
-                                public-eligible — say so at share time instead of
+                            {/* TICKET-093 (decision a) + TICKET-217 P1-1: entries are
+                                public-eligible regardless of table selection (solo logs
+                                default 'friends' since 2026-07-22) — say so instead of
                                 gating. Only when the account is actually public. */}
-                            {selectedTableIds.length > 0 && isAccountPublic && (
+                            {isAccountPublic && (
                                 <Text style={[styles.publicNote, { color: palette.textMuted }]}>
                                     also appears on your public profile
                                 </Text>
                             )}
                         </View>
+                    )}
+
+                    {/* TICKET-217 P1-1: the SHARE TO card is hidden for no-table
+                        users and supper takes, but those logs are public-eligible
+                        too — the disclosure must not disappear with the card. */}
+                    {(isSupperTake || !hasAnyTable) && isAccountPublic && (
+                        <Text style={[styles.publicNote, { color: palette.textMuted, textAlign: 'center' }]}>
+                            also appears on your public profile
+                        </Text>
                     )}
 
                     {/* Bottom padding for scroll area */}

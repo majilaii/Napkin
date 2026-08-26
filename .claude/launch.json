@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "app", "url": "http://localhost:8081" },
+    { "name": "app-dev", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "napkin-app", "start"], "port": 8081 }
+  ]
+}

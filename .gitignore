@@ -56,7 +56,8 @@ supabase/.branches/
 **/.temp/cli-latest
 
 # Local AI / workflow tooling
-.claude/
+.claude/*
+!.claude/launch.json
 .kanban/
 
 # Accidental nested local Supabase workspace inside app

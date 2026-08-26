@@ -466,3 +466,8 @@ For high-stakes work, every gated phase (spec, architecture, build) gets BOTH a 
 **Reconciliation:** if either reviewer returns FAIL, the phase fails. PASS from one + PASS-WITH-NITS from the other = pass with nits documented. Conflicting findings on the same code path → orchestrator does a third pass.
 
 **Invocation:** Codex runs via `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task` (for spec/arch sanity) or `adversarial-review` (for build review). See `~/.claude/commands/spec.md`, `~/.claude/commands/start.md`, `~/.claude/commands/review.md` for the exact invocation per phase.
+
+## Feature map and UI verification
+
+- Any PR touching screens, components, navigation, or rendered states must update `FEATURE-MAP.md` in the same PR. Reviewers reject UI PRs that do not.
+- UI work is done only after changed states are driven and screenshotted in the running iOS simulator dev client (`com.majilaii.dining-journal-app`), read-only against live data. Verify write paths in tests, never by clicking production. Follow `FEATURE-MAP.md` § Verification protocol.

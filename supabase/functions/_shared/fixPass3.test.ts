@@ -34,10 +34,10 @@ import { assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/asser
 // After the migration, the only remaining policy on restaurants is:
 //   restaurants_verified_or_owner_select (SELECT only, added fix_pass1)
 
-Deno.test('B1 (SQL, NOT RUN) — authenticated INSERT into restaurants with verified is blocked', async () => {
-    console.log('SKIP: requires local stack (supabase start + db reset) — NOT RUN');
-    // Placeholder: test body intentionally empty.
-    // The actual test is the manual SQL above.
+Deno.test({
+    name: 'B1 (SQL, NOT RUN) — authenticated INSERT into restaurants with verified is blocked',
+    ignore: true,
+    fn() {},
 });
 
 // ─── B2 — callPlacesSearch non-200 is a VERIFICATION FAILURE, not empty result ─
@@ -226,8 +226,10 @@ Deno.test('B3 — useCorrectImport onSuccess invalidates activityAll when tableI
 //   -- Call as user A (owner):
 //   -- Expected: restaurantRow returned (owned ghost is visible to owner)
 
-Deno.test('B4 (SQL, NOT RUN) — restaurant-history page returns null for non-owner unverified ghost', async () => {
-    console.log('SKIP: requires local stack (supabase start + db reset) — NOT RUN');
+Deno.test({
+    name: 'B4 (SQL, NOT RUN) — restaurant-history page returns null for non-owner unverified ghost',
+    ignore: true,
+    fn() {},
 });
 
 Deno.test('B4 — .or() visibility predicate is structurally correct', () => {

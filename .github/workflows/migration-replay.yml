@@ -1,4 +1,4 @@
-name: Migration replay guard
+name: migration-replay
 
 # From-scratch replayability check (2026-07-04, TICKET-100 class of bug).
 #
@@ -22,14 +22,6 @@ name: Migration replay guard
 
 on:
   pull_request:
-    paths:
-      - 'supabase/migrations/**'
-      - 'supabase/tests/**'
-      - 'scripts/backfill/**'
-      - 'scripts/classify-forward-only-release.sh'
-      - 'scripts/test-forward-only-release-classifier.sh'
-      - 'scripts/test-image-moderation-concurrency.sh'
-      - '.github/workflows/migration-replay.yml'
   push:
     branches: [main]
     paths:
@@ -45,37 +37,74 @@ concurrency:
   group: migration-replay-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   replay:
-    name: Replay full chain from scratch
+    name: replay
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect migration guard changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+            'supabase/migrations/**' \
+            'supabase/tests/**' \
+            'scripts/backfill/**' \
+            'scripts/classify-forward-only-release.sh' \
+            'scripts/test-forward-only-release-classifier.sh' \
+            'scripts/test-image-moderation-concurrency.sh' \
+            '.github/workflows/migration-replay.yml'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No migration guard changes
+        if: steps.changes.outputs.run != 'true'
+        run: echo "No migration or replay inputs changed; check is green."
 
       - uses: denoland/setup-deno@v2
+        if: steps.changes.outputs.run == 'true'
         with:
-          deno-version: v2.x
+          deno-version: v2.8.2
 
       - name: Assert completeness backfill contract
+        if: steps.changes.outputs.run == 'true'
         # deno resolves npm:-specifier types through root node_modules;
         # without the install it dies on npm:@types/node before any test runs.
         run: |
           npm ci --ignore-scripts
-          deno test --allow-env scripts/backfill/restaurant-completeness_test.ts
+          deno test --allow-env --frozen scripts/backfill/restaurant-completeness_test.ts
 
       - name: Assert forward-only release classifier
+        if: steps.changes.outputs.run == 'true'
         run: bash scripts/test-forward-only-release-classifier.sh
 
       - name: Duplicate timestamp guard
+        if: steps.changes.outputs.run == 'true'
         run: bash scripts/check-migration-timestamps.sh
 
       - uses: supabase/setup-cli@v1
+        if: steps.changes.outputs.run == 'true'
         with:
           # Matches the version pinned in package.json — the same CLI the
           # local verification loop uses.
           version: 2.58.5
 
       - name: Replay all migrations into a throwaway database
+        if: steps.changes.outputs.run == 'true'
         run: |
           # Isolated project dir: explicit project_id + ports so this can
           # never collide with any other supabase state on the runner. The
@@ -99,6 +128,7 @@ jobs:
           supabase db start
 
       - name: Assert SQL contract specs
+        if: steps.changes.outputs.run == 'true'
         # Runs from $GITHUB_WORKSPACE (ARCH-REVIEW N3) — the prior step's
         # `cd /tmp/replay` does NOT persist across steps, and supabase/tests/
         # was never copied there, so the spec file is referenced at its real
@@ -130,8 +160,14 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/image_moderation_b0.spec.sql
+          # TICKET-217: was never wired in — Tests 1-8 incl. the
+          # fn_create_entry_with_tables visibility-fallback contract.
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/entry_tables_leak.spec.sql
 
       - name: Assert image-moderation multi-session invariants
+        if: steps.changes.outputs.run == 'true'
         # These are real competing transactions coordinated at barriers: the
         # flag flip, atomic caps, 50-live quota, registry/GC row fences, scan
         # lease, and singleton job claim cannot be proved by a one-session DO.
@@ -140,6 +176,7 @@ jobs:
             "postgresql://postgres:postgres@127.0.0.1:54329/postgres"
 
       - name: Assert held B-2 transaction and activation contract
+        if: steps.changes.outputs.run == 'true'
         run: |
           set -euo pipefail
           HOLD="supabase/migrations/20260716110000_b2_enforcement_grants.sql.b2-hold"

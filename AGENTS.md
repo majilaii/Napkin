@@ -16,3 +16,8 @@
 - After a task branch is merged and its required TestFlight release is complete, remove that task's implementation worktree and run `git worktree prune --expire now` before reporting completion.
 - Delete only a worktree that is clean, whose HEAD is merged into `origin/main`, and which is no longer used by a live process. Never remove the primary checkout, a dirty worktree, an unmerged worktree, or another task's active worktree.
 - Verify the completed task's path is absent both on disk and from `git worktree list --porcelain`. A merged task that leaves its own stale worktree behind is incomplete.
+
+# Feature map and UI verification
+
+- Any PR touching screens, components, navigation, or rendered states must update `FEATURE-MAP.md` in the same PR. Reviewers reject UI PRs that do not.
+- UI work is done only after changed states are driven and screenshotted in the running iOS simulator dev client (`com.majilaii.dining-journal-app`), read-only against live data. Verify write paths in tests, never by clicking production. Follow `FEATURE-MAP.md` § Verification protocol.

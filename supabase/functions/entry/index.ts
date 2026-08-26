@@ -999,7 +999,9 @@ serve(async (req) => {
                     content: mContent?.trim() || null,
                     dish_description: mDishDesc?.trim() || null,
                     visited_at: mergeVisitedAtValue,
-                    visibility: mVisibility ?? 'private',
+                    // Founder order 2026-07-22: table-shared logs default 'table',
+                    // never 'private' (TICKET-217 audit — this path predated the reversal).
+                    visibility: mVisibility ?? 'table',
                     ...(mVibeRating != null ? { vibe_rating: mVibeRating } : {}),
                     ...(mFlavorRating != null ? { flavor_rating: mFlavorRating } : {}),
                     ...(mServiceRating != null ? { service_rating: mServiceRating } : {}),
@@ -1266,7 +1268,10 @@ serve(async (req) => {
                         content: (takeContent ?? notes)?.trim() || null,
                         dish_description: takeDish?.trim() || null,
                         visited_at: takeVisitedAtValue,
-                        visibility: takeVisibility ?? 'private',
+                        // Founder order 2026-07-22: table-shared logs default 'table',
+                        // never 'private' (TICKET-217 audit — takes are table-visible
+                        // reviews per TICKET-161).
+                        visibility: takeVisibility ?? 'table',
                         ...(takeVibe != null ? { vibe_rating: takeVibe } : {}),
                         ...(takeFlavor != null ? { flavor_rating: takeFlavor } : {}),
                         ...(takeService != null ? { service_rating: takeService } : {}),
@@ -1699,10 +1704,12 @@ serve(async (req) => {
                 value_profile: value_profile ?? null,
                 visited_at: visitedAtValue,
                 // Founder order 2026-07-22: an omitted visibility on CREATE means
-                // the user made no privacy choice — default public-eligible
-                // ('friends'), not 'private'. Explicit 'private' still wins; the
-                // edit/merge and supper-take paths keep their own semantics.
-                visibility: visibility ?? 'friends',
+                // the user made no privacy choice — default 'table' when the
+                // request carries tables, else public-eligible 'friends', never
+                // 'private'. Explicit 'private' still wins; the edit/merge and
+                // supper-take paths keep their own semantics. (TICKET-217
+                // adversarial review: keep in sync with fn_create_entry_with_tables.)
+                visibility: visibility ?? (effectiveTableIds.length > 0 ? 'table' : 'friends'),
                 ...(vibe_rating != null ? { vibe_rating } : {}),
                 ...(flavor_rating != null ? { flavor_rating } : {}),
                 ...(service_rating != null ? { service_rating } : {}),
