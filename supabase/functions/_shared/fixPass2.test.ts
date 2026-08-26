@@ -230,23 +230,32 @@ Deno.test('[N6] float: fn_dismiss_float sets suppressed_until = now + 30 days', 
 //
 // Mark each as skipped below for honest reporting:
 
-Deno.test('[SQL-skipped] float dismiss+resurface requires local stack — NOT RUN', () => {
-    console.log('SQL test skipped: requires supabase start + db reset');
-    // Not asserting anything — honest skip marker
+Deno.test({
+    name: '[SQL-skipped] float dismiss+resurface requires local stack — NOT RUN',
+    ignore: true,
+    fn() {},
 });
 
-Deno.test('[SQL-skipped] RLS non-member ghost SELECT rejection requires local stack — NOT RUN', () => {
-    console.log('SQL test skipped: requires supabase start + db reset');
+Deno.test({
+    name: '[SQL-skipped] RLS non-member ghost SELECT rejection requires local stack — NOT RUN',
+    ignore: true,
+    fn() {},
 });
 
-Deno.test('[SQL-skipped] reaction trigger increments table_shares.reaction_count requires local stack — NOT RUN', () => {
-    console.log('SQL test skipped: requires supabase start + db reset');
+Deno.test({
+    name: '[SQL-skipped] reaction trigger increments table_shares.reaction_count requires local stack — NOT RUN',
+    ignore: true,
+    fn() {},
 });
 
-Deno.test('[SQL-skipped] fn_complete_import_job forced failure rollback requires local stack — NOT RUN', () => {
-    console.log('SQL test skipped: requires supabase start + db reset');
+Deno.test({
+    name: '[SQL-skipped] fn_complete_import_job forced failure rollback requires local stack — NOT RUN',
+    ignore: true,
+    fn() {},
 });
 
-Deno.test('[SQL-skipped] fn_correct_import_job ownership rejection requires local stack — NOT RUN', () => {
-    console.log('SQL test skipped: requires supabase start + db reset');
+Deno.test({
+    name: '[SQL-skipped] fn_correct_import_job ownership rejection requires local stack — NOT RUN',
+    ignore: true,
+    fn() {},
 });

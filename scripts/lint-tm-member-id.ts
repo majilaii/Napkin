@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env -S deno run --allow-read=.
 /**
  * lint-tm-member-id.ts — TICKET-043 pre-merge safety check.
  *
@@ -8,7 +8,8 @@
  * → RLS predicate is always NULL → no rows returned). See CLAUDE.md doctrine.
  *
  * Usage:
- *   npx tsx scripts/lint-tm-member-id.ts [--changed-only]
+ *   deno run --allow-read=. scripts/lint-tm-member-id.ts
+ *   deno run --allow-read=. --allow-run=git scripts/lint-tm-member-id.ts --changed-only
  *
  * Flags:
  *   --changed-only  Only check files changed vs main branch (CI mode).
@@ -17,11 +18,12 @@
  *   0  No violations found.
  *   1  One or more violations found (prints file:line for each).
  */
-import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
+import { execSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const REPO_ROOT = path.resolve(__dirname, '..');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // Pattern: tm.user_id — alias `tm` (common alias for table_members join)
 // We also check raw `table_members.user_id` column references.
@@ -34,7 +36,7 @@ const PATTERNS = [
 const SCAN_EXTS = new Set(['.sql', '.ts', '.tsx']);
 
 // Directories to skip.
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.expo']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.expo', '.claude']);
 
 function shouldScan(filePath: string): boolean {
     const ext = path.extname(filePath);
@@ -94,8 +96,11 @@ function scanFile(filePath: string): Array<{ line: number; text: string }> {
         if (stripped.startsWith('--') || stripped.startsWith('//') || stripped.startsWith('*')) {
             continue;
         }
+        // Inline doctrine comments can mention the forbidden spelling while
+        // the executable SQL/TypeScript correctly uses member_id.
+        const code = line.replace(/--.*$/, '').replace(/\/\/.*$/, '');
         for (const pat of PATTERNS) {
-            if (pat.test(line)) {
+            if (pat.test(code)) {
                 violations.push({ line: i + 1, text: line.trim() });
                 break; // don't double-report same line
             }

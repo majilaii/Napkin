@@ -2,30 +2,94 @@ name: jest
 
 on:
   pull_request:
-    paths:
-      - 'napkin-app/**'
-      - 'scripts/check-typography.mjs'
-      - 'scripts/typography-baseline.json'
-      - 'docs/TYPOGRAPHY.md'
-      - 'package.json'
-      - '.github/workflows/jest.yml'
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: test
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: napkin-app
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect app test changes
+        id: changes
+        working-directory: ${{ github.workspace }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- \
+            'napkin-app/**' \
+            'scripts/check-route-tree.mjs' \
+            'scripts/check-typography.mjs' \
+            'scripts/typography-baseline.json' \
+            'docs/TYPOGRAPHY.md' \
+            'package.json' \
+            '.github/workflows/jest.yml'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No app test changes
+        if: steps.changes.outputs.run != 'true'
+        run: echo "No app test or bundle inputs changed; check is green."
 
       # Instant guard: Expo Router bundles ALL of app/ — a test file there
       # poisons the production bundle (TestFlight EAGER_BUNDLE failure, #297).
       - name: Route-tree guard
+        if: steps.changes.outputs.run == 'true'
         working-directory: ${{ github.workspace }}
         run: node scripts/check-route-tree.mjs
+
+      - uses: actions/setup-node@v4
+        if: steps.changes.outputs.run == 'true'
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'napkin-app/package-lock.json'
+
+      - name: Install dependencies
+        if: steps.changes.outputs.run == 'true'
+        run: npm ci
+
+      - name: Check typography policy
+        if: steps.changes.outputs.run == 'true'
+        working-directory: ${{ github.workspace }}
+        run: npm run check:typography
+
+      - name: Run tests
+        if: steps.changes.outputs.run == 'true'
+        # Do not use the package test script here: it carries
+        # --passWithNoTests for local convenience, which is not a valid gate.
+        run: ./node_modules/.bin/jest --ci
+
+      # The only true gate for route-tree bundle poison: a real production
+      # bundle. tsc/eslint/jest cannot see Metro resolution failures.
+      - name: Production bundle export gate
+        if: steps.changes.outputs.run == 'true'
+        run: ./node_modules/.bin/expo export --platform ios --output-dir /tmp/export-gate
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: napkin-app
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
@@ -36,14 +100,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check typography policy
-        working-directory: ${{ github.workspace }}
-        run: npm run check:typography
+      - name: Typecheck
+        run: npm run typecheck
 
-      - name: Run tests
-        run: npm test -- --ci
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: napkin-app
+    steps:
+      - uses: actions/checkout@v4
 
-      # The only true gate for route-tree bundle poison: a real production
-      # bundle. tsc/eslint/jest cannot see Metro resolution failures.
-      - name: Production bundle export gate
-        run: npx expo export --platform ios --output-dir /tmp/export-gate
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'napkin-app/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        # Warning ratchet: 263 pre-existing warnings as of 2026-08-26.
+        # Lower this number when warnings drop; never raise it.
+        run: npm run lint -- --max-warnings 263
