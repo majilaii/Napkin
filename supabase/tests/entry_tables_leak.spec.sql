@@ -301,6 +301,61 @@ END;
 $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
+-- TEST 8: Missing visibility follows the founder default at the SQL boundary.
+-- Table-backed writes default to 'table'; solo writes default to 'friends'.
+-- ─────────────────────────────────────────────────────────────────────────────
+DO $ticket_217_visibility$
+DECLARE
+  table_entry_id uuid;
+  solo_entry_id uuid;
+  table_visibility text;
+  solo_visibility text;
+BEGIN
+  RESET ROLE; -- service_role for RPC
+
+  SELECT entry_id INTO table_entry_id
+  FROM public.fn_create_entry_with_tables(
+    '11111111-1111-1111-1111-111111111111'::uuid,
+    jsonb_build_object(
+      'rating', 4.0,
+      'content', 'Table fallback test',
+      'client_nonce', gen_random_uuid()::text
+    ),
+    ARRAY['a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1']::uuid[],
+    ARRAY[]::uuid[],
+    ARRAY[]::uuid[]
+  );
+
+  SELECT entry_id INTO solo_entry_id
+  FROM public.fn_create_entry_with_tables(
+    '11111111-1111-1111-1111-111111111111'::uuid,
+    jsonb_build_object(
+      'rating', 4.0,
+      'content', 'Solo fallback test',
+      'client_nonce', gen_random_uuid()::text
+    ),
+    ARRAY[]::uuid[],
+    ARRAY[]::uuid[],
+    ARRAY[]::uuid[]
+  );
+
+  SELECT visibility INTO table_visibility
+  FROM public.entries WHERE id = table_entry_id;
+  SELECT visibility INTO solo_visibility
+  FROM public.entries WHERE id = solo_entry_id;
+
+  DELETE FROM public.entries WHERE id IN (table_entry_id, solo_entry_id);
+
+  ASSERT table_visibility = 'table',
+    format('FAIL [visibility fallback]: Table entry expected table, got %s', table_visibility);
+  ASSERT solo_visibility = 'friends',
+    format('FAIL [visibility fallback]: solo entry expected friends, got %s', solo_visibility);
+
+  RAISE NOTICE 'PASS [Test 8/visibility-fallback]: SQL writer derives table/friends defaults';
+END;
+$ticket_217_visibility$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
 -- CLEANUP (safe to re-run test file multiple times)
 -- ─────────────────────────────────────────────────────────────────────────────
 BEGIN;

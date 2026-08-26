@@ -51,9 +51,9 @@ function makeRoundState(overrides: Partial<RoundEntryState> = {}): RoundEntrySta
 // ── buildEntryPayload ─────────────────────────────────────────────────────
 
 describe('buildEntryPayload', () => {
-    it('0 tables → visibility:private, table_ids:[]', () => {
+    it('0 tables → visibility:friends (founder order 2026-07-22 — never private), table_ids:[]', () => {
         const payload = buildEntryPayload(makeState({ selectedTableIds: [] }));
-        expect(payload.visibility).toBe('private');
+        expect(payload.visibility).toBe('friends');
         expect(payload.table_ids).toEqual([]);
     });
 

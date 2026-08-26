@@ -39,6 +39,7 @@ import { isInstagramUrl } from '../_shared/socialHost.ts';
 // SAME normalizer the capture action and backfill import, so read/capture/
 // backfill keys never diverge.
 import { contentKey } from '../_shared/videoUrlKey.ts';
+import { filterVisibleEntrySignals, loadVisibleEntryIds } from './entryVisibility.ts';
 import { isPeekCardContext, loadPeekCard } from './peekCard.ts';
 
 type Visit = {
@@ -1355,70 +1356,70 @@ serve(async (req) => {
             // "your_table" distribution — all entries from the chip table
             const yourTableDist: number[] | null = tableChip ? buildDistribution(tableRatings) : null;
 
-            // "napkin" distribution — non-private entries at this restaurant.
-            // TICKET-034: private logs must never contribute to the aggregate number
-            // (doctrine: "logs default private; surface on public profile only when …").
-            // We intentionally include visibility='table' and 'friends' entries because
-            // those represent signals shared within some circle — not fully private.
-            // The stricter is_entry_publicly_eligible filter (which also gates on profile
-            // public + content length) is out of scope for this ticket; see TICKET-034
-            // build log for the documented looser-than-public-eligible behavior.
-            let napkinRatings: number[] = [];
-            {
-                const { data: napkinEntries, error: napkinErr } = await supabase
-                    .from('entries')
-                    .select('rating')
-                    .eq('restaurant_id', resolvedRestaurantId)
-                    .neq('visibility', 'private')
-                    .not('rating', 'is', null);
-                if (!napkinErr) {
-                    napkinRatings = (napkinEntries ?? []).map((e: any) => e.rating as number);
-                }
+            // ── v3: Napkin distribution + photos ──
+            // Both surfaces must share the same canonical entry gate. The service-role
+            // client bypasses RLS, so collect both candidate sets first and resolve all
+            // non-self IDs through one SECURITY DEFINER batch RPC before rendering or
+            // aggregating anything authored by another user.
+            const { data: napkinEntryRows, error: napkinErr } = await supabase
+                .from('entries')
+                .select('id, user_id, rating')
+                .eq('restaurant_id', resolvedRestaurantId)
+                .neq('visibility', 'private')
+                .not('rating', 'is', null);
+            if (napkinErr) {
+                console.error('restaurant-history napkin aggregate error:', napkinErr.message);
             }
+
+            // Fetch entry_photos filtered server-side by restaurant_id via the entries join.
+            // The inner join ensures only photos whose entry is at this restaurant are returned,
+            // so the subsequent limit(48) is applied after the restaurant filter — not before it.
+            // ARCHITECT-REVIEW: adding restaurant_id directly to entry_photos would allow a
+            // simpler indexed query; for now the inner join on entries is correct and sufficient.
+            const { data: entryPhotoRows, error: photoErr } = await supabase
+                .from('entry_photos')
+                .select('photo_url, entry_id, entries!inner(user_id, restaurant_id, table_id)')
+                .eq('entries.restaurant_id', resolvedRestaurantId)
+                .not('photo_url', 'is', null)
+                .limit(48);
+            if (photoErr) {
+                console.error('restaurant-history photos error:', photoErr.message);
+            }
+
+            const napkinCandidates = napkinErr ? [] : (napkinEntryRows ?? []) as any[];
+            const photoCandidates = photoErr ? [] : (entryPhotoRows ?? []) as any[];
+            const visibleEntryIds = await loadVisibleEntryIds(supabase, user.id, [
+                ...napkinCandidates.map((entry: any) => ({
+                    entryId: entry.id as string,
+                    authorId: entry.user_id as string | null,
+                })),
+                ...photoCandidates.map((photo: any) => ({
+                    entryId: photo.entry_id as string,
+                    authorId: photo.entries?.user_id as string | null,
+                })),
+            ]);
+
+            const visibleSignals = filterVisibleEntrySignals(
+                visibleEntryIds,
+                napkinCandidates,
+                photoCandidates,
+            );
+            const napkinRatings = visibleSignals.entries
+                .map((entry: any) => entry.rating as number);
             const napkinDist = buildDistribution(napkinRatings);
             const napkinAverage = napkinRatings.length > 0
                 ? napkinRatings.reduce((a, b) => a + b, 0) / napkinRatings.length
                 : null;
             const napkinCount = napkinRatings.length;
 
-            // ── v3: Photos ──
             let fromYourTable: PhotoItem[] = [];
             let fromOthers: PhotoItem[] = [];
 
             {
-                // Fetch entry_photos filtered server-side by restaurant_id via the entries join.
-                // The inner join ensures only photos whose entry is at this restaurant are returned,
-                // so the subsequent limit(48) is applied after the restaurant filter — not before it.
-                // ARCHITECT-REVIEW: adding restaurant_id directly to entry_photos would allow a
-                // simpler indexed query; for now the inner join on entries is correct and sufficient.
-                //
-                // TICKET-034: also select visibility so we can post-filter private entries from
-                // cross-user photo results. We preserve the viewer's own private photos (isSelf).
-                const { data: entryPhotoRows, error: photoErr } = await supabase
-                    .from('entry_photos')
-                    .select('photo_url, entry_id, entries!inner(user_id, restaurant_id, table_id, visibility)')
-                    .eq('entries.restaurant_id', resolvedRestaurantId)
-                    .not('photo_url', 'is', null)
-                    .limit(48);
-
-                if (photoErr) {
-                    console.error('restaurant-history photos error:', photoErr.message);
-                }
-
                 if (!photoErr && entryPhotoRows) {
-                    // All rows are already filtered to this restaurant by the server-side join.
-                    // TICKET-034: post-filter: exclude photos from private entries unless the viewer
-                    // is the author. This preserves the viewer's own private visit photos while
-                    // preventing a tablemate's feed-only private entry photos from leaking here.
-                    const allPhotos = entryPhotoRows as any[];
-                    const relevantPhotos = allPhotos.filter((p: any) => {
-                        const entryUserId = p.entries?.user_id as string;
-                        const visibility = p.entries?.visibility as string | null;
-                        const isSelf = entryUserId === user.id;
-                        // TICKET-173: NULL must fail CLOSED — `!== 'private'`
-                        // alone let a NULL-visibility entry's photos through.
-                        return isSelf || (visibility != null && visibility !== 'private');
-                    });
+                    // All rows are already restaurant-scoped by the server-side join and now
+                    // share the same viewer-specific gate as the aggregate above.
+                    const relevantPhotos = visibleSignals.photos;
 
                     // Collect all user IDs to fetch profiles
                     const photoUserIds = [...new Set(relevantPhotos.map((p: any) => p.entries?.user_id as string).filter(Boolean))];

@@ -999,7 +999,9 @@ serve(async (req) => {
                     content: mContent?.trim() || null,
                     dish_description: mDishDesc?.trim() || null,
                     visited_at: mergeVisitedAtValue,
-                    visibility: mVisibility ?? 'private',
+                    // Founder order 2026-07-22: table-shared logs default 'table',
+                    // never 'private' (TICKET-217 audit — this path predated the reversal).
+                    visibility: mVisibility ?? 'table',
                     ...(mVibeRating != null ? { vibe_rating: mVibeRating } : {}),
                     ...(mFlavorRating != null ? { flavor_rating: mFlavorRating } : {}),
                     ...(mServiceRating != null ? { service_rating: mServiceRating } : {}),
@@ -1266,7 +1268,10 @@ serve(async (req) => {
                         content: (takeContent ?? notes)?.trim() || null,
                         dish_description: takeDish?.trim() || null,
                         visited_at: takeVisitedAtValue,
-                        visibility: takeVisibility ?? 'private',
+                        // Founder order 2026-07-22: table-shared logs default 'table',
+                        // never 'private' (TICKET-217 audit — takes are table-visible
+                        // reviews per TICKET-161).
+                        visibility: takeVisibility ?? 'table',
                         ...(takeVibe != null ? { vibe_rating: takeVibe } : {}),
                         ...(takeFlavor != null ? { flavor_rating: takeFlavor } : {}),
                         ...(takeService != null ? { service_rating: takeService } : {}),

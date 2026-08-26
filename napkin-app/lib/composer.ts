@@ -46,7 +46,7 @@ export interface SoloEntryPayload {
     content?: string;
     dish_description?: string;
     table_ids: string[];
-    visibility: 'table' | 'private';
+    visibility: 'table' | 'friends' | 'private';
     visited_at: string;
     photo_urls?: string[];
     companion_ids?: string[];
@@ -102,7 +102,7 @@ function uploadedUrls(photos: ComposerPhotoSlot[]): string[] {
  *
  * Invariants (frozen — do NOT change):
  *   - table_ids[] is passed through as-is (multi-Table TICKET-043 contract)
- *   - visibility = 'table' when ≥1 table, else 'private'
+ *   - visibility = 'table' when ≥1 table, else 'friends' (founder order 2026-07-22)
  *   - rating is rounded to half-steps
  *   - photo_urls omitted when no uploaded photos
  *   - secondaryRatings keys are null when sub-score is 0
@@ -115,7 +115,10 @@ export function buildEntryPayload(state: SoloEntryState): SoloEntryPayload {
     const payload: SoloEntryPayload = {
         rating: ratingValue,
         table_ids: state.selectedTableIds,
-        visibility: state.selectedTableIds.length > 0 ? 'table' : 'private',
+        // Founder order 2026-07-22: solo logs default 'friends' (public-eligible),
+        // table-shared 'table' — never 'private' (TICKET-217 P0-1; this path was
+        // missed when FastLogForm migrated in 25fcf7c).
+        visibility: state.selectedTableIds.length > 0 ? 'table' : 'friends',
         visited_at: state.visitedAt.toISOString(),
         liked: state.liked ?? false,
         ...secondaryFromBreakdown(state.breakdown),

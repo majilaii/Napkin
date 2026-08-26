@@ -24,7 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Shadow, Type } from '@/constants/theme';
+import { Colors, IconSize, Spacing, Shadow, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import {
@@ -32,6 +32,8 @@ import {
     useUpdatePrivacy,
     useUpdateReplyPermission,
 } from '@/hooks/users';
+import { ErrorState } from '@/components/ErrorState';
+import { resolveRequiredDataState } from '@/lib/screenLoadState';
 
 export default function PrivacyScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -40,8 +42,13 @@ export default function PrivacyScreen() {
     const router = useRouter();
     const { user } = useAuth();
 
-    const { data: result, isLoading } = useUserProfile(user?.id);
+    const { data: result, isLoading, isError, refetch } = useUserProfile(user?.id);
     const profile = result?.data?.profile;
+    const profileLoadState = resolveRequiredDataState({
+        isLoading,
+        isError,
+        hasData: !!profile,
+    });
 
     const updatePrivacy = useUpdatePrivacy(user?.id);
     const updateReplyPermission = useUpdateReplyPermission(user?.id);
@@ -49,10 +56,36 @@ export default function PrivacyScreen() {
     // App is light-locked; ink hairline for pills (never for sectioning).
     const hairline = 'rgba(28,28,25,0.12)';
 
-    if (isLoading || !profile) {
+    if (profileLoadState === 'loading') {
         return (
             <View style={[styles.center, { backgroundColor: palette.background }]}>
                 <ActivityIndicator color={palette.primary} />
+            </View>
+        );
+    }
+
+    if (profileLoadState === 'error' || !profile) {
+        return (
+            <View style={[styles.container, { backgroundColor: palette.background, paddingTop: insets.top }]}>
+                <View style={styles.topBar}>
+                    <Pressable
+                        onPress={() => router.back()}
+                        hitSlop={12}
+                        style={styles.side}
+                        accessibilityRole="button"
+                        accessibilityLabel="back"
+                    >
+                        <Ionicons name="chevron-back" size={IconSize.lg} color={palette.textMuted} />
+                    </Pressable>
+                    <Text style={[styles.title, { color: palette.text }]}>visibility</Text>
+                    <View style={styles.side} />
+                </View>
+                <View style={styles.center}>
+                    <ErrorState
+                        message="could not load visibility."
+                        onRetry={() => void refetch()}
+                    />
+                </View>
             </View>
         );
     }
@@ -104,7 +137,7 @@ export default function PrivacyScreen() {
                     style={styles.side}
                     accessibilityLabel="back"
                 >
-                    <Ionicons name="chevron-back" size={22} color={palette.textMuted} />
+                    <Ionicons name="chevron-back" size={IconSize.lg} color={palette.textMuted} />
                 </Pressable>
                 <Text style={[styles.title, { color: palette.text }]}>visibility</Text>
                 <View style={styles.side} />

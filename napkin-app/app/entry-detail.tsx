@@ -71,6 +71,7 @@ import {
 } from '@/hooks/posts/usePostInteractions';
 import type { Comment, Scope, TargetType } from '@/hooks/posts/usePostInteractions';
 import { getEntryInteractionContext } from '@/lib/entryInteractions';
+import { resolveRequiredDataState } from '@/lib/screenLoadState';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -335,12 +336,13 @@ async function resolveEntryIdByNight(nightId: string, userId: string): Promise<s
 }
 
 function useEntryDetail(entryId?: string, nightId?: string, userId?: string) {
-    const { data: resolvedId, isLoading: resolvingId, error: resolveError } = useQuery({
+    const resolution = useQuery({
         queryKey: queryKeys.tableNight.resolveEntryByNight(nightId ?? '', userId ?? ''),
         queryFn: () => resolveEntryIdByNight(nightId!, userId!),
         enabled: !entryId && !!nightId && !!userId,
         staleTime: Infinity,
     });
+    const { data: resolvedId, isLoading: resolvingId, error: resolveError } = resolution;
     const effectiveId = entryId ?? resolvedId;
 
     const detail = useQuery({
@@ -353,6 +355,8 @@ function useEntryDetail(entryId?: string, nightId?: string, userId?: string) {
         ...detail,
         isLoading: detail.isLoading || resolvingId,
         error: detail.error ?? resolveError,
+        canRetry: !!effectiveId || (!entryId && !!nightId && !!userId),
+        retry: effectiveId ? detail.refetch : resolution.refetch,
     };
 }
 
@@ -392,7 +396,12 @@ function EntryDetailScreen() {
         viewAs?: 'public';
     }>();
     const isPublicView = viewAs === 'public';
-    const { data: entry, isLoading, error } = useEntryDetail(entryId, nightId, userId);
+    const { data: entry, isLoading, error, canRetry, retry } = useEntryDetail(entryId, nightId, userId);
+    const entryLoadState = resolveRequiredDataState({
+        isLoading,
+        isError: !!error,
+        hasData: !!entry,
+    });
     // In public view, replies are only allowed when the entry author has opted in.
     // False while entry is loading; safe default.
     const repliesDisabled = isPublicView && !(entry?.allow_public_replies ?? false);
@@ -967,7 +976,7 @@ function EntryDetailScreen() {
 
     // ── Loading / error states ────────────────────────────────────────────────
 
-    if (isLoading || !entry) {
+    if (entryLoadState === 'loading') {
         return (
             <>
                 <Stack.Screen options={{ headerShown: false }} />
@@ -978,17 +987,24 @@ function EntryDetailScreen() {
         );
     }
 
-    if (error) {
+    if (entryLoadState === 'error' || !entry) {
         return (
             <>
                 <Stack.Screen options={{ headerShown: false }} />
                 <View style={[styles.center, { backgroundColor: palette.background }]}>
-                    <Text style={[Type.body, { color: palette.error }]}>
-                        Couldn&apos;t load this entry.
+                    <Text style={[Type.body, { color: palette.textMuted }]}>
+                        could not load this entry.
                     </Text>
-                    <Pressable onPress={() => router.back()} style={{ marginTop: Spacing.md }}>
-                        <Text style={[Type.body, { color: palette.primary }]}>← Go back</Text>
-                    </Pressable>
+                    <View style={styles.errorActions}>
+                        {canRetry ? (
+                            <Pressable onPress={() => void retry()} style={styles.errorAction}>
+                                <Text style={[Type.body, { color: palette.primary }]}>try again</Text>
+                            </Pressable>
+                        ) : null}
+                        <Pressable onPress={() => router.back()} style={styles.errorAction}>
+                            <Text style={[Type.body, { color: palette.primary }]}>← back</Text>
+                        </Pressable>
+                    </View>
                 </View>
             </>
         );
@@ -2601,6 +2617,18 @@ const PAGE_H = 22;
 
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    errorActions: {
+        alignItems: 'center',
+        gap: Spacing.xs,
+        marginTop: Spacing.md,
+    },
+    errorAction: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: Spacing.xxl,
+        minHeight: Spacing.xxl,
+        paddingHorizontal: Spacing.sm,
+    },
 
     // ── Top nav ──
     nav: {
