@@ -206,7 +206,7 @@ BEGIN
   BEGIN
     -- This should throw "permission denied for column table_id".
     EXECUTE 'SELECT table_id FROM public.entries WHERE id = $1'
-      USING 'e0e0e0e0-e0e0-e0e0-e0e0-e0e0e0e0e0e0'
+      USING 'e0e0e0e0-e0e0-e0e0-e0e0-e0e0e0e0e0e0'::uuid
       INTO dummy;
   EXCEPTION WHEN insufficient_privilege THEN
     caught := true;
