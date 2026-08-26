@@ -20,6 +20,7 @@ import {
 import {
   buildGhostExternalId,
   buildInlineCompletenessClaims,
+  buildV2CompletenessItemIdentities,
   detectSourceTypeFromHost,
   evaluateLegacySaveSunset,
   expectedImportOwnerDecision,
@@ -29,6 +30,7 @@ import {
   isTypeRejectedSaveSpot,
   isV2SaveProtocolRequest,
   isWebExtractionSource,
+  v2RestaurantIdsNeedingExternalId,
   validateV2SaveProtocol,
 } from "./_helpers.ts";
 import { deriveClientNonce } from "../handoff/nonce.ts";
@@ -105,6 +107,99 @@ Deno.test("save protocol: complete v2 shape validates and client_build stays gen
       [],
     ),
     false,
+  );
+});
+
+Deno.test("v2 save restores a matched known venue external_id before enqueue", () => {
+  const spots = [
+    {
+      client_nonce: V2_ITEM_NONCE,
+      resolution_id: V2_RESOLUTION_ID,
+      restaurant_id: "restaurant-known-null",
+      external_id: null,
+    },
+    {
+      client_nonce: "item-known-ghost",
+      resolution_id: V2_RESOLUTION_ID,
+      restaurant_id: "restaurant-known-ghost",
+      external_id: "ghost_pending",
+    },
+  ];
+
+  assertEquals(v2RestaurantIdsNeedingExternalId(spots), [
+    "restaurant-known-null",
+    "restaurant-known-ghost",
+  ]);
+  assertEquals(
+    buildV2CompletenessItemIdentities(spots, [
+      { id: "restaurant-known-null", external_id: "ChIJ-known-null" },
+      { id: "restaurant-known-ghost", external_id: "ChIJ-known-ghost" },
+    ]),
+    [
+      {
+        item_nonce: V2_ITEM_NONCE,
+        resolution_id: V2_RESOLUTION_ID,
+        restaurant_id: "restaurant-known-null",
+        external_id: "ChIJ-known-null",
+      },
+      {
+        item_nonce: "item-known-ghost",
+        resolution_id: V2_RESOLUTION_ID,
+        restaurant_id: "restaurant-known-ghost",
+        external_id: "ChIJ-known-ghost",
+      },
+    ],
+  );
+});
+
+Deno.test("v2 save leaves ghost, null, and unknown restaurant identities unbound", () => {
+  const spots = [
+    {
+      client_nonce: "item-ghost-sentinel",
+      resolution_id: V2_RESOLUTION_ID,
+      restaurant_id: "restaurant-ghost-sentinel",
+      external_id: "ghost_pending",
+    },
+    {
+      client_nonce: "item-minted-ghost",
+      resolution_id: V2_RESOLUTION_ID,
+      restaurant_id: "restaurant-minted-ghost",
+      external_id: null,
+    },
+    {
+      client_nonce: "item-null",
+      resolution_id: V2_RESOLUTION_ID,
+      restaurant_id: "restaurant-null",
+      external_id: null,
+    },
+    {
+      client_nonce: "item-unknown",
+      resolution_id: V2_RESOLUTION_ID,
+      restaurant_id: "restaurant-unknown",
+      external_id: null,
+    },
+    {
+      client_nonce: "item-already-bound",
+      resolution_id: V2_RESOLUTION_ID,
+      restaurant_id: "restaurant-already-bound",
+      external_id: "ChIJ-client-bound",
+    },
+  ];
+
+  assertEquals(v2RestaurantIdsNeedingExternalId(spots), [
+    "restaurant-ghost-sentinel",
+    "restaurant-minted-ghost",
+    "restaurant-null",
+    "restaurant-unknown",
+  ]);
+  const items = buildV2CompletenessItemIdentities(spots, [
+    { id: "restaurant-ghost-sentinel", external_id: "ghost_pending" },
+    { id: "restaurant-minted-ghost", external_id: "ghost_owner_nonce" },
+    { id: "restaurant-null", external_id: null },
+  ]);
+  assertEquals(
+    items.map((item) => item.external_id),
+    [null, null, null, null, "ChIJ-client-bound"],
   );
 });
 
