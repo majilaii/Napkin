@@ -246,6 +246,9 @@ export default function RestaurantScreen() {
         hasError: !!error || ghostLookupFailed,
         hasRestaurant: !!restaurant,
         isGhost: isGhost && !ghostLookupFailed,
+        // A deleted/unknown id resolves 200 with restaurant: null — not an
+        // error — and used to paint blank paper with no back control.
+        isResolvedEmpty: !isPageLoading && pageData !== undefined && !pageData?.restaurant,
     });
 
     // ── Lazy backfill ─────────────────────────────────────────────────────
