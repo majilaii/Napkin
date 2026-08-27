@@ -68,4 +68,30 @@ describe('TICKET-217 screen load states', () => {
             isGhost: true,
         })).toBe(false);
     });
+
+    // Drive-through 2026-08-27: napkin://restaurant/<unknown-uuid> resolves 200
+    // with restaurant: null — no error — and painted blank paper with no back
+    // control. A settled-empty page must reach the same shell as a failure.
+    it('restaurant shows the shell when the page resolves with no restaurant', () => {
+        expect(shouldShowRestaurantErrorShell({
+            hasError: false,
+            hasRestaurant: false,
+            isGhost: false,
+            isResolvedEmpty: true,
+        })).toBe(true);
+        // Still loading (nothing resolved yet) must stay on the spinner.
+        expect(shouldShowRestaurantErrorShell({
+            hasError: false,
+            hasRestaurant: false,
+            isGhost: false,
+            isResolvedEmpty: false,
+        })).toBe(false);
+        // A resolved-empty page that still has a cached/ghost identity renders.
+        expect(shouldShowRestaurantErrorShell({
+            hasError: false,
+            hasRestaurant: true,
+            isGhost: false,
+            isResolvedEmpty: true,
+        })).toBe(false);
+    });
 });

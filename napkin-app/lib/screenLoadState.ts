@@ -49,10 +49,19 @@ export function shouldShowRestaurantErrorShell({
     hasError,
     hasRestaurant,
     isGhost,
+    isResolvedEmpty = false,
 }: {
     hasError: boolean;
     hasRestaurant: boolean;
     isGhost: boolean;
+    /**
+     * The page query settled but carried no restaurant. A deleted or unknown id
+     * returns 200 with `restaurant: null` rather than an error, so `hasError`
+     * alone leaves the screen painting blank paper with no back control
+     * (TICKET-217 drive-through, 2026-08-27).
+     */
+    isResolvedEmpty?: boolean;
 }): boolean {
-    return hasError && !hasRestaurant && !isGhost;
+    if (hasRestaurant || isGhost) return false;
+    return hasError || isResolvedEmpty;
 }
