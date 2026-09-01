@@ -1,0 +1,2 @@
+- [TICKET-218/219 review state (a33fb44)](project_ticket_218_219_review_state.md) — approved with nits; founder backfill runs inside the migration on deploy, post-deploy pin check still owed.
+- [SQL contract test gate](reference_sql_contract_test_gate.md) — a new supabase/tests/*.spec.sql only runs if it's on the explicit psql list in migration-replay.yml.

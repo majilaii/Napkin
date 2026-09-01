@@ -1792,11 +1792,11 @@ export function useProcessImportQueue() {
             // TICKET-120: mirror the success to a local notification when backgrounded
             // (only on a fresh save — an already-pinned re-drain stays silent).
             // Foreground = toast-only.
-            if (!isV2 && (saved > 0 || listOnly) && AppState.currentState !== 'active') {
+            if (!isV2 && (saved > 0 || ghost > 0) && AppState.currentState !== 'active') {
                 presentImportNotification({
                     title: listOnly
                         ? `saved ${ghost} to ${listNoun}`
-                        : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`,
+                        : `pinned ${saved + ghost} ${saved + ghost === 1 ? 'spot' : 'spots'}`,
                     body: 'tap to fix anything',
                 });
             }

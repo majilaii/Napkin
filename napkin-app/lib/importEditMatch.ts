@@ -24,10 +24,16 @@ export function buildImportEditMatchSearchBody(
     lat?: number;
     lng?: number;
 } {
-    const city = candidate?.restaurant.city?.trim();
+    const trimmedQuery = query.trim();
+    const rawCity = candidate?.restaurant.city?.trim();
+    // A city-seeded query (name missing) must not also send `city`, or the
+    // server joins them into the "Paris, Paris" double-stack this fixes.
+    const city = rawCity && rawCity.toLowerCase() !== trimmedQuery.toLowerCase()
+        ? rawCity
+        : undefined;
     const area = candidate?.area?.trim();
     return {
-        query: query.trim(),
+        query: trimmedQuery,
         limit: 5,
         ...(city ? { city } : {}),
         ...(area ? { area } : {}),

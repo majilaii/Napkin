@@ -30,4 +30,13 @@ describe('import edit-match request', () => {
             restaurant: { name: null, city: 'Paris' },
         })).toBe('Paris');
     });
+
+    it('never sends city alongside a city-seeded query (no "Paris, Paris")', () => {
+        const candidate = { area: null, restaurant: { name: null, city: 'Paris' } };
+        const query = initialImportEditMatchQuery(candidate);
+        expect(buildImportEditMatchSearchBody(query, candidate, null)).toEqual({
+            query: 'Paris',
+            limit: 5,
+        });
+    });
 });

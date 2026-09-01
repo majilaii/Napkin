@@ -14,6 +14,20 @@ import * as Location from 'expo-location';
 import type { LatLng } from '@/lib/geo';
 
 type Status = 'idle' | 'pending' | 'granted' | 'denied';
+
+// A cold GPS fix can take many seconds; consumers (search, sort) must not sit
+// behind it. Deadline the fresh read and settle with no coords — the watch
+// subscription or a later request fills them in.
+const CURRENT_POSITION_DEADLINE_MS = 2000;
+
+async function currentPositionWithDeadline(): Promise<Location.LocationObject | null> {
+    return await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), CURRENT_POSITION_DEADLINE_MS),
+        ),
+    ]);
+}
 export type NearbyPermissionStatus = Location.PermissionStatus | 'unavailable';
 
 /**
@@ -52,7 +66,7 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
             }
             const loc =
                 (await Location.getLastKnownPositionAsync()) ??
-                (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+                (await currentPositionWithDeadline());
             if (loc) {
                 setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
             }
@@ -85,7 +99,7 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
             if (perm !== 'granted') return;
             const loc =
                 (await Location.getLastKnownPositionAsync()) ??
-                (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+                (await currentPositionWithDeadline());
             if (loc) {
                 setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
             }

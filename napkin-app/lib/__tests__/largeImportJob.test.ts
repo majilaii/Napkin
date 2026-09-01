@@ -797,6 +797,58 @@ describe('v2 completeness reconciliation', () => {
         });
     });
 
+    it('requires BOTH routes hydrated before a two-destination ghost transition', () => {
+        const serverItem = (listResult: Record<string, unknown> | null) => ({
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                id: 'queue-item-exhausted',
+                item_nonce: 'nonce-0',
+                state: 'exhausted' as const,
+                restaurant_id: 'private-ghost',
+                last_error: 'no_result',
+                destinations: [
+                    {
+                        destination_kind: 'wishlist' as const,
+                        outcome: 'fulfilled' as const,
+                        result: {
+                            status: 'saved',
+                            wishlist_id: 'wishlist-ghost',
+                            restaurant_id: 'private-ghost',
+                        },
+                    },
+                    {
+                        destination_kind: 'new_list' as const,
+                        outcome: 'fulfilled' as const,
+                        result: listResult,
+                    },
+                ],
+            }],
+        });
+        const mkTwoRouteJob = () => mkJob({
+            items: [{ ...mkItems(1)[0], status: 'queued' }],
+            destListTitle: 'paris hits',
+        });
+
+        // List ledger result not yet acked/visible → byte-for-byte unchanged.
+        const pending = reconcileLargeJobCompleteness(mkTwoRouteJob(), serverItem(null));
+        expect(pending.items[0]).toMatchObject({ status: 'queued' });
+        expect(pending.items[0].wishlist_id).toBeUndefined();
+
+        // Both routes hydrated → ghost with both ids.
+        const hydrated = reconcileLargeJobCompleteness(
+            mkTwoRouteJob(),
+            serverItem({ list_id: 'list-ghost', entry_id: 'entry-ghost' }),
+        );
+        expect(hydrated.items[0]).toMatchObject({
+            status: 'ghost',
+            wishlist_id: 'wishlist-ghost',
+            listRouted: true,
+            needsLook: true,
+        });
+    });
+
     it('upgrades a pre-fix failed manifest after the server backfills its ghost pin', () => {
         const job = mkJob({
             items: [{ ...mkItems(1)[0], status: 'failed', needsLook: true }],
