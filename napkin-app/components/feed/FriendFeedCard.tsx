@@ -19,7 +19,7 @@ import { feedWeight } from './feedRouting';
 import type { FriendFeedRow } from '@/hooks/feed/useFriendsFeed';
 import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
 import { OwnerActionsSheet } from '@/components/common';
-import { tintFor } from '@/lib/engraving';
+import { tintFor, tintIndex6 } from '@/lib/engraving';
 
 interface Props {
     row: FriendFeedRow;
@@ -391,7 +391,8 @@ function PhotoStrip({
         palette.plateSlate,
         palette.plateSand,
     ];
-    const baseTintIndex = plateTints.indexOf(tintFor(tintSeed, palette));
+    // tintIndex6 returns 0..5 directly — no color→index round-trip that could yield -1.
+    const baseTintIndex = tintIndex6(tintSeed);
 
     return (
         <View style={styles.photoStrip}>

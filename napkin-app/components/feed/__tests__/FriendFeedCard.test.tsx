@@ -182,4 +182,12 @@ describe('FriendFeedCard density weights', () => {
 
         act(() => renderer.unmount());
     });
+    it('keeps the hairline on a non-final row (showDivider default)', () => {
+        const renderer = render(feedRow([]));
+        const dividers = renderer.root
+            .findAllByProps({ testID: 'feed-row-divider' })
+            .filter((node: { type: unknown }) => typeof node.type === 'string');
+        expect(dividers).toHaveLength(1);
+        act(() => renderer.unmount());
+    });
 });
