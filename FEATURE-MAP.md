@@ -154,11 +154,11 @@ Source: `app/(tabs)/feed.tsx`, `components/feed/FollowingFeed.tsx`, `components/
 - Friends initial failure with zero rows: explicit error state and retry.
 - Friends later failure with cached rows: existing cards remain; do not call the retained list an empty success.
 - Friends settled zero rows: invitation/switch-tab empty state. This is intended-empty only when `isError` is false.
-- Friends content: chronological friend entry cards; pagination adds a footer spinner. A sparse/end tail is deliberate when the backend reports no more eligible entries.
+- Friends content: chronological friend entries in three visual weights; pagination adds a footer spinner. A sparse/end tail is deliberate when the backend reports no more eligible entries.
 - For You independently loads social clips, people, and public lists. Any non-empty block renders even while a sibling block loads or fails.
 - For You with no visible blocks and any active request: spinner. With any failed request: retry state. With all requests settled empty: “nothing here just yet” invitation.
-- Friend cards render a ledger entry or note treatment, photo/no-photo variants, table context, comments, and the author's own overflow controls.
-- Reactions are heart-only. `FeedActionRow` toggles like/unlike; legacy non-heart reaction rows can count as liked and are removed by unlike, but no picker is rendered.
+- Friend-entry routing is literal and client-only (`feedWeight`): no prose + no photos → `ledger`; prose or one photo → paper-level `note` (one photo is a 42pt thumb); two or more photos, with or without prose → compressed `card`.
+- Note and ledger rows carry no engagement controls. Compressed cards show only non-zero public like/reply counts; tapping any weight opens entry detail, and long-pressing an owned entry opens owner actions.
 - Tables activity cards may be entries, Suppers, Gathers, shares, floats, top-four changes, or list additions (`hooks/tables/useTableActivity.ts`, `components/tables/`). Round cards are legacy residue, not a new state to extend.
 
 ### Journal

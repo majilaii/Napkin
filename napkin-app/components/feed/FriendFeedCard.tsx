@@ -1,33 +1,25 @@
 /**
- * FriendFeedCard — TICKET-103 note-card / ledger-line router for the friends feed.
+ * FriendFeedCard — TICKET-226 three-weight router for the Friends feed.
  *
- * The ONE routing rule (isNoteCard): an entry with prose or photos renders as a
- * white NOTE CARD (34px avatar · one-line byline · upright restaurant with
- * a bare amber rating · italic pull-quote · photos · quiet engagement).
- * A bare rating collapses to a one-line LEDGER ROW (first name · amber numeral
- * · upright restaurant · relative time).
- * No thresholds, no engagement scoring — the author's own effort decides how loud
- * their entry is.
- *
- * Deliberately NO Table grammar (TICKET-093 decision a): a table-shared entry
- * renders as a plain entry. Engagement is the PUBLIC scope only (TICKET-085 scope
- * isolation); taps route to entry-detail?viewAs=public for others' entries, or
- * the plain owner view for own entries.
+ * Bare ratings stay ledger rows. Prose and single-photo entries sit directly on
+ * the paper as compact note rows. Two or more photos earn a compressed note
+ * card. Every weight keeps the same entry-detail tap and owner long-press paths.
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-import { Colors, Radius, Shadow } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { Avatar } from './Avatar';
-import { isNoteCard } from './feedRouting';
+import { feedWeight } from './feedRouting';
 import type { FriendFeedRow } from '@/hooks/feed/useFriendsFeed';
-import { useToggleReaction } from '@/hooks/posts/usePostInteractions';
 import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
 import { OwnerActionsSheet } from '@/components/common';
+import { tintFor } from '@/lib/engraving';
 
 interface Props {
     row: FriendFeedRow;
@@ -35,33 +27,20 @@ interface Props {
     onLongPress?: () => void;
 }
 
-/** Shared tap + reaction wiring for both grammars. */
+/** Shared entry-detail navigation for all three weights. */
 function useRowNav(row: FriendFeedRow) {
     const router = useRouter();
     const { user } = useAuth();
-    const toggleReaction = useToggleReaction();
 
     const rating = row.rating ?? 0;
     const isOwn = user?.id === row.user_id;
-
     const onPress = () =>
         router.push({
             pathname: '/entry-detail',
             params: isOwn ? { entryId: row.id } : { entryId: row.id, viewAs: 'public' },
         });
 
-    // Liked = any reaction of mine (legacy emoji rows count and unlike the same way).
-    const myReactions = row.my_reactions ?? [];
-    const liked = myReactions.length > 0;
-    const handleToggleLike = () =>
-        toggleReaction.mutate({
-            targetType: 'entry',
-            targetId: row.id,
-            emoji: myReactions[0] ?? '❤️',
-            scope: 'public',
-        });
-
-    return { rating, onPress, liked, handleToggleLike, isOwn };
+    return { rating, onPress };
 }
 
 export function FriendFeedCard({ row }: Props) {
@@ -70,9 +49,10 @@ export function FriendFeedCard({ row }: Props) {
     const deleteEntry = useDeleteEntry();
     const [sheetVisible, setSheetVisible] = useState(false);
 
-    // Only own cards get the delete affordance. Others' cards → report/block
-    // (a separate surface, TICKET-091) — never a delete on content you don't own.
+    // Only own rows get the delete affordance. Others' rows → report/block
+    // (a separate surface, TICKET-091) — never delete content you do not own.
     const onLongPress = isOwn ? () => setSheetVisible(true) : undefined;
+    const weight = feedWeight(row);
 
     const handleDelete = () => {
         setSheetVisible(false);
@@ -86,8 +66,10 @@ export function FriendFeedCard({ row }: Props) {
 
     return (
         <>
-            {isNoteCard(row) ? (
-                <NoteCard row={row} onLongPress={onLongPress} />
+            {weight === 'card' ? (
+                <CompressedCard row={row} onLongPress={onLongPress} />
+            ) : weight === 'note' ? (
+                <FeedNoteRow row={row} onLongPress={onLongPress} />
             ) : (
                 <LedgerRow row={row} onLongPress={onLongPress} />
             )}
@@ -102,87 +84,195 @@ export function FriendFeedCard({ row }: Props) {
     );
 }
 
-// ── Note card — prose and/or photos ────────────────────────────────────────────
+// ── Note row — prose or one photo, directly on the feed paper ───────────────
 
-function NoteCard({ row, onLongPress }: Props) {
+function FeedNoteRow({ row, onLongPress }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const { rating, onPress, liked, handleToggleLike } = useRowNav(row);
+    const { rating, onPress } = useRowNav(row);
 
     const restaurantName = row.restaurant?.name ?? 'somewhere';
-    const hasContent = !!row.content && row.content.trim().length > 0;
+    const content = row.content?.trim();
+    const photo = row.photos[0];
+    const time = relativeFeedTime(row.sort_date);
+    const tintSeed = row.restaurant?.id ?? row.restaurant_id ?? row.id;
+
+    return (
+        <>
+            <Pressable
+                testID="feed-note-row"
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${restaurantName}`}
+                onPress={onPress}
+                onLongPress={onLongPress}
+                delayLongPress={350}
+                style={({ pressed }) => [styles.noteRow, { opacity: pressed ? 0.7 : 1 }]}
+            >
+                <View style={styles.noteAvatar}>
+                    <Avatar
+                        name={row.author.display_name}
+                        url={row.author.avatar_url}
+                        size={28}
+                        palette={palette}
+                    />
+                </View>
+                <View style={styles.noteBody}>
+                    <View style={styles.noteMetaLine}>
+                        <Text
+                            numberOfLines={1}
+                            style={[Type.feedMetaStrong, styles.noteAuthor, { color: palette.text }]}
+                        >
+                            {row.author.display_name}
+                        </Text>
+                        <Text style={[Type.feedMeta, { color: palette.textMuted }]}>· noted</Text>
+                        <View style={styles.metaSpacer} />
+                        <Text style={[Type.feedMeta, { color: palette.textFaint }]}>{time}</Text>
+                    </View>
+                    <View style={styles.noteRestaurantLine}>
+                        <Text
+                            numberOfLines={1}
+                            style={[Type.feedNoteRestaurant, styles.restaurantFlex, { color: palette.text }]}
+                        >
+                            {restaurantName}
+                        </Text>
+                        {rating > 0 && (
+                            <Text style={[Type.feedNoteRating, { color: palette.amberBright }]}>
+                                {rating.toFixed(1)}
+                            </Text>
+                        )}
+                    </View>
+                    {(content || photo) && (
+                        <View style={styles.noteContentLine}>
+                            {content ? (
+                                <Text
+                                    numberOfLines={photo ? 2 : 1}
+                                    ellipsizeMode="tail"
+                                    style={[Type.feedQuote, styles.noteQuote, { color: palette.textSoft }]}
+                                >
+                                    {'— '}
+                                    {content}
+                                </Text>
+                            ) : (
+                                <View style={styles.metaSpacer} />
+                            )}
+                            {photo && (
+                                <Image
+                                    testID="feed-note-thumbnail"
+                                    source={{ uri: photo }}
+                                    style={[
+                                        styles.noteThumb,
+                                        {
+                                            backgroundColor: tintFor(tintSeed, palette),
+                                            borderColor: palette.imageOutline,
+                                        },
+                                    ]}
+                                    contentFit="cover"
+                                    transition={200}
+                                />
+                            )}
+                        </View>
+                    )}
+                </View>
+            </Pressable>
+            <View style={[styles.divider, { backgroundColor: palette.dividerSoft }]} />
+        </>
+    );
+}
+
+// ── Card — two or more photos, compressed to the approved strip anatomy ─────
+
+function CompressedCard({ row, onLongPress }: Props) {
+    const scheme = useColorScheme() ?? 'light';
+    const palette = Colors[scheme];
+    const { rating, onPress } = useRowNav(row);
+
+    const restaurantName = row.restaurant?.name ?? 'somewhere';
+    const content = row.content?.trim();
     const photos = row.photos.slice(0, 3);
+    const time = relativeFeedTime(row.sort_date);
     const likeLabel = row.reaction_count > 0
         ? `${row.reaction_count} ${row.reaction_count === 1 ? 'like' : 'likes'}`
-        : 'like';
+        : null;
     const replyLabel = row.comment_count > 0
         ? `${row.comment_count} ${row.comment_count === 1 ? 'reply' : 'replies'}`
         : null;
+    const engagementLabel = [likeLabel, replyLabel].filter(Boolean).join(' · ');
 
     return (
         <Pressable
+            testID="feed-photo-card"
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${restaurantName}`}
             onPress={onPress}
             onLongPress={onLongPress}
             delayLongPress={350}
             style={({ pressed }) => [
-                styles.noteCard,
+                styles.card,
                 { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.9 : 1 },
                 Shadow.ambient,
             ]}
         >
-            <View style={styles.byline}>
-                <Avatar name={row.author.display_name} url={row.author.avatar_url} size={34} palette={palette} />
-                <Text numberOfLines={1} style={[styles.bylineText, { color: palette.textMuted }]}>
-                    <Text style={[styles.bylineName, { color: palette.text }]}>{row.author.display_name}</Text>
+            <View style={styles.cardByline}>
+                <Avatar
+                    name={row.author.display_name}
+                    url={row.author.avatar_url}
+                    size={28}
+                    palette={palette}
+                />
+                <Text
+                    numberOfLines={1}
+                    style={[Type.feedMeta, styles.cardBylineText, { color: palette.textMuted }]}
+                >
+                    <Text style={[Type.feedMetaStrong, { color: palette.text }]}>
+                        {row.author.display_name}
+                    </Text>
                     {' · noted'}
                 </Text>
+                <Text style={[Type.feedMeta, { color: palette.textFaint }]}>{time}</Text>
             </View>
 
-            <View style={styles.noteHead}>
-                <Text numberOfLines={1} style={[styles.restaurantName, { color: palette.text }]}>
+            <View style={styles.cardRestaurantLine}>
+                <Text
+                    numberOfLines={1}
+                    style={[Type.feedCardRestaurant, styles.restaurantFlex, { color: palette.text }]}
+                >
                     {restaurantName}
                 </Text>
                 {rating > 0 && (
-                    <Text style={[styles.noteRating, { color: palette.star }]}>{rating.toFixed(1)}</Text>
+                    <Text style={[Type.feedCardRating, { color: palette.amberBright }]}>
+                        {rating.toFixed(1)}
+                    </Text>
                 )}
             </View>
 
-            {hasContent && (
+            {content && (
                 <Text
-                    numberOfLines={4}
-                    style={[styles.quote, { color: palette.textSoft }]}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                    style={[Type.feedQuote, styles.cardQuote, { color: palette.textSoft }]}
                 >
                     {'— '}
-                    {row.content}
+                    {content}
                 </Text>
             )}
 
-            {/* Photos follow */}
-            {photos.length > 0 && (
-                <View style={[styles.photoBlock, !hasContent && styles.photoBlockWithoutQuote]}>
-                    <PhotoGrid photos={photos} total={row.photos.length} />
+            <PhotoStrip photos={photos} total={row.photos.length} palette={palette} />
+
+            {engagementLabel && (
+                <View style={styles.cardFoot}>
+                    {likeLabel && (
+                        <Ionicons name="heart-outline" size={15} color={palette.textMuted} />
+                    )}
+                    <Text style={[Type.feedMeta, { color: palette.textMuted }]}>
+                        {engagementLabel}
+                    </Text>
                 </View>
             )}
-
-            <View style={[styles.noteFoot, !photos.length && styles.noteFootWithoutPhotos]}>
-                <Pressable
-                    onPress={handleToggleLike}
-                    hitSlop={12}
-                    accessibilityRole="button"
-                    accessibilityLabel={liked ? 'Unlike' : 'Like'}
-                    style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
-                >
-                    <Text style={[styles.footText, { color: palette.textFaint }]}>{likeLabel}</Text>
-                </Pressable>
-                {replyLabel && (
-                    <Text style={[styles.footText, { color: palette.textFaint }]}>{` · ${replyLabel}`}</Text>
-                )}
-            </View>
         </Pressable>
     );
 }
 
-// ── Ledger row — a bare rating, one line, no chrome ─────────────────────────────
+// ── Ledger row — bare rating, unchanged one-line grammar ────────────────────
 
 function LedgerRow({ row, onLongPress }: Props) {
     const scheme = useColorScheme() ?? 'light';
@@ -194,23 +284,38 @@ function LedgerRow({ row, onLongPress }: Props) {
     const time = relativeFeedTime(row.sort_date);
 
     return (
-        <Pressable
-            onPress={onPress}
-            onLongPress={onLongPress}
-            delayLongPress={350}
-            style={({ pressed }) => [styles.ledgerRow, { opacity: pressed ? 0.7 : 1 }]}
-        >
-            <Text numberOfLines={1} style={[styles.ledgerWho, { color: palette.text }]}>{firstName}</Text>
-            {rating > 0 && (
-                <Text style={[styles.ledgerRating, { color: palette.star }]}>{rating.toFixed(1)}</Text>
-            )}
-            <Text numberOfLines={1} style={[styles.ledgerRestaurant, { color: palette.text }]}>{restaurantName}</Text>
-            <Text style={[styles.ledgerTime, { color: palette.textFaint }]}>{time}</Text>
-        </Pressable>
+        <>
+            <Pressable
+                testID="feed-ledger-row"
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${restaurantName}`}
+                onPress={onPress}
+                onLongPress={onLongPress}
+                delayLongPress={350}
+                style={({ pressed }) => [styles.ledgerRow, { opacity: pressed ? 0.7 : 1 }]}
+            >
+                <Text numberOfLines={1} style={[Type.feedMetaStrong, { color: palette.text }]}>
+                    {firstName}
+                </Text>
+                {rating > 0 && (
+                    <Text style={[Type.feedLedgerRating, { color: palette.star }]}>
+                        {rating.toFixed(1)}
+                    </Text>
+                )}
+                <Text
+                    numberOfLines={1}
+                    style={[Type.feedLedger, styles.restaurantFlex, { color: palette.text }]}
+                >
+                    {restaurantName}
+                </Text>
+                <Text style={[Type.feedMeta, { color: palette.textFaint }]}>{time}</Text>
+            </Pressable>
+            <View style={[styles.divider, { backgroundColor: palette.dividerSoft }]} />
+        </>
     );
 }
 
-// ── Relative ledger stamp ───────────────────────────────────────────────────────────────
+// ── Relative feed stamp ─────────────────────────────────────────────────────
 
 function relativeFeedTime(iso: string, now: Date = new Date()): string {
     const then = new Date(iso);
@@ -219,201 +324,165 @@ function relativeFeedTime(iso: string, now: Date = new Date()): string {
 
     if (elapsedMinutes < 60) return `${Math.max(1, elapsedMinutes)}m`;
     if (elapsedMinutes < 1_440) return `${Math.floor(elapsedMinutes / 60)}h`;
-    return then.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+
+    const elapsedDays = Math.floor(elapsedMinutes / 1_440);
+    if (elapsedDays < 7) return `${elapsedDays}d`;
+    return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toLowerCase();
 }
 
-// ── Photo grid — restyled to Radius.md corners, sits after the quote block ──────
+// ── Compressed three-up photo strip ─────────────────────────────────────────
 
-function PhotoGrid({ photos, total }: { photos: string[]; total: number }) {
-    const scheme = useColorScheme() ?? 'light';
-    const palette = Colors[scheme];
+type Palette = typeof Colors.light;
 
-    if (photos.length === 1) {
-        return (
-            <Image
-                source={{ uri: photos[0] }}
-                style={{
-                    width: '100%',
-                    aspectRatio: 3 / 2,
-                    borderRadius: Radius.md,
-                    backgroundColor: palette.surfaceContainerLow,
-                }}
-                contentFit="cover"
-                transition={200}
-            />
-        );
-    }
+function PhotoStrip({ photos, total, palette }: { photos: string[]; total: number; palette: Palette }) {
+    const placeholderTints = [palette.plateAmber, palette.plateOlive, palette.plateGrey];
 
-    if (photos.length === 2) {
-        return (
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-                {photos.map((p, i) => (
-                    <Image
-                        key={i}
-                        source={{ uri: p }}
-                        style={{ flex: 1, height: 110, borderRadius: Radius.md }}
-                        contentFit="cover"
-                        transition={200}
-                    />
-                ))}
-            </View>
-        );
-    }
-
-    // 3+ photos — 2fr | 1fr (stacked right)
     return (
-        <View style={{ flexDirection: 'row', gap: 6 }}>
-            <Image
-                source={{ uri: photos[0] }}
-                style={{ flex: 2, aspectRatio: 1, borderRadius: Radius.md }}
-                contentFit="cover"
-                transition={200}
-            />
-            <View style={{ flex: 1, gap: 6 }}>
-                <Image
-                    source={{ uri: photos[1] }}
-                    style={{ flex: 1, borderRadius: Radius.md }}
-                    contentFit="cover"
-                    transition={200}
-                />
-                <View style={{ flex: 1, position: 'relative' }}>
+        <View style={styles.photoStrip}>
+            {photos.map((photo, index) => (
+                <View
+                    key={`${photo}-${index}`}
+                    testID="feed-card-photo-tile"
+                    style={[
+                        styles.photoTile,
+                        {
+                            backgroundColor: placeholderTints[index],
+                            borderColor: palette.imageOutline,
+                        },
+                    ]}
+                >
                     <Image
-                        source={{ uri: photos[2] }}
-                        style={{ flex: 1, borderRadius: Radius.md }}
+                        testID={`feed-card-photo-${index}`}
+                        source={{ uri: photo }}
+                        style={StyleSheet.absoluteFillObject}
                         contentFit="cover"
                         transition={200}
                     />
-                    {total > 3 && (
+                    {index === 2 && total > 3 && (
                         <View
-                            style={{
-                                position: 'absolute',
-                                top: 0,
-                                right: 0,
-                                bottom: 0,
-                                left: 0,
-                                backgroundColor: palette.scrimDark,
-                                borderRadius: Radius.md,
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                            }}
+                            style={[
+                                StyleSheet.absoluteFillObject,
+                                styles.photoScrim,
+                                { backgroundColor: palette.scrimDark },
+                            ]}
                         >
-                            <Text
-                                style={{
-                                    fontFamily: 'Manrope_600SemiBold',
-                                    fontSize: 16,
-                                    color: palette.textOnImage,
-                                }}
-                            >
-                                +{total - 3}
+                            <Text style={[Type.feedPhotoCount, { color: palette.textOnImage }]}>
+                                {`+${total - 3}`}
                             </Text>
                         </View>
                     )}
                 </View>
-            </View>
+            ))}
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    noteCard: {
-        borderRadius: 18,
-        paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 13,
-    },
-    byline: {
+    noteRow: {
         flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        marginBottom: 10,
+        gap: Spacing.feed.contentGap,
+        paddingTop: Spacing.feed.rowTop,
+        paddingBottom: Spacing.feed.rowBottom,
     },
-    bylineText: {
+    noteAvatar: {
+        flexShrink: 0,
+        marginTop: Spacing.feed.avatarOffset,
+    },
+    noteBody: {
         flex: 1,
         minWidth: 0,
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
-        lineHeight: 19,
+        gap: Spacing.feed.stackGap,
     },
-    bylineName: {
-        fontFamily: 'Manrope_700Bold',
-    },
-    noteHead: {
+    noteMetaLine: {
         flexDirection: 'row',
         alignItems: 'baseline',
-        justifyContent: 'space-between',
-        gap: 12,
-        marginBottom: 6,
+        gap: Spacing.feed.metaGap,
     },
-    restaurantName: {
+    noteAuthor: {
+        flexShrink: 1,
+    },
+    metaSpacer: {
+        flex: 1,
+    },
+    noteRestaurantLine: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: Spacing.feed.contentGap,
+    },
+    restaurantFlex: {
         flex: 1,
         minWidth: 0,
-        fontFamily: 'Newsreader_500Medium',
-        fontSize: 19,
-        lineHeight: 23,
     },
-    noteRating: {
+    noteContentLine: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: Spacing.feed.contentGap,
+    },
+    noteQuote: {
+        flex: 1,
+        minWidth: 0,
+    },
+    noteThumb: {
+        width: 42,
+        height: 42,
         flexShrink: 0,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 19,
-        lineHeight: 23,
-        fontVariant: ['tabular-nums'],
+        borderRadius: Radius.compact,
+        borderWidth: StyleSheet.hairlineWidth,
     },
-    quote: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16,
-        lineHeight: 23,
-        marginTop: 2,
+    divider: {
+        height: StyleSheet.hairlineWidth,
     },
-    photoBlock: {
-        marginTop: 12,
-        marginBottom: 11,
+    card: {
+        marginVertical: Spacing.feed.cardMargin,
+        borderRadius: Radius.lg,
+        paddingTop: Spacing.feed.cardTop,
+        paddingHorizontal: Spacing.feed.cardHorizontal,
+        paddingBottom: Spacing.feed.rowBottom,
     },
-    photoBlockWithoutQuote: {
-        marginTop: 2,
-    },
-    noteFoot: {
+    cardByline: {
         flexDirection: 'row',
         alignItems: 'center',
+        gap: Spacing.feed.cardHeaderGap,
     },
-    noteFootWithoutPhotos: {
-        marginTop: 10,
+    cardBylineText: {
+        flex: 1,
+        minWidth: 0,
     },
-    footText: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
-        lineHeight: 19,
+    cardRestaurantLine: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: Spacing.feed.contentGap,
+        marginTop: Spacing.feed.metaGap,
+    },
+    cardQuote: {
+        marginTop: Spacing.feed.avatarOffset,
+    },
+    photoStrip: {
+        flexDirection: 'row',
+        gap: Spacing.feed.metaGap,
+        marginTop: Spacing.feed.mediaTop,
+    },
+    photoTile: {
+        flex: 1,
+        height: 68,
+        borderRadius: Radius.compact,
+        borderWidth: StyleSheet.hairlineWidth,
+        overflow: 'hidden',
+    },
+    photoScrim: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cardFoot: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.feed.footerIconGap,
+        marginTop: Spacing.feed.mediaTop,
     },
     ledgerRow: {
         flexDirection: 'row',
         alignItems: 'baseline',
-        gap: 8,
-        paddingHorizontal: 2,
-        paddingVertical: 4,
-    },
-    ledgerWho: {
-        flexShrink: 0,
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
-        lineHeight: 19,
-    },
-    ledgerRating: {
-        flexShrink: 0,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 15,
-        lineHeight: 19,
-        fontVariant: ['tabular-nums'],
-    },
-    ledgerRestaurant: {
-        flex: 1,
-        minWidth: 0,
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 15,
-        lineHeight: 19,
-    },
-    ledgerTime: {
-        flexShrink: 0,
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
-        lineHeight: 19,
+        gap: Spacing.sm,
+        paddingVertical: Spacing.feed.mediaTop,
     },
 });

@@ -222,10 +222,26 @@ export const Spacing = {
   lg: 24,
   xl: 32,
   xxl: 48,
+  /** Founder-approved compact Friends-feed rhythm (TICKET-226). */
+  feed: {
+    stackGap: 1,
+    avatarOffset: 2,
+    footerIconGap: 5,
+    metaGap: 6,
+    rowTop: 8,
+    cardHeaderGap: 8,
+    mediaTop: 9,
+    rowBottom: 10,
+    contentGap: 10,
+    cardMargin: 10,
+    cardTop: 12,
+    cardHorizontal: 14,
+  },
 } as const;
 
 export const Radius = {
   sm: 4,     // scrapbook clips, chips
+  compact: 8, // compact feed media + thumbnails
   md: 12,
   lg: 16,    // text cards, notes
   xl: 24,
@@ -407,6 +423,70 @@ export const Type = {
     fontSize: 13,
     fontWeight: '500' as const,
     fontFamily: 'Manrope_500Medium',
+    lineHeight: 19,
+  } as TextStyle,
+  /** Compact Friends-feed metadata, bylines, and relative timestamps. */
+  feedMeta: {
+    fontSize: 13,
+    fontWeight: '400' as const,
+    fontFamily: 'Manrope_400Regular',
+    lineHeight: 19,
+  } as TextStyle,
+  feedMetaStrong: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    lineHeight: 19,
+  } as TextStyle,
+  feedNoteRestaurant: {
+    fontSize: 16,
+    fontWeight: '500' as const,
+    fontFamily: 'Newsreader_500Medium',
+    lineHeight: 21,
+  } as TextStyle,
+  feedCardRestaurant: {
+    fontSize: 17,
+    fontWeight: '500' as const,
+    fontFamily: 'Newsreader_500Medium',
+    lineHeight: 22,
+  } as TextStyle,
+  feedNoteRating: {
+    fontSize: 16,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    lineHeight: 21,
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+  feedCardRating: {
+    fontSize: 17,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    lineHeight: 22,
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+  feedQuote: {
+    fontSize: 15,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    lineHeight: 20,
+  } as TextStyle,
+  feedLedger: {
+    fontSize: 15,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular',
+    lineHeight: 19,
+  } as TextStyle,
+  feedLedgerRating: {
+    fontSize: 15,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    lineHeight: 19,
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+  feedPhotoCount: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    fontFamily: 'Manrope_600SemiBold',
     lineHeight: 19,
   } as TextStyle,
   /** Compact map-caption metadata and relationship line. */

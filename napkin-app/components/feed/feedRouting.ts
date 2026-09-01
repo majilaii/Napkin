@@ -1,11 +1,11 @@
 /**
- * TICKET-103 — pure feed-routing predicates, kept out of the component so they're
+ * Pure feed-routing predicates, kept out of the component so they're
  * unit-testable without dragging expo-router / react-native into jest (mirrors
  * feedEmptyStateGate.ts).
  *
- *   - isNoteCard(row): the ONE routing rule. Prose or photos → note card;
- *     a bare rating → ledger line. No thresholds, no engagement scoring — the
- *     author's own effort decides how loud the entry is.
+ *   - feedWeight(row): the ONE routing rule. Bare ratings → ledger; prose or a
+ *     single photo → compact note row; two or more photos → compressed card.
+ *   - isNoteCard(row): backwards-compatible alias for every non-ledger entry.
  *   - shouldShowSparseTail({...}): the single deterministic gate for the
  *     "· you're caught up ·" mark on a thin feed.
  *
@@ -16,9 +16,21 @@
  */
 import type { FriendFeedRow } from '@/hooks/feed/useFriendsFeed';
 
-/** True when the entry has something to say — prose or photos. */
+export type FeedWeight = 'ledger' | 'note' | 'card';
+
+/**
+ * TICKET-226 density ladder. The two-photo boundary is intentionally literal:
+ * one photo stays a thumbnail in the compact row; two photos earn a card.
+ */
+export function feedWeight(row: Pick<FriendFeedRow, 'content' | 'photos'>): FeedWeight {
+    if (row.photos.length >= 2) return 'card';
+    if (row.content?.trim() || row.photos.length === 1) return 'note';
+    return 'ledger';
+}
+
+/** Backwards-compatible alias for callers that only distinguish rich/bare. */
 export function isNoteCard(row: Pick<FriendFeedRow, 'content' | 'photos'>): boolean {
-    return !!row.content?.trim() || row.photos.length > 0;
+    return feedWeight(row) !== 'ledger';
 }
 
 /** Number of loaded rows below which a fully-loaded feed counts as "sparse". */
