@@ -15,10 +15,11 @@ import { CITIES } from '@/lib/cities';
 type CitySuggestFieldProps = Omit<TextInputProps, 'onChangeText' | 'value'> & {
     value: string;
     onChangeText: (value: string) => void;
+    onSelectSuggestion?: (city: string) => void;
 };
 
 export const CitySuggestField = React.forwardRef<TextInput, CitySuggestFieldProps>(
-    function CitySuggestField({ value, onChangeText, ...inputProps }, ref) {
+    function CitySuggestField({ value, onChangeText, onSelectSuggestion, ...inputProps }, ref) {
         const scheme = useColorScheme() ?? 'light';
         const palette = Colors[scheme];
         const [expanded, setExpanded] = React.useState(false);
@@ -57,6 +58,7 @@ export const CitySuggestField = React.forwardRef<TextInput, CitySuggestFieldProp
                                 onPress={() => {
                                     onChangeText(city);
                                     setExpanded(false);
+                                    onSelectSuggestion?.(city);
                                 }}
                                 style={({ pressed }) => [
                                     styles.suggestion,

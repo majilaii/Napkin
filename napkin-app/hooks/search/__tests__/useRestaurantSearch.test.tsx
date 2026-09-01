@@ -183,4 +183,34 @@ describe('useRestaurantSearch cache and location lifecycle', () => {
             });
         });
     });
+
+    it('hydrates nearby coords in city mode without adding them to the Places request', async () => {
+        mockGetPermissions.mockResolvedValue({ status: 'granted' });
+        const queryClient = new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+        });
+        const { result } = renderHook(
+            () => useRestaurantSearch('Parisik', 'user-1', {
+                grantedLocationBias: true,
+                locality: { city: 'Paris' },
+            }),
+            { wrapper: wrapper(queryClient) },
+        );
+
+        await waitFor(() => {
+            const placesCalls = mockCallEdgeFn.mock.calls.filter(
+                ([name]) => name === 'places-search',
+            );
+            expect(placesCalls).toHaveLength(1);
+            expect(placesCalls[0][1]).toEqual({
+                body: { query: 'Parisik', limit: 15, city: 'Paris' },
+            });
+        });
+        await waitFor(() => expect(result.current.coords).toEqual({
+            latitude: 51.5,
+            longitude: -0.1,
+        }));
+        expect(mockGetPermissions).toHaveBeenCalledTimes(1);
+        expect(mockRequestPermissions).not.toHaveBeenCalled();
+    });
 });

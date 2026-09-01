@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
+import { searchLocalityStore } from '@/hooks/search/searchLocalityStore';
 
 interface AuthContextType {
     session: Session | null;
@@ -99,6 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         // Get initial session
         supabase.auth.getSession().then(({ data: { session } }) => {
+            searchLocalityStore.setActiveUser(session?.user?.id);
             setSession(session);
             setUser(session?.user ?? null);
             setIsLoading(false);
@@ -108,6 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (_event, session) => {
+                searchLocalityStore.setActiveUser(session?.user?.id);
                 setSession(session);
                 setUser(session?.user ?? null);
                 setIsLoading(false);
@@ -124,6 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const signOut = async () => {
         gateReadGeneration.current += 1;
         await supabase.auth.signOut();
+        searchLocalityStore.setActiveUser(null);
         // Clear all cached data to prevent user A seeing user B's data
         queryClient.removeQueries();
         setOnboardedAtState(undefined);

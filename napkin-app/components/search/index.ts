@@ -11,5 +11,6 @@ export { PeopleResultRow } from './PeopleResultRow';
 export { ListsSearchPane } from './ListsSearchPane';
 export { ListRow } from './ListRow';
 export { SearchEmptyState } from './SearchEmptyState';
+export { SearchLocalityBar } from './SearchLocalityBar';
 export { selectNearbyPinned, filterListsByQuery } from './emptyStateUtils';
 export type { NearbyPinnedRow } from './emptyStateUtils';

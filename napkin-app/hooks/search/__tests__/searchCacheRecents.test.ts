@@ -6,6 +6,9 @@
  * (and a fresh in-memory AsyncStorage mock) via jest.resetModules().
  */
 
+import { queryKeys } from '@/lib/queryKeys';
+import { cityLocalityBucket } from '../searchLocalityStore';
+
 const STORAGE_KEY = 'napkin.recentSearches.v1';
 
 type SearchCache = typeof import('../searchCache').searchCache;
@@ -239,6 +242,18 @@ describe('result LRU correctness', () => {
         searchCache.set('user-a', 'kamer', nonEmpty(), '51.5,-0.1');
         expect(searchCache.get('user-a', 'kamer', '51.5,-0.1')).toBeDefined();
         expect(searchCache.get('user-a', 'kamer', '52.4,4.9')).toBeUndefined();
+    });
+
+    it('derives distinct query and LRU keys for different city localities', () => {
+        const paris = cityLocalityBucket(' Paris ');
+        const london = cityLocalityBucket('LONDON');
+
+        expect(queryKeys.search.places('user-a', 'kamer', paris)).not.toEqual(
+            queryKeys.search.places('user-a', 'kamer', london),
+        );
+        searchCache.set('user-a', 'kamer', nonEmpty(), paris);
+        expect(searchCache.get('user-a', 'kamer', paris)).toBeDefined();
+        expect(searchCache.get('user-a', 'kamer', london)).toBeUndefined();
     });
 
     it('does not expose a private result entry to another authenticated user', () => {

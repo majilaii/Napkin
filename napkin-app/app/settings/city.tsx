@@ -18,7 +18,7 @@ export default function EditCityScreen() {
 
     const { data: result } = useUserProfile(user?.id);
     const profile = result?.data?.profile;
-    const homeCity = (profile as { home_city?: string | null } | undefined)?.home_city ?? null;
+    const homeCity = profile?.home_city ?? null;
     const update = useUpdateProfile(user?.id);
 
     const [value, setValue] = React.useState('');
@@ -28,7 +28,7 @@ export default function EditCityScreen() {
     const touched = React.useRef(false);
     React.useEffect(() => {
         if (profile && !touched.current) setValue(homeCity ?? '');
-    }, [homeCity, profile?.user_id]);
+    }, [homeCity, profile]);
 
     const next = value.trim() || null;
     const dirty = next !== homeCity;

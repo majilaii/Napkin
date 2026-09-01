@@ -2,7 +2,7 @@
  * Search tab — find any restaurant, whether or not your Tables have logged it.
  *
  * Layout:
- *   [sticky SearchInput]
+ *   [sticky SearchInput + Places locality bar]
  *   [empty state: SearchEmptyState — recents · pinned near you · your lists]
  *   OR [tiered FlatList (+ trailing "Your lists" section when titles match)]
  *
@@ -39,6 +39,9 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
 import { useMyLists, type MyList } from '@/hooks/lists/useMyLists';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
+import { useUserProfile } from '@/hooks/users';
+import { useSearchLocality } from '@/hooks/search/useSearchLocality';
+import { searchLocalityLabel } from '@/hooks/search/searchLocalityStore';
 import {
     useRestaurantSearch,
     useRecentSearches,
@@ -50,6 +53,7 @@ import {
     SearchResultRow,
     ListRow,
     SearchEmptyState,
+    SearchLocalityBar,
     TierHeader,
     SearchModeTabs,
     PeopleSearchPane,
@@ -114,6 +118,10 @@ export default function SearchScreen() {
     const router = useRouter();
     const { user } = useAuth();
     const { data: tables } = useTables(user?.id);
+    const { data: ownProfileResult, isSuccess: ownProfileSettled } = useUserProfile(user?.id);
+    const homeCity = ownProfileResult?.data?.profile.home_city?.trim() || null;
+    const { locality, setAuto: setAutoLocality, setCity: setCityLocality } =
+        useSearchLocality(user?.id);
 
     // [ARCH-REVIEW-M1] Seed search from ?q= route param (used by ImportLinkSheet fallback).
     // TICKET-125: ?mode=lists lands directly on the Lists segment (For You "see more").
@@ -167,10 +175,8 @@ export default function SearchScreen() {
     const didRestoreScrollRef = useRef(false);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // ── Geolocation — silent until the explicit empty-state affordance ───
-    // Feeds the Places result bias AND the "Pinned near you" empty-state
-    // section. The hook only checks existing permission on mount; the quiet
-    // "use my location" row is the sole path that may request a new grant.
+    // ── Geolocation — silent until the locality sheet asks explicitly ───
+    // Feeds the Places result bias AND the "Pinned near you" empty-state.
     const {
         results,
         isLoading,
@@ -182,8 +188,22 @@ export default function SearchScreen() {
     } = useRestaurantSearch(
         debouncedQuery,
         user?.id,
-        { grantedLocationBias: true },
+        { grantedLocationBias: true, locality },
     );
+
+    const localityLabel = searchLocalityLabel(
+        locality,
+        !!coords,
+        homeCity,
+        ownProfileSettled,
+    );
+
+    const handleCurrentLocation = useCallback(() => {
+        setAutoLocality();
+        if (permissionStatus === null || permissionStatus === 'undetermined') {
+            void requestLocation();
+        }
+    }, [permissionStatus, requestLocation, setAutoLocality]);
 
     useEffect(() => {
         return () => {
@@ -402,6 +422,14 @@ export default function SearchScreen() {
                         </Pressable>
                     ) : null}
                 </View>
+                {mode === 'places' ? (
+                    <SearchLocalityBar
+                        label={localityLabel}
+                        locality={locality}
+                        onSelectCurrentLocation={handleCurrentLocation}
+                        onSelectCity={setCityLocality}
+                    />
+                ) : null}
             </View>
 
             {/* Lists tab (TICKET-106) — decoupled from hidePeopleSearch; always
@@ -436,8 +464,6 @@ export default function SearchScreen() {
                             onSelectRecent={handleRecentSelect}
                             onClearRecents={handleClearRecents}
                             nearbyPinned={nearbyPinned}
-                            showUseMyLocation={permissionStatus === 'undetermined'}
-                            onUseMyLocation={requestLocation}
                             onPressRestaurant={handleResultPress}
                             lists={myLists ?? []}
                             onPressList={handleListPress}

@@ -148,7 +148,7 @@ export default function SettingsScreen() {
 
     const { data: result } = useUserProfile(user?.id);
     const profile = result?.data?.profile;
-    const homeCity = (profile as { home_city?: string | null } | undefined)?.home_city ?? null;
+    const homeCity = profile?.home_city ?? null;
     const isPublic = (profile?.account_privacy ?? 'public') === 'public';
     const showImportTutorial = Platform.OS === 'ios';
     const showOnboardingPreviewToggle = !FRIEND_TEST.hideOnboardingPreviewToggle;
