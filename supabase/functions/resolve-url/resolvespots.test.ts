@@ -27,8 +27,22 @@ import {
     placesFailureDecision,
     resolveSpotsRateGate,
     resolutionDecisionForCandidate,
+    buildPlacesSearchBody,
 } from './_helpers.ts';
 import { mapsItemsToStaged } from './mapsList.ts';
+
+Deno.test('import Places request keeps name bare and forwards structured locality', () => {
+    const body = buildPlacesSearchBody('Parisik', {
+        city: 'Paris',
+        area: 'Le Marais',
+    });
+    assertEquals(body, {
+        query: 'Parisik',
+        limit: 3,
+        city: 'Paris',
+        area: 'Le Marais',
+    });
+});
 
 // ── 1. validateResolveSpotsArgs — the paid-amplifier arg gates (L3) ───────────
 //

@@ -761,6 +761,72 @@ describe('v2 completeness reconciliation', () => {
         expect(next.items[0].wishlist_id).toBeUndefined();
     });
 
+    it('hydrates exhausted ghost pins instead of reporting a failed save', () => {
+        const job = mkJob({ items: [{ ...mkItems(1)[0], status: 'queued' }] });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                id: 'queue-item-exhausted',
+                item_nonce: 'nonce-0',
+                state: 'exhausted',
+                restaurant_id: 'private-ghost',
+                last_error: 'no_result',
+                destinations: [{
+                    destination_kind: 'wishlist',
+                    outcome: 'fulfilled',
+                    result: {
+                        status: 'saved',
+                        wishlist_id: 'wishlist-ghost',
+                        restaurant_id: 'private-ghost',
+                    },
+                }],
+            }],
+        });
+
+        expect(next.items[0]).toMatchObject({
+            status: 'ghost',
+            restaurant_id: 'private-ghost',
+            wishlist_id: 'wishlist-ghost',
+            completenessItemId: 'queue-item-exhausted',
+            needsLook: true,
+        });
+    });
+
+    it('upgrades a pre-fix failed manifest after the server backfills its ghost pin', () => {
+        const job = mkJob({
+            items: [{ ...mkItems(1)[0], status: 'failed', needsLook: true }],
+        });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                id: 'queue-item-backfilled',
+                item_nonce: 'nonce-0',
+                state: 'exhausted',
+                restaurant_id: 'private-ghost',
+                last_error: 'no_result',
+                destinations: [{
+                    destination_kind: 'wishlist',
+                    outcome: 'fulfilled',
+                    result: {
+                        wishlist_id: 'wishlist-backfilled',
+                        restaurant_id: 'private-ghost',
+                    },
+                }],
+            }],
+        });
+
+        expect(next.items[0]).toMatchObject({
+            status: 'ghost',
+            wishlist_id: 'wishlist-backfilled',
+            completenessItemId: 'queue-item-backfilled',
+            needsLook: true,
+        });
+    });
+
     it.each([
         {
             label: 'an expected route is still pending',

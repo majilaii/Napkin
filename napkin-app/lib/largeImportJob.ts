@@ -218,6 +218,13 @@ export function reconcileLargeJobCompleteness(
     const items = job.items.map((item): LargeImportJobItem => {
         const server = byNonce.get(item.client_nonce);
         if (!server) return item;
+        const exhaustedWithFulfilledRoute =
+            server.state === 'exhausted' &&
+            server.destinations.some(
+                (destination) =>
+                    destination.destination_kind !== 'table' &&
+                    destination.outcome === 'fulfilled',
+            );
         if (
             item.status === 'failed' &&
             (server.state === 'pending' || server.state === 'leased' || server.state === 'deferred')
@@ -234,7 +241,8 @@ export function reconcileLargeJobCompleteness(
         }
         if (
             item.status === 'failed' && server.state === 'exhausted' && server.id &&
-            item.completenessItemId !== server.id
+            item.completenessItemId !== server.id &&
+            !exhaustedWithFulfilledRoute
         ) {
             // Upgrade/resume safety: an older local manifest may already expose the
             // exhausted row without the queue id introduced by the status protocol.
@@ -243,7 +251,9 @@ export function reconcileLargeJobCompleteness(
         // The server snapshot describes the immutable original import route. Once
         // a row has left `queued`, the digest owns any later correction/unpin and
         // a polling tick must never restore the stale pre-edit route identities.
-        if (item.status !== 'queued') return item;
+        if (item.status !== 'queued' && !(item.status === 'failed' && exhaustedWithFulfilledRoute)) {
+            return item;
+        }
         const wishlist = server.destinations.find(
             (destination) => destination.destination_kind === 'wishlist',
         );
@@ -299,6 +309,24 @@ export function reconcileLargeJobCompleteness(
             };
         }
         if (server.state === 'exhausted') {
+            if (exhaustedWithFulfilledRoute) {
+                const hasListDestination = job.destListTitle != null;
+                const listRouted = hasListDestination
+                    ? list?.outcome === 'fulfilled'
+                    : item.listRouted;
+                return {
+                    ...item,
+                    completenessItemId: server.id ?? item.completenessItemId ?? null,
+                    status: 'ghost',
+                    restaurant_id: restaurantId,
+                    wishlist_id:
+                        resultString(wishlist?.result ?? null, 'wishlist_id') ??
+                        item.wishlist_id ??
+                        null,
+                    listRouted,
+                    needsLook: true,
+                };
+            }
             return {
                 ...item,
                 completenessItemId: server.id ?? item.completenessItemId ?? null,

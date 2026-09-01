@@ -24,6 +24,43 @@ export type SourceType =
   | "vision"
   | "video";
 
+export function buildPlacesSearchBody(
+  query: string,
+  locality?: { city?: string | null; area?: string | null },
+): Record<string, unknown> {
+  return {
+    query,
+    limit: 3,
+    ...(locality?.city ? { city: locality.city } : {}),
+    ...(locality?.area ? { area: locality.area } : {}),
+  };
+}
+
+export interface InlineDestinationResult {
+  destination_kind: "wishlist" | "table" | "list" | "new_list";
+  outcome: "pending" | "fulfilled" | "rejected";
+  result: Record<string, unknown> | null;
+}
+
+/** Hydrate the synchronous v2 response after exhausted finalization routed its
+ * non-table destinations to the minted ghost. */
+export function exhaustedInlineRoute(
+  destinations: InlineDestinationResult[],
+): { ghost: boolean; wishlistId: string | null } {
+  const fulfilled = destinations.filter((destination) =>
+    destination.destination_kind !== "table" &&
+    destination.outcome === "fulfilled"
+  );
+  const wishlist = fulfilled.find((destination) =>
+    destination.destination_kind === "wishlist"
+  );
+  const wishlistId = wishlist?.result?.["wishlist_id"];
+  return {
+    ghost: fulfilled.length > 0,
+    wishlistId: typeof wishlistId === "string" ? wishlistId : null,
+  };
+}
+
 /**
  * Detect the source_type from a URL host.
  *
@@ -923,7 +960,9 @@ export function buildVideoFusion(
 ): VideoFusion {
   // typeof guards, not `?? ""`: the caption arrives straight off an untrusted
   // JSON body, and a non-string used to be harmlessly dropped by filter(Boolean).
-  const videoText = typeof extractedText === "string" ? extractedText.trim() : "";
+  const videoText = typeof extractedText === "string"
+    ? extractedText.trim()
+    : "";
   const rawCaption = typeof caption === "string" ? caption.trim() : "";
   const captionText = rawCaption
     ? stripTrailingTagBlock(rawCaption).slice(0, CAPTION_SECTION_CAP)

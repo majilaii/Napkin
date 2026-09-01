@@ -23,6 +23,7 @@ import {
   buildV2CompletenessItemIdentities,
   detectSourceTypeFromHost,
   evaluateLegacySaveSunset,
+  exhaustedInlineRoute,
   expectedImportOwnerDecision,
   filterUnauthorizedTableIds,
   isGhostExternalId,
@@ -46,6 +47,35 @@ const V2_ITEM_NONCE = "19500000-0000-4000-8000-000000000002";
 const V2_RESOLUTION_ID = "19500000-0000-4000-8000-000000000003";
 const V2_DESTINATION_NONCE = "19500000-0000-4000-8000-000000000004";
 const OTHER_OWNER = "19500000-0000-4000-8000-000000000005";
+
+Deno.test("v2 inline exhaustion reports a hydrated ghost route", () => {
+  assertEquals(
+    exhaustedInlineRoute([
+      {
+        destination_kind: "wishlist",
+        outcome: "fulfilled",
+        result: {
+          wishlist_id: "wishlist-ghost",
+          restaurant_id: "restaurant-ghost",
+        },
+      },
+      {
+        destination_kind: "table",
+        outcome: "pending",
+        result: null,
+      },
+    ]),
+    { ghost: true, wishlistId: "wishlist-ghost" },
+  );
+  assertEquals(
+    exhaustedInlineRoute([{
+      destination_kind: "list",
+      outcome: "rejected",
+      result: { reason: "AUTHORITY_REVOKED" },
+    }]),
+    { ghost: false, wishlistId: null },
+  );
+});
 
 Deno.test("expected import owner fence is optional for old clients but strict when present", () => {
   assertEquals(

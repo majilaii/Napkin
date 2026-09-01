@@ -59,6 +59,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { useAuth } from '@/providers/AuthProvider';
 import { validateUrl } from '@/lib/urlValidation';
 import {
@@ -81,6 +82,10 @@ import {
 } from '@/lib/importProtocol';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
+import {
+    buildImportEditMatchSearchBody,
+    initialImportEditMatchQuery,
+} from '@/lib/importEditMatch';
 
 // Gate the video-import entry point on the iOS-only native module actually being
 // linked. Computed once at import (safe — never throws). Android keeps the link
@@ -228,6 +233,14 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
     const { resolve, cancel, state: resolverState, data: resolverData, error: resolverError } = useResolveUrl();
     const createImport = useCreateImport(user?.id);
     const saveImportSpots = useSaveImportSpots(user?.id);
+    const {
+        coords: editMatchCoords,
+        requestIfGranted: requestEditMatchLocationIfGranted,
+    } = useNearbyLocation();
+
+    useEffect(() => {
+        if (visible) void requestEditMatchLocationIfGranted();
+    }, [visible, requestEditMatchLocationIfGranted]);
 
     // Effective candidates (patched overrides original)
     const effectiveCandidates = patchedCandidates ?? resolvedData?.candidates ?? [];
@@ -678,16 +691,38 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         resolve(lastUrl);
     }, [resolve, lastUrl, errorCode, runVideoExtraction]);
 
+    // ── Edit-match inline search ───────────────────────────────────────
+    const runEditMatchSearch = useCallback(async (
+        q: string,
+        candidate: ResolvedCandidate | null = editCorrectionForCandidate,
+    ) => {
+        if (!q.trim()) {
+            setEditMatchResults([]);
+            return;
+        }
+        setEditMatchLoading(true);
+        try {
+            const rows = await callEdgeFn<InlineSearchResult[]>('places-search', {
+                body: buildImportEditMatchSearchBody(q, candidate, editMatchCoords),
+            });
+            setEditMatchResults(Array.isArray(rows) ? rows.slice(0, 5) : []);
+        } catch {
+            setEditMatchResults([]);
+        } finally {
+            setEditMatchLoading(false);
+        }
+    }, [editCorrectionForCandidate, editMatchCoords]);
+
     // TICKET-063: per-row "not this?" opens edit-match for that specific candidate
     const handleCorrectRow = useCallback((candidate: ResolvedCandidate) => {
         setEditMatchError(null);
         setEditCorrectionForCandidate(candidate);
-        const defaultQuery = resolvedData?.best_query ?? candidate.restaurant.name ?? '';
+        const defaultQuery = initialImportEditMatchQuery(candidate);
         setEditMatchQuery(defaultQuery);
         setEditMatchResults([]);
         setSheetState('editing-match');
-        runEditMatchSearch(defaultQuery);
-    }, [resolvedData]);
+        runEditMatchSearch(defaultQuery, candidate);
+    }, [runEditMatchSearch]);
 
     // TICKET-060: handle screenshot/photo pick from OS image picker
     const handlePickScreenshot = useCallback(async () => {
@@ -764,25 +799,6 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
             },
         );
     }, [user?.id, createImport, screenshotStoragePath, lastUrl, handleDismiss]);
-
-    // ── Edit-match inline search ───────────────────────────────────────
-    const runEditMatchSearch = useCallback(async (q: string) => {
-        if (!q.trim()) {
-            setEditMatchResults([]);
-            return;
-        }
-        setEditMatchLoading(true);
-        try {
-            const rows = await callEdgeFn<InlineSearchResult[]>('places-search', {
-                body: { query: q.trim(), limit: 5 },
-            });
-            setEditMatchResults(Array.isArray(rows) ? rows.slice(0, 5) : []);
-        } catch {
-            setEditMatchResults([]);
-        } finally {
-            setEditMatchLoading(false);
-        }
-    }, []);
 
     const handleEditMatchQueryChange = useCallback((q: string) => {
         setEditMatchQuery(q);

@@ -68,6 +68,7 @@ export function mergeSearchResults(
             photoReference: place.photoReference,
             photoAttributionHtml: place.photoAttributionHtml,
             tier: 'morePlaces',
+            fartherAfield: place.fartherAfield === true,
             place,
         }));
 

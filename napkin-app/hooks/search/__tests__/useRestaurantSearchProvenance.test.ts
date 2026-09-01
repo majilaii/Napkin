@@ -45,6 +45,7 @@ const ghost: PlacesResult = {
     formattedAddress: '2 Test Street',
     latitude: 51.5,
     longitude: -0.1,
+    fartherAfield: true,
 };
 
 describe('useRestaurantSearch provenance adapter', () => {
@@ -66,6 +67,7 @@ describe('useRestaurantSearch provenance adapter', () => {
             photoSource: null,
             photoReference: 'places/reference',
             photoAttributionHtml: 'Ghost Author',
+            fartherAfield: true,
         });
     });
 });

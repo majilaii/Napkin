@@ -61,7 +61,7 @@ export function RestaurantPickerScreen({
     const { results, isLoading, isPlacesError, refetch } = useRestaurantSearch(
         debouncedQuery,
         userId,
-        null,
+        { grantedLocationBias: true },
     );
 
     const sections = useMemo(

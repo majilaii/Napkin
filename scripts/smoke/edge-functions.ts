@@ -805,6 +805,29 @@ if (Deno.env.get('PLACES_SMOKE') === '1') {
             return null;
         },
     });
+    CHECKS.push({
+        name: 'places-search located global fallback shape (PLACES_SMOKE=1 — deploy-time only)',
+        method: 'POST',
+        fn: 'places-search',
+        body: {
+            query: 'Parisik',
+            lat: 51.5074,
+            lng: -0.1278,
+            global_fallback: true,
+        },
+        shape: (json) => {
+            const data = (json as { data?: unknown }).data;
+            if (!Array.isArray(data)) return 'data is not an array';
+            for (const row of data) {
+                if (!row || typeof row !== 'object') return 'places row is not an object';
+                const fartherAfield = (row as Record<string, unknown>).fartherAfield;
+                if (fartherAfield !== undefined && typeof fartherAfield !== 'boolean') {
+                    return 'fartherAfield is not an optional boolean';
+                }
+            }
+            return null;
+        },
+    });
 }
 
 // TICKET-196: this is intentionally opt-in while B-0 is dark. Once activated,

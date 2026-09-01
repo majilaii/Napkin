@@ -13,12 +13,17 @@ import {
 
 // Import from utils.ts (doesn't trigger serve())
 import {
+    buildTextSearchPlan,
     parsePayload,
     clamp,
     expectedSearchOwnerDecision,
     firstNumber,
     projectionToPlace,
+    resolveGlobalFallback,
+    shouldGlobalFallback,
+    WORLD_RECT_BIAS,
 } from './utils.ts';
+import { CompletenessProvider } from '../_shared/completenessProvider.ts';
 
 Deno.test('places-search utility functions', async (t) => {
 
@@ -58,6 +63,24 @@ Deno.test('places-search utility functions', async (t) => {
         assertEquals(payload.longitude, -74.0);
     });
 
+
+    await t.step('parsePayload() carries structured locality and fallback opt-in', async () => {
+        const req = new Request('http://localhost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: 'Parisik',
+                city: 'Paris',
+                area: 'Le Marais',
+                global_fallback: true,
+            }),
+        });
+        const payload = await parsePayload(req);
+        assertEquals(payload.city, 'Paris');
+        assertEquals(payload.area, 'Le Marais');
+        assertEquals(payload.global_fallback, true);
+    });
+
     await t.step('expected owner fence is optional but strict when present', () => {
         const owner = '19500000-0000-4000-8000-000000000001';
         const other = '19500000-0000-4000-8000-000000000002';
@@ -77,6 +100,210 @@ Deno.test('places-search utility functions', async (t) => {
         assertEquals(payload.latitude, 35.6);
         assertEquals(payload.limit, 10);
     });
+});
+function paidProvider(capture: (init?: RequestInit) => void) {
+  return new CompletenessProvider({
+    rpc: async () => ({ data: true, error: null }),
+  }, {
+    googleApiKey: "google-key",
+    fetchImpl: async (_input, init) => {
+      capture(init);
+      return Response.json({ places: [] });
+    },
+  });
+}
+
+Deno.test("structured city beats coordinates and home_city in the Google request", async () => {
+  const raw = {
+    query: "Parisik",
+    city: "Paris",
+    area: "Le Marais",
+    lat: 51.5,
+    lng: -0.1,
+  };
+  const payload = await parsePayload(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(raw),
+    }),
+  );
+  const plan = buildTextSearchPlan(payload, raw, "London");
+  let outbound: Record<string, unknown> = {};
+  const provider = paidProvider((init) => {
+    outbound = JSON.parse(String(init?.body));
+  });
+  await provider.searchText(
+    "owner",
+    {
+      name: payload.query!,
+      city: plan.city,
+      area: plan.area,
+    },
+    undefined,
+    plan.coordinateBias
+      ? { bias: { circle: { ...plan.coordinateBias, radius: 50000 } } }
+      : undefined,
+  );
+
+  assertEquals(plan.needsHomeCity, false);
+  assertEquals(outbound.textQuery, "Parisik, Le Marais, Paris");
+  assertEquals(outbound.locationBias, undefined);
+  assertEquals(String(outbound.textQuery).includes("London"), false);
+});
+
+Deno.test("legacy and current coordinate requests construct the same Google bias and do not fallback", async () => {
+  const requestBody = async (raw: Record<string, unknown>) => {
+    const payload = await parsePayload(
+      new Request("http://localhost", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(raw),
+      }),
+    );
+    const plan = buildTextSearchPlan(payload, raw, "London");
+    let outbound: Record<string, unknown> = {};
+    const provider = paidProvider((init) => {
+      outbound = JSON.parse(String(init?.body));
+    });
+    await provider.searchText(
+      "owner",
+      {
+        name: payload.query!,
+        city: plan.city,
+      },
+      undefined,
+      plan.coordinateBias
+        ? { bias: { circle: { ...plan.coordinateBias, radius: 50000 } } }
+        : undefined,
+    );
+    assertEquals(shouldGlobalFallback(payload, plan.coordinateBias, 0), false);
+    return outbound;
+  };
+
+  const current = await requestBody({ query: "Kamer", lat: 51.5, lng: -0.1 });
+  const legacy = await requestBody({
+    query: "Kamer",
+    latitude: 51.5,
+    longitude: -0.1,
+  });
+  assertEquals(legacy, current);
+  assertEquals(current.locationBias, {
+    circle: {
+      center: { latitude: 51.5, longitude: -0.1 },
+      radius: 50000,
+    },
+  });
+});
+
+Deno.test("provider rectangle bias and abort signal reach the Google request", async () => {
+  const controller = new AbortController();
+  let outbound: RequestInit | undefined;
+  const provider = paidProvider((init) => {
+    outbound = init;
+  });
+  await provider.searchText("owner", { name: "Kamer", city: "" }, undefined, {
+    bias: WORLD_RECT_BIAS,
+    signal: controller.signal,
+  });
+  const body = JSON.parse(String(outbound?.body));
+  assertEquals(body.locationBias, {
+    rectangle: {
+      low: { latitude: -85, longitude: -180 },
+      high: { latitude: 85, longitude: 180 },
+    },
+  });
+  assertEquals(outbound?.signal, controller.signal);
+});
+
+Deno.test('provider keeps the additive legacy coordinate seam at 50 km with no signal', async () => {
+    let outbound: RequestInit | undefined;
+    const provider = paidProvider((init) => {
+        outbound = init;
+    });
+    await provider.searchText(
+        'owner',
+        { name: 'Kamer', city: '' },
+        undefined,
+        { lat: 51.5, lng: -0.1 },
+    );
+    const body = JSON.parse(String(outbound?.body));
+    assertEquals(body.locationBias, {
+        circle: {
+            center: { latitude: 51.5, longitude: -0.1 },
+            radius: 50000,
+        },
+    });
+    assertEquals(outbound?.signal, undefined);
+});
+
+Deno.test("resolveGlobalFallback degrades safely and tags only successful fallback rows", async (t) => {
+  await t.step("limiter denied skips fetch", async () => {
+    let fetched = false;
+    const rows = await resolveGlobalFallback({
+      firstPassRows: [] as Array<{ id: string }>,
+      consumeRateUnit: async () => false,
+      fetchFallback: async () => {
+        fetched = true;
+        return { ok: true, rows: [{ id: "far" }] };
+      },
+    });
+    assertEquals(rows, []);
+    assertEquals(fetched, false);
+  });
+
+  await t.step("ok replaces the empty first pass", async () => {
+    const rows = await resolveGlobalFallback({
+      firstPassRows: [] as Array<{ id: string; fartherAfield?: boolean }>,
+      consumeRateUnit: async () => true,
+      fetchFallback: async () => ({
+        ok: true,
+        rows: [{ id: "far", fartherAfield: true }],
+      }),
+    });
+    assertEquals(rows, [{ id: "far", fartherAfield: true }]);
+  });
+
+  await t.step("non-ok keeps the first pass", async () => {
+    const first = [{ id: "first" }];
+    assertEquals(
+      await resolveGlobalFallback({
+        firstPassRows: first,
+        consumeRateUnit: async () => true,
+        fetchFallback: async () => ({ ok: false, rows: [{ id: "far" }] }),
+      }),
+      first,
+    );
+  });
+
+  await t.step("throw keeps the first pass", async () => {
+    const first = [{ id: "first" }];
+    assertEquals(
+      await resolveGlobalFallback({
+        firstPassRows: first,
+        consumeRateUnit: async () => true,
+        fetchFallback: async () => {
+          throw new Error("network");
+        },
+      }),
+      first,
+    );
+  });
+
+  await t.step("stall is aborted at the deadline", async () => {
+    const first = [{ id: "first" }];
+    const rows = await resolveGlobalFallback({
+      firstPassRows: first,
+      consumeRateUnit: async () => true,
+      fetchFallback: (signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")));
+        }),
+      timeoutMs: 5,
+    });
+    assertEquals(rows, first);
+  });
 });
 
 Deno.test('mapRegularOpeningHours (TICKET-081)', async (t) => {

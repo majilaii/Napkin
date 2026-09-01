@@ -50,6 +50,8 @@ export interface PlacesResult {
     phone?: string | null;
     google_maps_uri?: string | null;
     hours?: { weekdayDescriptions: string[] } | null;
+    /** True only for rows returned by the opt-in global fallback pass. */
+    fartherAfield?: boolean;
     /**
      * Napkin restaurant id — present ONLY on a place_id lookup with persist=true
      * (places-search upserts the row and echoes its id back). Lets the Top 4
@@ -86,6 +88,7 @@ export interface PersistedSearchResult {
 }
 
 const LRU_CAPACITY = 10;
+const RESULT_TTL_MS = 1000 * 60 * 15;
 const RECENT_CAPACITY = 8;
 const RECENTS_STORAGE_KEY = 'napkin.recentSearches.v1';
 
@@ -111,6 +114,16 @@ let recentsEpoch = 0;
 
 function normalizeQuery(q: string): string {
     return q.trim().toLowerCase();
+}
+
+function resultKey(query: string, coordsBucket?: string | null): string {
+    return `${coordsBucket ?? 'nolo'}\u0000${normalizeQuery(query)}`;
+}
+
+function isFullyEmpty(result: CachedSearchResult): boolean {
+    return result.places.length === 0 &&
+        result.persisted.visitedByMyTables.length === 0 &&
+        result.persisted.onNapkin.length === 0;
 }
 
 function emitRecents(): void {
@@ -167,13 +180,20 @@ function ensureRecentsHydrated(): void {
 }
 
 export const searchCache = {
-    get(query: string): CachedSearchResult | undefined {
-        const key = normalizeQuery(query);
-        return cache.get(key);
+    get(query: string, coordsBucket?: string | null): CachedSearchResult | undefined {
+        const key = resultKey(query, coordsBucket);
+        const result = cache.get(key);
+        if (!result) return undefined;
+        if (Date.now() - result.timestamp >= RESULT_TTL_MS) {
+            cache.delete(key);
+            return undefined;
+        }
+        return result;
     },
 
-    set(query: string, result: CachedSearchResult): void {
-        const key = normalizeQuery(query);
+    set(query: string, result: CachedSearchResult, coordsBucket?: string | null): void {
+        if (isFullyEmpty(result)) return;
+        const key = resultKey(query, coordsBucket);
 
         // Evict oldest if at capacity
         if (cache.size >= LRU_CAPACITY && !cache.has(key)) {
@@ -198,8 +218,8 @@ export const searchCache = {
         persistRecents();
     },
 
-    has(query: string): boolean {
-        return cache.has(normalizeQuery(query));
+    has(query: string, coordsBucket?: string | null): boolean {
+        return this.get(query, coordsBucket) !== undefined;
     },
 
     getRecentQueries(): readonly string[] {

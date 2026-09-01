@@ -84,6 +84,13 @@ function buildFlatList(
     // TICKET-167: one flat ranked list, no tier headers. The been-here signal
     // rides each row (the pin), and the address disambiguates same-name venues.
     for (const row of rows) {
+        if (row.fartherAfield && !items.some((item) => item.key === 'hdr-farther-afield')) {
+            items.push({
+                _type: 'header',
+                label: 'Farther afield',
+                key: 'hdr-farther-afield',
+            });
+        }
         items.push({ _type: 'result', row, key: `r-${row.id ?? row.placeId ?? row.name}` });
     }
 
@@ -160,11 +167,19 @@ export default function SearchScreen() {
     const didRestoreScrollRef = useRef(false);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // ── Geolocation — silent, granted-only (TICKET-097) ──────────────────
+    // ── Geolocation — silent until the explicit empty-state affordance ───
     // Feeds the Places result bias AND the "Pinned near you" empty-state
-    // section. The search hook checks existing permission once per mount and
-    // NEVER requests it. No prior grant → no bias, no section, no nag.
-    const { results, isLoading, isPlacesError, refetch, coords } = useRestaurantSearch(
+    // section. The hook only checks existing permission on mount; the quiet
+    // "use my location" row is the sole path that may request a new grant.
+    const {
+        results,
+        isLoading,
+        isPlacesError,
+        refetch,
+        coords,
+        permissionStatus,
+        requestLocation,
+    } = useRestaurantSearch(
         debouncedQuery,
         user?.id,
         { grantedLocationBias: true },
@@ -421,6 +436,8 @@ export default function SearchScreen() {
                             onSelectRecent={handleRecentSelect}
                             onClearRecents={handleClearRecents}
                             nearbyPinned={nearbyPinned}
+                            showUseMyLocation={permissionStatus === 'undetermined'}
+                            onUseMyLocation={requestLocation}
                             onPressRestaurant={handleResultPress}
                             lists={myLists ?? []}
                             onPressList={handleListPress}
