@@ -149,12 +149,12 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 
 Source: `app/(tabs)/feed.tsx`, `components/feed/FollowingFeed.tsx`, `components/feed/ForYouFeed.tsx`, `components/feed/FriendFeedCard.tsx`, `components/feed/FeedActionRow.tsx`, `hooks/feed/useFriendsFeed.ts`, `hooks/feed/useSocials.ts`.
 
-- Tabs are **Following** and **For You**. Switching them is local/read-only.
-- Following initial load with no cached rows: centered spinner.
-- Following initial failure with zero rows: explicit error state and retry.
-- Following later failure with cached rows: existing cards remain; do not call the retained list an empty success.
-- Following settled zero rows: invitation/switch-tab empty state. This is intended-empty only when `isError` is false.
-- Following content: chronological friend entry cards; pagination adds a footer spinner. A sparse/end tail is deliberate when the backend reports no more eligible entries.
+- Tabs are **Friends** and **For You**, in that order; Friends is the default on every Feed landing. The internal Friends mode key remains `following`. Switching tabs is local/read-only.
+- Friends initial load with no cached rows: centered spinner.
+- Friends initial failure with zero rows: explicit error state and retry.
+- Friends later failure with cached rows: existing cards remain; do not call the retained list an empty success.
+- Friends settled zero rows: invitation/switch-tab empty state. This is intended-empty only when `isError` is false.
+- Friends content: chronological friend entry cards; pagination adds a footer spinner. A sparse/end tail is deliberate when the backend reports no more eligible entries.
 - For You independently loads social clips, people, and public lists. Any non-empty block renders even while a sibling block loads or fails.
 - For You with no visible blocks and any active request: spinner. With any failed request: retry state. With all requests settled empty: “nothing here just yet” invitation.
 - Friend cards render a ledger entry or note treatment, photo/no-photo variants, table context, comments, and the author's own overflow controls.
@@ -239,6 +239,7 @@ Source: `app/import.tsx`, `app/import-review.tsx`, `app/import-kickoff.tsx`, `ap
 - `/import-progress` with active manifests shows per-import progress; with recent history shows completed/failed cards; with neither shows education/empty hub.
 - `/import-review` with candidates shows approve/exclude/destination controls. Missing manifest or zero spots produces “nothing to review”; inspect local manifest presence to distinguish expired/broken handoff from an intentional zero-candidate extraction.
 - `/import-digest` shows saved/rejected/repair rows. Missing job/manifest and “nothing left” are distinct code paths.
+- Import candidate “not this?” correction starts from the bare extracted name and sends structured city/area plus granted-only device coordinates to `places-search`; it never duplicates `best_query` locality.
 - `/imports/[jobId]` shows load, not-found, populated batch, and “no spots in this import” states. Error/not-found is not an empty successful batch.
 - Video import runs OCR/perception on device before server resolution (`useProcessImportQueue`). TikTok's cheap fast path is single-candidate-only (`lib/importFastPath.ts`); multi-candidate TikTok input escalates.
 - Maps lists over 20 return `mode:'large_list'`, use a client-pumped background job in chunks of 20, and post a local completion notification when backgrounded (`lib/largeImportJob.ts`, `useProcessImportQueue`).
@@ -261,6 +262,8 @@ Source: `app/(tabs)/search.tsx` (Places pane is inline), `components/search/Peop
 
 - Places with no query: viewer recents/pins/lists sections appear only when non-empty. A brand-new account can therefore show a deliberately quiet canvas.
 - Search requests do not fire below the pane's minimum query length. With a valid query: spinner before rows, result list on success, explicit places error/retry, or no-results state.
+- Before a Places query, foreground permission resolves silently. Only `undetermined` shows the quiet “use my location” row; granting reactively refreshes the coordinate bucket, nearby pins, and biased results without remounting, while denial removes the row.
+- An empty nearby-biased Places pass may append a single **Farther afield** section when the opt-in world pass succeeds. Those flagged rows stay after every local row and show city before street address.
 - Cached results may remain during a refetch; do not label them stale/broken solely because a spinner is absent.
 - People with no query shows suggestions; a valid query can show loading, people rows, or an invite-via-SMS no-results doorway. Check hook error state because no-results and failure have less visual separation than Places.
 - Lists below the minimum length shows guidance; valid queries show loading, public list rows, or empty copy. Check `useSearchPublicLists` error state before accepting empty copy as intended.

@@ -3,11 +3,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import {
-    parsePayload,
+    buildTextSearchPlan,
     clamp,
     expectedSearchOwnerDecision,
+    parsePayload,
     projectionToPlace,
+    resolveGlobalFallback,
     type SearchPayload,
+    shouldGlobalFallback,
+    WORLD_RECT_BIAS,
 } from './utils.ts';
 import {
     CompletenessPaidPathError,
@@ -130,7 +134,9 @@ function sanitizePlace(place: any) {
     };
 }
 
-function textCandidateToPlace(candidate: GoogleTextCandidate) {
+type SearchCandidate = GoogleTextCandidate & { fartherAfield?: boolean };
+
+function textCandidateToPlace(candidate: SearchCandidate) {
     const raw = candidate.raw as any;
     return {
         ...sanitizePlace(raw),
@@ -138,6 +144,7 @@ function textCandidateToPlace(candidate: GoogleTextCandidate) {
         name: candidate.name,
         formattedAddress: candidate.formattedAddress,
         city: candidate.city,
+        ...(candidate.fartherAfield === true ? { fartherAfield: true } : {}),
     };
 }
 
@@ -171,35 +178,6 @@ function response(body: unknown, status = 200) {
     });
 }
 
-type TextSearchBias = { lat: number; lng: number };
-
-function parseTextSearchBias(value: unknown): TextSearchBias | undefined {
-    if (!value || typeof value !== 'object') return undefined;
-    const payload = value as {
-        lat?: unknown; lng?: unknown;
-        latitude?: unknown; longitude?: unknown;
-    };
-    // Builds ≤223 send `latitude`/`longitude` (the pre-#316 contract) — they
-    // MUST keep biasing. Google IP-localizes bare textQuery from the edge
-    // runtime's egress region, so an un-biased "the hero" finds nothing; the
-    // bias is load-bearing, not an optimization. Prefer the new names.
-    const lat = payload.lat ?? payload.latitude;
-    const lng = payload.lng ?? payload.longitude;
-    if (
-        typeof lat !== 'number' ||
-        !Number.isFinite(lat) ||
-        lat < -90 ||
-        lat > 90 ||
-        typeof lng !== 'number' ||
-        !Number.isFinite(lng) ||
-        lng < -180 ||
-        lng > 180
-    ) {
-        return undefined;
-    }
-    return { lat, lng };
-}
-
 serve(async req => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
@@ -221,7 +199,6 @@ serve(async req => {
             ? await req.clone().json().catch(() => null)
             : null;
         const payload: SearchPayload = await parsePayload(req);
-        const textSearchBias = parseTextSearchBias(rawPayload);
 
         // ── Internal-call path (TICKET-060 B2) ────────────────────────────
         // resolve-url's handleAsyncExtract calls places-search using the service-role
@@ -394,8 +371,8 @@ serve(async req => {
         }
 
         // ── Branch B: Text Search (separate endpoint/mask/debit) ──────────
-        let homeCity = '';
-        if (!textSearchBias) {
+        let textSearchPlan = buildTextSearchPlan(payload, rawPayload ?? payload);
+        if (textSearchPlan.needsHomeCity) {
             const { data: profile, error: profileError } = await supabase
                 .from('profiles')
                 .select('home_city')
@@ -404,16 +381,66 @@ serve(async req => {
             if (profileError) {
                 console.error('places-search home city lookup failed:', profileError);
             } else if (typeof profile?.home_city === 'string') {
-                homeCity = profile.home_city.trim();
+                textSearchPlan = buildTextSearchPlan(
+                    payload,
+                    rawPayload ?? payload,
+                    profile.home_city,
+                );
             }
         }
 
-        const candidates = await provider.searchText(ownerId, {
+        let candidates: SearchCandidate[] = await provider.searchText(ownerId, {
             name: query!,
-            city: homeCity,
-            area: null,
+            city: textSearchPlan.city,
+            area: textSearchPlan.area,
             address: null,
-        }, claimant, textSearchBias);
+        }, claimant, textSearchPlan.coordinateBias
+            ? {
+                bias: {
+                    circle: {
+                        ...textSearchPlan.coordinateBias,
+                        radius: 50000,
+                    },
+                },
+            }
+            : undefined);
+
+        if (shouldGlobalFallback(payload, textSearchPlan.coordinateBias, candidates.length)) {
+            candidates = await resolveGlobalFallback<SearchCandidate>({
+                firstPassRows: candidates,
+                consumeRateUnit: async () => {
+                    const { data: rateRows, error: rateError } = await supabase.rpc(
+                        'check_and_increment_rate_limit',
+                        {
+                            p_user_id: ownerId,
+                            p_bucket_key: 'places_search',
+                            p_max: 120,
+                            p_window_seconds: 3600,
+                        },
+                    );
+                    if (rateError) {
+                        console.error('places-search fallback rate check failed:', rateError);
+                        return false;
+                    }
+                    return rateRows?.[0]?.allowed === true;
+                },
+                fetchFallback: async signal => {
+                    const fallback = await provider.searchText(ownerId, {
+                        name: query!,
+                        city: textSearchPlan.city,
+                        area: textSearchPlan.area,
+                        address: null,
+                    }, claimant, { bias: WORLD_RECT_BIAS, signal });
+                    return {
+                        ok: true,
+                        rows: fallback.map(candidate => ({
+                            ...candidate,
+                            fartherAfield: true,
+                        })),
+                    };
+                },
+            });
+        }
         const limited = candidates.slice(0, clamp(payload.limit ?? 5, 1, 5));
         const sanitized = await Promise.all(limited.map(async (candidate) => ({
             ...textCandidateToPlace(candidate),

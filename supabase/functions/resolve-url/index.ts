@@ -51,11 +51,11 @@ import { contentKey } from "../_shared/videoUrlKey.ts";
 import { captionToNote } from "../_shared/captionToNote.ts";
 import {
   type ExtractedCandidate,
-  type ExtractionContext,
   extractFromText,
   extractFromTextMulti,
   extractFromVision,
   extractFromVisionMulti,
+  type ExtractionContext,
   LISTICLE_CANDIDATE_CAP,
   type PhotoExtractionContext,
   validPhotoSlideCount,
@@ -98,6 +98,7 @@ import {
   DefaultCompletenessBackend,
   settleClaimedCompletenessItem,
 } from "../restaurant-completeness/_worker.ts";
+import { getCompletenessJobStatus } from "../restaurant-completeness/_status.ts";
 import { CompletenessProvider } from "../_shared/completenessProvider.ts";
 import { hasCompleteRestaurantFacts } from "../_shared/completeness.ts";
 // TICKET-077: the handoff pin path re-reads the share LIVE (single source of truth,
@@ -206,6 +207,8 @@ interface ResolvedCandidate {
   already_wishlisted: boolean;
   /** TICKET-063: true when city was inferred from context, not stated. */
   city_inferred: boolean;
+  /** Structured extracted neighborhood/district for manual-match search. */
+  area?: string | null;
   /** TICKET-086c: 'warned' = anti-recommendation ("most overrated") — the
    * client never auto-saves these; review shows them unticked. */
   stance?: "recommended" | "warned" | "neutral" | null;
@@ -581,6 +584,7 @@ async function callPlacesSearch(
   signal: AbortSignal,
   internalSecret?: string,
   internalOwnerId?: string,
+  locality?: { city?: string | null; area?: string | null },
 ): Promise<PlacesPayload[]> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -598,7 +602,7 @@ async function callPlacesSearch(
     res = await fetch(`${supabaseUrl}/functions/v1/places-search`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ query, limit: 3 }),
+      body: JSON.stringify(buildPlacesSearchBody(query, locality)),
       signal,
     });
   } catch (e) {
@@ -642,6 +646,7 @@ function callImportPlacesSearch(
   signal: AbortSignal,
   internalSecret?: string,
   internalOwnerId?: string,
+  locality?: { city?: string | null; area?: string | null },
 ): Promise<{ candidates: PlacesPayload[]; typeRejected: boolean }> {
   return resolveImportPlaceSearch(() =>
     callPlacesSearch(
@@ -652,6 +657,7 @@ function callImportPlacesSearch(
       signal,
       internalSecret,
       internalOwnerId,
+      locality,
     )
   );
 }
@@ -663,17 +669,20 @@ import {
   attemptedExternalIdFromResolutionEvidence,
   buildGhostExternalId,
   buildInlineCompletenessClaims,
+  buildPlacesSearchBody,
   buildResolveSpotDecisionResult,
+  buildV2CompletenessClientFacts,
   buildV2CompletenessItemIdentities,
-  // TICKET-209: caption-authority fusion + cap derivation + route gate.
-  buildVideoFusion,
-  deriveCaptionCap,
   // TICKET-187: photo-field quarantine — the one upsert-input mapping (no
   // photo fields, ever) + the deferred-job id collection.
   buildVerifiedUpsertInput,
+  // TICKET-209: caption-authority fusion + cap derivation + route gate.
+  buildVideoFusion,
   dedupeSuccessfulRestaurantIds,
+  deriveCaptionCap,
   detectSourceTypeFromHost,
   evaluateLegacySaveSunset,
+  exhaustedInlineRoute,
   expectedImportOwnerDecision,
   filterUnauthorizedTableIds,
   type ImportResolutionDecision,
@@ -694,10 +703,10 @@ import {
   routesToVideoText,
   type SaveSpotPlacePayload,
   type SourceType,
+  v2RestaurantIdsNeedingExternalId,
   // TICKET-152: resolve_spots + pin_wishlist decision helpers.
   validateResolveSpotsArgs,
   validateV2SaveProtocol,
-  v2RestaurantIdsNeedingExternalId,
 } from "./_helpers.ts";
 export { buildGhostExternalId, filterUnauthorizedTableIds, isGhostExternalId };
 
@@ -942,16 +951,10 @@ async function resolveCandidateToPlace(
     }
   }
 
-  // No google_place_id → text search by name + area + city. The area
-  // ("Belsize Park", "Dalston", "E11") disambiguates same-name places and
-  // rescues ASR-denoised names (TICKET-086b).
-  const query = [
-    candidate.name,
-    (candidate as { area?: string | null }).area ?? null,
-    candidate.city,
-  ]
-    .filter(Boolean)
-    .join(", ");
+  // No google_place_id → search by the bare name with structured locality.
+  // `city` outranks device/home bias in places-search; `area` still refines
+  // same-name venues and ASR-denoised names without double-welding locality.
+  const query = candidate.name;
   try {
     const { candidates: results, typeRejected } = await callImportPlacesSearch(
       query,
@@ -961,6 +964,10 @@ async function resolveCandidateToPlace(
       signal,
       internalSecret,
       internalOwnerId,
+      {
+        city: candidate.city,
+        area: (candidate as { area?: string | null }).area ?? null,
+      },
     );
     if (typeRejected) {
       return {
@@ -1177,7 +1184,7 @@ async function handleVisionExtract(
   const abortController = new AbortController();
   setTimeout(() => abortController.abort(), 8000);
 
-  const query = [extracted.name, extracted.city].filter(Boolean).join(", ");
+  const query = extracted.name;
   let placeCandidates: PlacesPayload[] = [];
   let typeRejectedCount = 0;
   try {
@@ -1187,6 +1194,9 @@ async function handleVisionExtract(
       supabaseUrl,
       supabaseAnonKey,
       abortController.signal,
+      undefined,
+      undefined,
+      { city: extracted.city, area: extracted.area ?? null },
     );
     placeCandidates = search.candidates;
     typeRejectedCount = search.typeRejected ? 1 : 0;
@@ -1248,6 +1258,7 @@ async function handleVisionExtract(
         restaurant_id: restaurantId,
         already_wishlisted: alreadyWishlisted,
         city_inferred: extracted!.city_inferred,
+        area: extracted!.area ?? null,
       };
     }),
   );
@@ -1290,6 +1301,7 @@ async function handleVisionExtract(
       restaurant_id: null,
       already_wishlisted: false,
       city_inferred: extracted.city_inferred,
+      area: extracted.area ?? null,
     };
     candidates.push(ghostCandidate);
   }
@@ -1656,6 +1668,7 @@ interface SaveSpotInput {
   external_id: string | null;
   restaurant_name: string | null;
   restaurant_city: string | null;
+  area?: string | null;
   table_id?: string | null;
   table_client_nonce?: string | null;
   /** TICKET-195 v2: server-minted, caller-bound provenance. */
@@ -1758,25 +1771,18 @@ async function handleSaveSpotsV2(
       ...identity,
       // Advisory only. The worker derives identity, coordinates, and media
       // from its own attestation; these facts are resolution hints at most.
-      client_facts: {
-        candidate_id: spot.candidate_id,
-        name: spot.restaurant_name ?? spot.place?.name ?? null,
-        city: spot.restaurant_city ?? spot.place?.location?.locality ?? null,
-        address: spot.place?.location?.address ?? null,
-        // Unlike the surrounding advisory facts, this retry hint is reloaded
-        // from append-only server evidence and cannot be supplied by the client.
-        attempted_external_id: spot.resolution_id
+      client_facts: buildV2CompletenessClientFacts(spot, {
+        // These two fields are reloaded from append-only server evidence and
+        // cannot be forged by the save caller.
+        attemptedExternalId: spot.resolution_id
           ? attemptedExternalIdByResolution.get(spot.resolution_id) ?? null
           : null,
-        // Reloaded from the caller-owned append-only resolution row, never from
-        // the save payload. Terminal auto-rejects can therefore seal the v2 job
-        // without being re-searched or turned into a ghost venue.
-        resolution_decision: spot.resolution_id
+        resolutionDecision: spot.resolution_id
           ? decisionByResolution.get(spot.resolution_id) ?? null
           : null,
-        source: body["source"] ?? null,
+        source: body["source"],
         note: typeof body["note"] === "string" ? body["note"] : null,
-      },
+      }),
     };
   });
 
@@ -1853,11 +1859,53 @@ async function handleSaveSpotsV2(
     }));
   }
 
-  const results = spots.map((spot) => {
+  const exhaustedRoutesByNonce = new Map<string, {
+    ghost: boolean;
+    wishlistId: string | null;
+  }>();
+  if (
+    [...processedByNonce.values()].some((process) =>
+      process.state === "exhausted"
+    )
+  ) {
+    const status = await getCompletenessJobStatus(
+      supabase,
+      user.id,
+      enqueue.job_id,
+    );
+    for (const item of status?.items ?? []) {
+      if (item.state === "exhausted") {
+        exhaustedRoutesByNonce.set(
+          item.item_nonce,
+          exhaustedInlineRoute(item.destinations),
+        );
+      }
+    }
+  }
+
+  const results: Array<{
+    candidate_id: string;
+    client_nonce: string;
+    status: "saved" | "already_pinned" | "queued" | "ghost";
+    restaurant_id: string | null;
+    wishlist_id?: string | null;
+  }> = spots.map((spot) => {
     const process = processedByNonce.get(spot.client_nonce);
     const terminal = process?.state === "verified" ||
       process?.state === "resolved";
     const alreadyPinned = terminal && process?.already_pinned === true;
+    const exhaustedRoute = process?.state === "exhausted"
+      ? exhaustedRoutesByNonce.get(spot.client_nonce)
+      : undefined;
+    if (exhaustedRoute?.ghost) {
+      return {
+        candidate_id: spot.candidate_id,
+        client_nonce: spot.client_nonce,
+        status: "ghost",
+        restaurant_id: process?.restaurant_id ?? spot.restaurant_id ?? null,
+        wishlist_id: exhaustedRoute.wishlistId,
+      };
+    }
     return {
       candidate_id: spot.candidate_id,
       client_nonce: spot.client_nonce,
@@ -1878,6 +1926,7 @@ async function handleSaveSpotsV2(
           result.status === "already_pinned"
         ).length,
         queued: results.filter((result) => result.status === "queued").length,
+        ghost: results.filter((result) => result.status === "ghost").length,
         failed: 0,
       },
       job_id: enqueue.job_id,
@@ -2822,6 +2871,7 @@ async function handleResolveSpots(
           external_id: null,
           restaurant_name: s.extracted.name,
           restaurant_city: s.extracted.city,
+          area: s.extracted.area ?? null,
           place: { type_rejected: true as const },
           confidence: "low" as Confidence,
           ghost: false,
@@ -2847,6 +2897,7 @@ async function handleResolveSpots(
           external_id: place.id,
           restaurant_name: place.name,
           restaurant_city: place.city,
+          area: s.extracted.area ?? null,
           place: restaurant,
           confidence: "high" as Confidence,
           ghost: false,
@@ -2884,6 +2935,7 @@ async function handleResolveSpots(
         external_id: null,
         restaurant_name: s.extracted.name,
         restaurant_city: s.extracted.city,
+        area: s.extracted.area ?? null,
         place: ghostPayload,
         confidence: "low" as Confidence,
         ghost: true,
@@ -3203,6 +3255,7 @@ async function handleUrlResolve(
             restaurant_id: restaurantId,
             already_wishlisted: alreadyWishlisted,
             city_inferred: false,
+            area: null,
           };
         },
       ),
@@ -3422,6 +3475,7 @@ async function handleUrlResolve(
           restaurant_id: restaurantId,
           already_wishlisted: alreadyWishlisted,
           city_inferred: s.extracted.city_inferred,
+          area: s.extracted.area ?? null,
           stance: s.extracted.stance ?? null,
           resolution_decision: decision,
           attempted_external_id:
@@ -3538,6 +3592,7 @@ async function buildLegacyCandidateResponse(
         restaurant_id: restaurantId,
         already_wishlisted: alreadyWishlisted,
         city_inferred: false,
+        area: null,
       };
     }),
   );
@@ -3818,6 +3873,7 @@ async function handleVideoText(
         restaurant_id: restaurantId,
         already_wishlisted: alreadyWishlisted,
         city_inferred: s.extracted.city_inferred,
+        area: s.extracted.area ?? null,
         stance: s.extracted.stance ?? null,
         resolution_decision: decision,
         attempted_external_id:

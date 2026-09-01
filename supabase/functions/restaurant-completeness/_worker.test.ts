@@ -348,7 +348,7 @@ Deno.test("route-acked worker death followed by a merge skips terminal destinati
   assertEquals(finalizedRestaurantId, mergedId);
 });
 
-Deno.test("owner-bound terminal resolution exhausts without another paid search or route", async () => {
+Deno.test("owner-bound terminal resolution delegates ghost routing to exhausted finalization", async () => {
   let searched = false;
   let routed = false;
   let finalized: { state: string; reason: string | null } | null = null;
@@ -386,6 +386,35 @@ Deno.test("owner-bound terminal resolution exhausts without another paid search 
   assertEquals(searched, false);
   assertEquals(routed, false);
   assertEquals(finalized, { state: "exhausted", reason: "no_result" });
+});
+
+Deno.test("missing client locality delegates ghost routing to exhausted finalization", async () => {
+  let decision: string | null = null;
+  let finalized: { state: string; reason: string | null } | null = null;
+  const missingCity: ClaimedCompletenessItem = {
+    ...ITEM,
+    external_id: null,
+    client_facts: { name: "Locality-free ghost" },
+  };
+  const fake = backend({
+    recordResolution: async (_item, resolution) => {
+      decision = resolution.decision;
+      return crypto.randomUUID();
+    },
+    finalize: async (_item, state, _restaurantId, reason) => {
+      finalized = { state, reason };
+      return {};
+    },
+  });
+
+  const result = await processClaimedCompletenessItem(
+    fake,
+    missingCity,
+    "worker-missing-city",
+  );
+  assertEquals(result.state, "exhausted");
+  assertEquals(decision, "locality_reject");
+  assertEquals(finalized, { state: "exhausted", reason: "locality_reject" });
 });
 
 Deno.test("nested advisory facts cannot impersonate server-copied resolution markers", async () => {

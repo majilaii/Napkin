@@ -75,6 +75,7 @@ export interface PersistedImportSpot {
     external_id: string | null;
     restaurant_name: string | null;
     restaurant_city: string | null;
+    area?: string | null;
     /** Legacy single-table nonce (b47 and earlier manifests). */
     table_id: string | null;
     table_client_nonce: string | null;

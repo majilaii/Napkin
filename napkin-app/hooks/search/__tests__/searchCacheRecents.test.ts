@@ -217,3 +217,50 @@ describe('subscription mechanics', () => {
         expect(searchCache.getRecentQueries()).toEqual([]);
     });
 });
+
+describe('result LRU correctness', () => {
+    const nonEmpty = () => ({
+        places: [{
+            id: 'place-1',
+            name: 'Kamer',
+            city: 'Amsterdam',
+            cuisine: null,
+            photoReference: null,
+            photoAttributionHtml: null,
+            formattedAddress: 'Amsterdam',
+            latitude: 52.37,
+            longitude: 4.9,
+        }],
+        persisted: { visitedByMyTables: [], onNapkin: [] },
+        timestamp: Date.now(),
+    });
+
+    it('keys result entries by the 0.1-degree coordinate bucket', () => {
+        searchCache.set('user-a', 'kamer', nonEmpty(), '51.5,-0.1');
+        expect(searchCache.get('user-a', 'kamer', '51.5,-0.1')).toBeDefined();
+        expect(searchCache.get('user-a', 'kamer', '52.4,4.9')).toBeUndefined();
+    });
+
+    it('does not expose a private result entry to another authenticated user', () => {
+        searchCache.set('user-a', 'kamer', nonEmpty(), '51.5,-0.1');
+        expect(searchCache.get('user-a', 'kamer', '51.5,-0.1')).toBeDefined();
+        expect(searchCache.get('user-b', 'kamer', '51.5,-0.1')).toBeUndefined();
+    });
+
+    it('expires result entries after 15 minutes', () => {
+        jest.spyOn(Date, 'now').mockReturnValue(1_000);
+        searchCache.set('user-a', 'kamer', nonEmpty(), '51.5,-0.1');
+        jest.spyOn(Date, 'now').mockReturnValue(1_000 + 15 * 60 * 1000);
+        expect(searchCache.get('user-a', 'kamer', '51.5,-0.1')).toBeUndefined();
+        jest.restoreAllMocks();
+    });
+
+    it('never stores a fully-empty result set', () => {
+        searchCache.set('user-a', 'missing', {
+            places: [],
+            persisted: { visitedByMyTables: [], onNapkin: [] },
+            timestamp: Date.now(),
+        });
+        expect(searchCache.get('user-a', 'missing')).toBeUndefined();
+    });
+});

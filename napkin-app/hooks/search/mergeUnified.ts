@@ -53,6 +53,9 @@ export function mergeUnified(results: SearchResults, query: string): SearchResul
     return all
         .map((row, index) => ({ row, index, match: nameMatchRank(row.name, query) }))
         .sort((a, b) => {
+            if (!!a.row.fartherAfield !== !!b.row.fartherAfield) {
+                return a.row.fartherAfield ? 1 : -1;
+            }
             if (a.match !== b.match) return a.match - b.match;
             const at = TIER_ORDER[a.row.tier];
             const bt = TIER_ORDER[b.row.tier];

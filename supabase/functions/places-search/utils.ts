@@ -13,6 +13,12 @@ export type SearchPayload = {
     longitude?: number;
     limit?: number;
     radius?: number;
+    /** Explicit extracted locality. When present it outranks coordinates and home_city. */
+    city?: string;
+    /** Optional neighborhood / district kept separate from the search name. */
+    area?: string;
+    /** Opt in to one best-effort world-biased pass after an empty coordinate-biased pass. */
+    global_fallback?: boolean;
     /**
      * When true and place_id is provided, server upserts the resulting place
      * into restaurants and returns restaurant_id alongside the sanitized place.
@@ -40,6 +46,11 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
                 longitude: firstNumber(body.longitude, searchParams.get('longitude')),
                 limit: firstNumber(body.limit, searchParams.get('limit')),
                 radius: firstNumber(body.radius, searchParams.get('radius')),
+                city: firstString(body.city, searchParams.get('city')),
+                area: firstString(body.area, searchParams.get('area')),
+                global_fallback: typeof body.global_fallback === 'boolean'
+                    ? body.global_fallback
+                    : searchParams.get('global_fallback') === 'true' || undefined,
                 persist: typeof body.persist === 'boolean'
                     ? body.persist
                     : searchParams.get('persist') === 'true' || undefined,
@@ -60,8 +71,129 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
         longitude: firstNumber(undefined, searchParams.get('longitude')),
         limit: firstNumber(undefined, searchParams.get('limit')),
         radius: firstNumber(undefined, searchParams.get('radius')),
+        city: searchParams.get('city') ?? undefined,
+        area: searchParams.get('area') ?? undefined,
+        global_fallback: searchParams.get('global_fallback') === 'true' || undefined,
         persist: searchParams.get('persist') === 'true' || undefined,
     };
+}
+export type TextSearchCoordinates = { lat: number; lng: number };
+
+/** Accept both the current lat/lng shape and the build <=223 latitude/longitude shape. */
+export function parseTextSearchBias(
+  value: unknown,
+): TextSearchCoordinates | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const payload = value as {
+    lat?: unknown;
+    lng?: unknown;
+    latitude?: unknown;
+    longitude?: unknown;
+  };
+  const lat = payload.lat ?? payload.latitude;
+  const lng = payload.lng ?? payload.longitude;
+  if (
+    typeof lat !== "number" ||
+    !Number.isFinite(lat) ||
+    lat < -90 ||
+    lat > 90 ||
+    typeof lng !== "number" ||
+    !Number.isFinite(lng) ||
+    lng < -180 ||
+    lng > 180
+  ) {
+    return undefined;
+  }
+  return { lat, lng };
+}
+
+export const WORLD_RECT_BIAS = {
+  rect: {
+    low: { lat: -85, lng: -180 },
+    high: { lat: 85, lng: 180 },
+  },
+} as const;
+
+export type TextSearchPlan = {
+  city: string;
+  area: string | null;
+  coordinateBias?: TextSearchCoordinates;
+  needsHomeCity: boolean;
+};
+
+/** Locality precedence: explicit city > valid coordinates > home-city fallback. */
+export function buildTextSearchPlan(
+  payload: SearchPayload,
+  rawPayload: unknown,
+  homeCity = "",
+): TextSearchPlan {
+  const explicitCity = typeof payload.city === "string"
+    ? payload.city.trim()
+    : "";
+  const area = typeof payload.area === "string" && payload.area.trim()
+    ? payload.area.trim()
+    : null;
+  if (explicitCity) {
+    return {
+      city: explicitCity,
+      area,
+      coordinateBias: undefined,
+      needsHomeCity: false,
+    };
+  }
+
+  const coordinateBias = parseTextSearchBias(rawPayload) ??
+    parseTextSearchBias(payload);
+  if (coordinateBias) {
+    return { city: "", area, coordinateBias, needsHomeCity: false };
+  }
+
+  return {
+    city: homeCity.trim(),
+    area,
+    coordinateBias: undefined,
+    needsHomeCity: true,
+  };
+}
+
+export function shouldGlobalFallback(
+  payload: SearchPayload,
+  coordinateBias: TextSearchCoordinates | undefined,
+  firstPassCount: number,
+): boolean {
+  return payload.global_fallback === true && !!coordinateBias &&
+    firstPassCount === 0;
+}
+
+export const FALLBACK_TIMEOUT_MS = 4000;
+
+/** Best-effort fallback orchestration; every failure returns the first-pass rows. */
+export async function resolveGlobalFallback<T>(opts: {
+  firstPassRows: T[];
+  consumeRateUnit: () => Promise<boolean>;
+  fetchFallback: (signal: AbortSignal) => Promise<{ ok: boolean; rows: T[] }>;
+  timeoutMs?: number;
+}): Promise<T[]> {
+  const {
+    firstPassRows,
+    consumeRateUnit,
+    fetchFallback,
+    timeoutMs = FALLBACK_TIMEOUT_MS,
+  } = opts;
+  try {
+    if (!await consumeRateUnit()) return firstPassRows;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const fallback = await fetchFallback(controller.signal);
+      return fallback.ok ? fallback.rows : firstPassRows;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    console.error("places-search global fallback failed:", error);
+    return firstPassRows;
+  }
 }
 
 export type ExpectedSearchOwnerDecision = 'allow' | 'invalid' | 'mismatch';
@@ -113,4 +245,12 @@ export function firstNumber(bodyValue?: number, queryValue?: string | null) {
         return Number.isNaN(parsed) ? undefined : parsed;
     }
     return undefined;
+}
+
+function firstString(
+    bodyValue: unknown,
+    queryValue?: string | null,
+): string | undefined {
+    if (typeof bodyValue === 'string') return bodyValue;
+    return queryValue ?? undefined;
 }

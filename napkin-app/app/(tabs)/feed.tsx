@@ -1,15 +1,14 @@
 /**
- * Feed tab — For You / Following modes (TICKET-125).
+ * Feed tab — Friends / For You modes (TICKET-125, TICKET-220).
  *
  * The tab is a mode orchestrator. It owns the single useFriendsFeed subscription
- * used by Following and a `mode` state, then swaps between two bodies that share
+ * used by Friends and a `mode` state, then swaps between two bodies that share
  * one FeedHeader masthead:
  *
- *   For You   → the explore surface: socials, people, lists
- *   Following → pure chronological reviews from people you follow, nothing else
+ *   Friends → pure chronological reviews from people you follow, nothing else
+ *   For You → the explore surface: socials, people, lists
  *
- * For You is always the landing mode. Following stays one tap away and may load
- * in the shared query cache without deciding what the user sees first.
+ * Friends is always the landing mode. For You stays one tap away.
  *
  * Two separate FlatLists (not one union list): Following is keyset-paginated
  * date-sectioned rows; For You is a fixed ~4-block scroll. A mode switch remounts
@@ -31,15 +30,15 @@ export default function FeedScreen() {
     const palette = Colors[scheme];
     const { user } = useAuth();
 
-    // Single subscription for the Following body. It never controls the default.
+    // Single subscription for the Friends body.
     const feedQuery = useFriendsFeed(user?.id);
-    const [mode, setMode] = useState<FeedMode>('for-you');
+    const [mode, setMode] = useState<FeedMode>('following');
 
     // Tab screens stay mounted. Reset on every landing so returning to Feed can
-    // never preserve a prior Following selection as the apparent default.
+    // never preserve a prior For You selection as the apparent default.
     useFocusEffect(
         useCallback(() => {
-            setMode('for-you');
+            setMode('following');
         }, []),
     );
 

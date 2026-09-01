@@ -57,6 +57,8 @@ export interface ResolvedCandidate {
     already_wishlisted: boolean;
     /** TICKET-063: true when city was inferred from hashtags/handle/context. */
     city_inferred?: boolean;
+    /** Structured extracted neighborhood/district for edit-match search. */
+    area?: string | null;
     /** TICKET-086c: 'warned' = the creator warned AGAINST this spot ("most
      * overrated…"). Never auto-saved; review surfaces it unticked. */
     stance?: 'recommended' | 'warned' | 'neutral' | null;

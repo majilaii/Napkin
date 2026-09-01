@@ -49,6 +49,28 @@ export interface CompletenessProviderOptions {
   fetchImpl?: typeof fetch;
 }
 
+export type TextSearchBias =
+  | {
+    circle: {
+      lat: number;
+      lng: number;
+      radius: number;
+    };
+  }
+  | {
+    rect: {
+      low: { lat: number; lng: number };
+      high: { lat: number; lng: number };
+    };
+  };
+
+export interface TextSearchOptions {
+  bias?: TextSearchBias;
+  signal?: AbortSignal;
+}
+
+type LegacyTextSearchBias = { lat: number; lng: number };
+
 export interface PersistedAttestedRestaurant {
   restaurant_id: string;
   projection: PlaceAttestationProjection;
@@ -229,9 +251,9 @@ export class CompletenessProvider {
   }
 
   /**
-   * Runs Places Text Search for a restaurant identity. An optional coordinate
-   * pair adds a soft 50 km location bias while preserving global eligibility,
-   * the existing Text Search SKU, and the frozen response field mask.
+   * Runs Places Text Search for a restaurant identity. The optional bias union
+   * supports either a caller-sized circle or a deterministic rectangle; an
+   * optional signal lets best-effort callers impose their own deadline.
    */
   async searchText(
     ownerId: string,
@@ -242,7 +264,7 @@ export class CompletenessProvider {
       address?: string | null;
     },
     _claimant?: string,
-    bias?: { lat: number; lng: number },
+    options?: TextSearchOptions | LegacyTextSearchBias,
   ): Promise<GoogleTextCandidate[]> {
     if (!this.googleApiKey) {
       throw new CompletenessPaidPathError(
@@ -256,6 +278,18 @@ export class CompletenessProvider {
         "places_text_search budget unavailable",
       );
     }
+
+    // Additive seam: callers compiled against the former coordinate-pair
+    // argument retain the exact 50 km request while new callers can select a
+    // caller-sized circle/rectangle and attach cancellation.
+    const resolvedOptions: TextSearchOptions = options &&
+        "lat" in options && "lng" in options
+      ? {
+        bias: {
+          circle: { lat: options.lat, lng: options.lng, radius: 50000 },
+        },
+      }
+      : (options as TextSearchOptions | undefined) ?? {};
 
     let response: Response;
     try {
@@ -271,20 +305,36 @@ export class CompletenessProvider {
             .filter(Boolean)
             .join(", "),
           maxResultCount: 5,
-          ...(bias
+          ...(resolvedOptions.bias && "circle" in resolvedOptions.bias
             ? {
               locationBias: {
                 circle: {
                   center: {
-                    latitude: bias.lat,
-                    longitude: bias.lng,
+                    latitude: resolvedOptions.bias.circle.lat,
+                    longitude: resolvedOptions.bias.circle.lng,
                   },
-                  radius: 50000.0,
+                  radius: resolvedOptions.bias.circle.radius,
+                },
+              },
+            }
+            : resolvedOptions.bias && "rect" in resolvedOptions.bias
+            ? {
+              locationBias: {
+                rectangle: {
+                  low: {
+                    latitude: resolvedOptions.bias.rect.low.lat,
+                    longitude: resolvedOptions.bias.rect.low.lng,
+                  },
+                  high: {
+                    latitude: resolvedOptions.bias.rect.high.lat,
+                    longitude: resolvedOptions.bias.rect.high.lng,
+                  },
                 },
               },
             }
             : {}),
         }),
+        signal: resolvedOptions.signal,
       });
     } catch (error) {
       throw new CompletenessPaidPathError(

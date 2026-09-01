@@ -24,6 +24,43 @@ export type SourceType =
   | "vision"
   | "video";
 
+export function buildPlacesSearchBody(
+  query: string,
+  locality?: { city?: string | null; area?: string | null },
+): Record<string, unknown> {
+  return {
+    query,
+    limit: 3,
+    ...(locality?.city ? { city: locality.city } : {}),
+    ...(locality?.area ? { area: locality.area } : {}),
+  };
+}
+
+export interface InlineDestinationResult {
+  destination_kind: "wishlist" | "table" | "list" | "new_list";
+  outcome: "pending" | "fulfilled" | "rejected";
+  result: Record<string, unknown> | null;
+}
+
+/** Hydrate the synchronous v2 response after exhausted finalization routed its
+ * non-table destinations to the minted ghost. */
+export function exhaustedInlineRoute(
+  destinations: InlineDestinationResult[],
+): { ghost: boolean; wishlistId: string | null } {
+  const fulfilled = destinations.filter((destination) =>
+    destination.destination_kind !== "table" &&
+    destination.outcome === "fulfilled"
+  );
+  const wishlist = fulfilled.find((destination) =>
+    destination.destination_kind === "wishlist"
+  );
+  const wishlistId = wishlist?.result?.["wishlist_id"];
+  return {
+    ghost: fulfilled.length > 0,
+    wishlistId: typeof wishlistId === "string" ? wishlistId : null,
+  };
+}
+
 /**
  * Detect the source_type from a URL host.
  *
@@ -612,6 +649,39 @@ export interface SaveSpotPlacePayload {
   hours?: { weekdayDescriptions: string[] } | null;
 }
 
+export interface V2CompletenessClientFactsSpot {
+  candidate_id: string;
+  restaurant_name?: string | null;
+  restaurant_city?: string | null;
+  area?: string | null;
+  place?: SaveSpotPlacePayload | null;
+}
+
+/** The one save_spots → deferred-worker advisory-facts mapping. Keeping area
+ * here prevents neighborhood evidence from disappearing between resolution
+ * and a later completeness retry. */
+export function buildV2CompletenessClientFacts(
+  spot: V2CompletenessClientFactsSpot,
+  options: {
+    attemptedExternalId?: string | null;
+    resolutionDecision?: string | null;
+    source?: unknown;
+    note?: string | null;
+  },
+): Record<string, unknown> {
+  return {
+    candidate_id: spot.candidate_id,
+    name: spot.restaurant_name ?? spot.place?.name ?? null,
+    city: spot.restaurant_city ?? spot.place?.location?.locality ?? null,
+    area: spot.area ?? null,
+    address: spot.place?.location?.address ?? null,
+    attempted_external_id: options.attemptedExternalId ?? null,
+    resolution_decision: options.resolutionDecision ?? null,
+    source: options.source ?? null,
+    note: options.note ?? null,
+  };
+}
+
 /**
  * Build the verified-restaurant upsert input for a save_spots spot (TICKET-187).
  *
@@ -923,7 +993,9 @@ export function buildVideoFusion(
 ): VideoFusion {
   // typeof guards, not `?? ""`: the caption arrives straight off an untrusted
   // JSON body, and a non-string used to be harmlessly dropped by filter(Boolean).
-  const videoText = typeof extractedText === "string" ? extractedText.trim() : "";
+  const videoText = typeof extractedText === "string"
+    ? extractedText.trim()
+    : "";
   const rawCaption = typeof caption === "string" ? caption.trim() : "";
   const captionText = rawCaption
     ? stripTrailingTagBlock(rawCaption).slice(0, CAPTION_SECTION_CAP)

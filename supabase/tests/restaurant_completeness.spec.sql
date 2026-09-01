@@ -47,6 +47,9 @@ begin
         'select public.fn_canonicalize_ghost(null,null,null,null)',
         'select public.fn_canonicalize_completeness_item(null,null,null,null,null)',
         'select public.fn_route_destination(null,null,null,null)',
+        'select public.fn_route_exhausted_destination_core(null,null)',
+        'select public.fn_route_exhausted_destinations(null,null)',
+        'select public.fn_backfill_exhausted_destinations(null)',
         'select public.fn_maybe_emit_import_done(null)',
         'select public.fn_finalize_completeness_item(null,null,null,null,null)',
         'select public.fn_defer_completeness_item(null,null,null,null,null)',
@@ -114,6 +117,9 @@ begin
         'select public.fn_canonicalize_ghost(null,null,null,null)',
         'select public.fn_canonicalize_completeness_item(null,null,null,null,null)',
         'select public.fn_route_destination(null,null,null,null)',
+        'select public.fn_route_exhausted_destination_core(null,null)',
+        'select public.fn_route_exhausted_destinations(null,null)',
+        'select public.fn_backfill_exhausted_destinations(null)',
         'select public.fn_maybe_emit_import_done(null)',
         'select public.fn_finalize_completeness_item(null,null,null,null,null)',
         'select public.fn_defer_completeness_item(null,null,null,null,null)',
@@ -185,6 +191,8 @@ begin
         'fn_claim_completeness_item','fn_record_completeness_resolution',
         'fn_apply_restaurant_attestation','fn_canonicalize_ghost',
         'fn_canonicalize_completeness_item','fn_route_destination',
+        'fn_route_exhausted_destination_core','fn_route_exhausted_destinations',
+        'fn_backfill_exhausted_destinations',
         'fn_maybe_emit_import_done','fn_finalize_completeness_item','fn_defer_completeness_item',
         'fn_sweep_stuck_jobs','fn_retry_completeness_item','fn_dismiss_completeness_item',
         'fn_correct_completeness_item',
@@ -273,6 +281,20 @@ begin
         )),
         'for key share'
     ) >= 2, 'FAIL: delayed Table/list authority checks are not held through routing';
+    assert not pg_catalog.has_function_privilege(
+        'service_role',
+        'public.fn_route_exhausted_destination_core(uuid,uuid)',
+        'execute'
+    ), 'FAIL: service role can bypass exhausted-route caller fences';
+    assert pg_catalog.has_function_privilege(
+        'service_role',
+        'public.fn_route_exhausted_destinations(uuid,uuid)',
+        'execute'
+    ) and pg_catalog.has_function_privilege(
+        'service_role',
+        'public.fn_backfill_exhausted_destinations(uuid)',
+        'execute'
+    ), 'FAIL: exhausted-route service wrappers are unavailable';
 end;
 $security_audit$;
 
@@ -1317,6 +1339,367 @@ $manual_retry$;
 -- The additive save overload treats provenance as authority, not decoration:
 -- non-matches cannot carry an arbitrary external id, and a matched resolution
 -- cannot be paired with a different verified restaurant through the id branch.
+-- Exhaustion preserves every non-Table save intent on the minted ghost. The
+-- shared router keeps normal list authority, exactly-once ledgers, retry merge,
+-- and the deliberate pending-Table exception intact.
+do $exhausted_ghost_routes$
+declare
+    v_owner uuid := '19500000-0000-4000-8000-000000000001';
+    v_other uuid := '19500000-0000-4000-8000-000000000002';
+    v_import uuid := '19500000-2190-4000-8000-000000000001';
+    v_item_nonce uuid := '19500000-2190-4000-8000-000000000002';
+    v_resolution uuid;
+    v_correction uuid;
+    v_enqueued jsonb;
+    v_item_id uuid;
+    v_wishlist_destination_id uuid;
+    v_new_list_destination_id uuid;
+    v_table_destination_id uuid;
+    v_ghost_id uuid;
+    v_claim record;
+    v_version integer;
+    v_failed boolean := false;
+begin
+    insert into public.lists(id,owner_id,title,ranked,privacy)
+    values
+        ('19500000-2190-4000-8000-000000000010',v_owner,'Ghost Owned List',false,'public'),
+        ('19500000-2190-4000-8000-000000000011',v_owner,'Ghost Revoked List',false,'public');
+    insert into public.tables(id,owner_id,name)
+    values ('19500000-2190-4000-8000-000000000012',v_owner,'Ghost Retry Table');
+    insert into public.table_members(table_id,member_id,role)
+    values ('19500000-2190-4000-8000-000000000012',v_owner,'admin');
+
+    insert into public.import_resolutions(
+        user_id,import_nonce,candidate_evidence,decision,created_at
+    ) values (
+        v_owner,v_import,'{"candidate":{"name":"Ghost Routes"}}','no_result',
+        pg_catalog.clock_timestamp() - interval '1 hour'
+    ) returning resolution_id into v_resolution;
+    v_enqueued := public.fn_enqueue_completeness(
+        v_owner,v_import,'v2',
+        pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'item_nonce',v_item_nonce,
+            'resolution_id',v_resolution,
+            'client_facts',pg_catalog.jsonb_build_object(
+                'name','Ghost Routes','city','Paris','resolution_decision','no_result',
+                'source',pg_catalog.jsonb_build_object('type','web','url','https://example.invalid')
+            )
+        )),
+        pg_catalog.jsonb_build_array(
+            pg_catalog.jsonb_build_object(
+                'item_nonce',v_item_nonce,
+                'destination_nonce','19500000-2190-4000-8000-000000000020',
+                'destination_kind','wishlist'
+            ),
+            pg_catalog.jsonb_build_object(
+                'item_nonce',v_item_nonce,
+                'destination_nonce','19500000-2190-4000-8000-000000000021',
+                'destination_kind','list',
+                'target_list_id','19500000-2190-4000-8000-000000000010'
+            ),
+            pg_catalog.jsonb_build_object(
+                'item_nonce',v_item_nonce,
+                'destination_nonce','19500000-2190-4000-8000-000000000022',
+                'destination_kind','new_list',
+                'target_list_title','Ghost New List',
+                'title_nonce','19500000-2190-4000-8000-000000000023'
+            ),
+            pg_catalog.jsonb_build_object(
+                'item_nonce',v_item_nonce,
+                'destination_nonce','19500000-2190-4000-8000-000000000024',
+                'destination_kind','list',
+                'target_list_id','19500000-2190-4000-8000-000000000011'
+            ),
+            pg_catalog.jsonb_build_object(
+                'item_nonce',v_item_nonce,
+                'destination_nonce','19500000-2190-4000-8000-000000000025',
+                'destination_kind','table',
+                'target_table_id','19500000-2190-4000-8000-000000000012'
+            )
+        ),5
+    );
+    v_item_id := (v_enqueued->'items'->0->>'id')::uuid;
+    select (returned.value->>'id')::uuid into v_wishlist_destination_id
+    from pg_catalog.jsonb_array_elements(v_enqueued->'destinations') as returned(value)
+    where returned.value->>'destination_nonce' = '19500000-2190-4000-8000-000000000020';
+    select (returned.value->>'id')::uuid into v_new_list_destination_id
+    from pg_catalog.jsonb_array_elements(v_enqueued->'destinations') as returned(value)
+    where returned.value->>'destination_nonce' = '19500000-2190-4000-8000-000000000022';
+    select (returned.value->>'id')::uuid into v_table_destination_id
+    from pg_catalog.jsonb_array_elements(v_enqueued->'destinations') as returned(value)
+    where returned.value->>'destination_nonce' = '19500000-2190-4000-8000-000000000025';
+    -- Authority was valid when the immutable intent was accepted, then was
+    -- revoked before the routing write boundary.
+    update public.lists
+    set owner_id=v_other
+    where id='19500000-2190-4000-8000-000000000011';
+    select * into v_claim from public.fn_claim_completeness_item(
+        v_item_id,'19500000-2190-4000-8000-000000000030',120
+    );
+    v_ghost_id := v_claim.restaurant_id;
+    perform public.fn_finalize_completeness_item(
+        v_claim.id,v_claim.lease_token,'exhausted',v_ghost_id,'no_result'
+    );
+
+    assert (
+        select state = 'exhausted'
+        from public.restaurant_completeness_queue where id = v_item_id
+    ), 'FAIL: ghost route fixture did not exhaust';
+    assert (
+        select pg_catalog.count(*) filter (where destination_kind <> 'table' and outcome='fulfilled') = 3
+           and pg_catalog.count(*) filter (where destination_kind <> 'table' and outcome='rejected') = 1
+           and pg_catalog.count(*) filter (where destination_kind = 'table' and outcome='pending') = 1
+           and pg_catalog.count(*) filter (where destination_kind <> 'table' and outcome='pending') = 0
+        from public.completeness_destinations
+        where owner_id=v_owner and job_id=(v_enqueued->>'job_id')::uuid
+          and item_nonce=v_item_nonce
+    ), 'FAIL: exhausted per-kind terminal matrix drifted';
+    assert (
+        select pg_catalog.count(*) = 4
+        from public.destination_nonce_ledger
+        where owner_id=v_owner and job_id=(v_enqueued->>'job_id')::uuid
+          and ledger_key like 'route:%' and acked_at is not null
+    ) and (
+        select pg_catalog.count(*) = 1
+        from public.destination_nonce_ledger
+        where owner_id=v_owner and job_id=(v_enqueued->>'job_id')::uuid
+          and ledger_key like 'newlist:%' and acked_at is not null
+    ), 'FAIL: exhausted route ledgers were not acknowledged exactly once';
+    assert (
+        select pg_catalog.count(*)=1
+        from public.wishlist_items
+        where user_id=v_owner and restaurant_id=v_ghost_id and deleted_at is null
+    ), 'FAIL: exhausted wishlist destination did not pin the ghost';
+    assert exists (
+        select 1
+        from public.completeness_destinations d
+        join public.destination_nonce_ledger l
+          on l.ledger_key='route:'||v_owner::text||':'||(v_enqueued->>'job_id')||':'||
+              v_item_nonce::text||':'||d.destination_nonce::text
+        where d.owner_id=v_owner and d.job_id=(v_enqueued->>'job_id')::uuid
+          and d.item_nonce=v_item_nonce and d.target_list_id='19500000-2190-4000-8000-000000000011'
+          and d.outcome='rejected' and l.result->>'reason'='AUTHORITY_REVOKED'
+          and l.acked_at is not null
+    ), 'FAIL: revoked list authority was not terminally rejected';
+
+    -- Exercise the core's acknowledged-ledger replay branch. The production
+    -- guard correctly makes terminal outcomes immutable, so this contract test
+    -- temporarily disables only that trigger while constructing the crash-like
+    -- pending snapshot, then restores it before invoking the real wrapper.
+    alter table public.completeness_destinations
+        disable trigger completeness_destinations_immutable;
+    update public.completeness_destinations
+    set outcome='pending' where id=v_wishlist_destination_id;
+    alter table public.completeness_destinations
+        enable trigger completeness_destinations_immutable;
+    perform public.fn_backfill_exhausted_destinations(v_item_id);
+    assert (
+        select d.outcome = l.result->>'outcome'
+        from public.completeness_destinations d
+        join public.destination_nonce_ledger l
+          on l.ledger_key='route:'||v_owner::text||':'||(v_enqueued->>'job_id')||':'||
+              v_item_nonce::text||':'||d.destination_nonce::text
+        where d.id=v_wishlist_destination_id and l.acked_at is not null
+    ) and (
+        select pg_catalog.count(*)=1
+        from public.wishlist_items
+        where user_id=v_owner and restaurant_id=v_ghost_id and deleted_at is null
+    ), 'FAIL: wishlist route-ledger replay did not restore outcome exactly once';
+
+    alter table public.completeness_destinations
+        disable trigger completeness_destinations_immutable;
+    update public.completeness_destinations
+    set outcome='pending' where id=v_new_list_destination_id;
+    alter table public.completeness_destinations
+        enable trigger completeness_destinations_immutable;
+    perform public.fn_backfill_exhausted_destinations(v_item_id);
+    assert (
+        select d.outcome = l.result->>'outcome'
+        from public.completeness_destinations d
+        join public.destination_nonce_ledger l
+          on l.ledger_key='route:'||v_owner::text||':'||(v_enqueued->>'job_id')||':'||
+              v_item_nonce::text||':'||d.destination_nonce::text
+        where d.id=v_new_list_destination_id and l.acked_at is not null
+    ) and (
+        select pg_catalog.count(*)=1
+        from public.list_entries le
+        join public.lists l on l.id=le.list_id
+        where l.owner_id=v_owner and l.title='Ghost New List'
+          and le.restaurant_id=v_ghost_id
+    ), 'FAIL: new-list route-ledger replay did not restore outcome exactly once';
+
+    assert public.fn_backfill_exhausted_destinations(v_item_id) = '[]'::jsonb,
+        'FAIL: exhausted backfill replay repeated a terminal route';
+    assert (
+        select pg_catalog.count(*)=1
+        from public.lists
+        where owner_id=v_owner and title='Ghost New List'
+    ) and (
+        select pg_catalog.count(*)=1
+        from public.list_entries le
+        join public.lists l on l.id=le.list_id
+        where l.owner_id=v_owner and l.title='Ghost New List'
+          and le.restaurant_id=v_ghost_id
+    ), 'FAIL: new-list replay created a duplicate list or entry';
+    v_failed := false;
+    begin
+        perform public.fn_route_exhausted_destinations(v_item_id,v_claim.lease_token);
+    exception when sqlstate '55000' then
+        v_failed := true;
+    end;
+    assert v_failed, 'FAIL: stale live lease replayed exhausted routing';
+
+    insert into public.import_resolutions(
+        user_id,import_nonce,candidate_evidence,decision,matched_external_id,created_at
+    ) values (
+        v_owner,v_import,'{"attestation":{"place_id":"ChIJ195OtherComplete"}}',
+        'matched','ChIJ195OtherComplete',pg_catalog.clock_timestamp()
+    ) returning resolution_id into v_correction;
+    perform public.fn_correct_completeness_item(v_owner,v_item_id,v_correction);
+    select * into v_claim from public.fn_claim_completeness_item(
+        v_item_id,'19500000-2190-4000-8000-000000000031',120
+    );
+    select completeness_version into v_version
+    from public.restaurants where id=v_ghost_id;
+    perform public.fn_canonicalize_completeness_item(
+        v_item_id,v_claim.lease_token,v_ghost_id,'ChIJ195OtherComplete',v_version
+    );
+    perform public.fn_route_destination(
+        v_item_id,v_claim.lease_token,v_table_destination_id,
+        '19500000-aaaa-4000-8000-000000000007'
+    );
+    perform public.fn_finalize_completeness_item(
+        v_item_id,v_claim.lease_token,'resolved',
+        '19500000-aaaa-4000-8000-000000000007',null
+    );
+    assert (
+        select pg_catalog.count(*)=1
+        from public.wishlist_items
+        where user_id=v_owner
+          and restaurant_id='19500000-aaaa-4000-8000-000000000007'
+          and deleted_at is null
+    ) and not exists (
+        select 1 from public.wishlist_items
+        where user_id=v_owner and restaurant_id=v_ghost_id
+    ), 'FAIL: successful retry did not dedup/re-home the ghost pin';
+    assert (
+        select outcome='fulfilled'
+        from public.completeness_destinations where id=v_table_destination_id
+    ) and (
+        select pg_catalog.count(*)=1
+        from public.table_shares
+        where table_id='19500000-2190-4000-8000-000000000012'
+          and author_id=v_owner
+          and restaurant_id='19500000-aaaa-4000-8000-000000000007'
+    ), 'FAIL: retry-to-verified did not fulfill the pending Table destination';
+end;
+$exhausted_ghost_routes$;
+
+-- JSON null is distinct from SQL NULL inside jsonb. Exhausted routing must
+-- normalize it before the wishlist source-shape constraint sees the value.
+do $exhausted_jsonb_null_source$
+declare
+    v_owner uuid := '19500000-0000-4000-8000-000000000001';
+    v_import uuid := '19500000-2190-4000-8000-000000000050';
+    v_resolution uuid;
+    v_enqueued jsonb;
+    v_claim record;
+begin
+    insert into public.import_resolutions(
+        user_id,import_nonce,candidate_evidence,decision,created_at
+    ) values (
+        v_owner,v_import,'{"candidate":{"name":"JSON Null Source Ghost"}}','no_result',
+        pg_catalog.clock_timestamp() - interval '1 hour'
+    ) returning resolution_id into v_resolution;
+    v_enqueued := public.fn_enqueue_completeness(
+        v_owner,v_import,'v2',
+        pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'item_nonce','19500000-2190-4000-8000-000000000051',
+            'resolution_id',v_resolution,
+            'client_facts',pg_catalog.jsonb_build_object(
+                'name','JSON Null Source Ghost','city','Paris',
+                'resolution_decision','no_result','source','null'::jsonb
+            )
+        )),
+        pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'item_nonce','19500000-2190-4000-8000-000000000051',
+            'destination_nonce','19500000-2190-4000-8000-000000000052',
+            'destination_kind','wishlist'
+        )),1
+    );
+    select * into v_claim from public.fn_claim_completeness_item(
+        (v_enqueued->'items'->0->>'id')::uuid,
+        '19500000-2190-4000-8000-000000000053',120
+    );
+    perform public.fn_finalize_completeness_item(
+        v_claim.id,v_claim.lease_token,'exhausted',v_claim.restaurant_id,'no_result'
+    );
+    assert (
+        select q.state='exhausted' and d.outcome='fulfilled'
+        from public.restaurant_completeness_queue q
+        join public.completeness_destinations d
+          on d.owner_id=q.owner_id and d.job_id=q.job_id and d.item_nonce=q.item_nonce
+        where q.id=v_claim.id
+    ), 'FAIL: jsonb-null source stranded exhausted finalization';
+    assert (
+        select pg_catalog.count(*)=1
+           and pg_catalog.count(*) filter (where source is null)=1
+        from public.wishlist_items
+        where user_id=v_owner and restaurant_id=v_claim.restaurant_id and deleted_at is null
+    ), 'FAIL: jsonb-null source did not become SQL NULL on the ghost pin';
+end;
+$exhausted_jsonb_null_source$;
+
+-- Attempt-cap exhaustion never returns to the worker routing seam, so the
+-- defer RPC itself must converge through the finalizer-owned ghost route.
+do $attempt_cap_exhaustion$
+declare
+    v_owner uuid := '19500000-0000-4000-8000-000000000001';
+    v_import uuid := '19500000-2190-4000-8000-000000000040';
+    v_resolution uuid;
+    v_enqueued jsonb;
+    v_claim record;
+    v_item_id uuid;
+begin
+    insert into public.import_resolutions(
+        user_id,import_nonce,candidate_evidence,decision,created_at
+    ) values (
+        v_owner,v_import,'{"candidate":{"name":"Attempt Cap Ghost"}}','transient',
+        pg_catalog.clock_timestamp() - interval '1 hour'
+    ) returning resolution_id into v_resolution;
+    v_enqueued := public.fn_enqueue_completeness(
+        v_owner,v_import,'v2',
+        pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'item_nonce','19500000-2190-4000-8000-000000000041',
+            'resolution_id',v_resolution,
+            'client_facts',pg_catalog.jsonb_build_object('name','Attempt Cap Ghost','city','Paris')
+        )),
+        pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'item_nonce','19500000-2190-4000-8000-000000000041',
+            'destination_nonce','19500000-2190-4000-8000-000000000042',
+            'destination_kind','wishlist'
+        )),1
+    );
+    v_item_id := (v_enqueued->'items'->0->>'id')::uuid;
+    select * into v_claim from public.fn_claim_completeness_item(
+        v_item_id,'19500000-2190-4000-8000-000000000043',120
+    );
+    assert public.fn_defer_completeness_item(
+        v_item_id,v_claim.lease_token,'provider_failure',false,1
+    ) = 'exhausted', 'FAIL: attempt cap did not exhaust';
+    assert (
+        select q.state='exhausted' and d.outcome='fulfilled' and l.acked_at is not null
+        from public.restaurant_completeness_queue q
+        join public.completeness_destinations d
+          on d.owner_id=q.owner_id and d.job_id=q.job_id and d.item_nonce=q.item_nonce
+        join public.destination_nonce_ledger l
+          on l.ledger_key='route:'||q.owner_id::text||':'||q.job_id::text||':'||
+              q.item_nonce::text||':'||d.destination_nonce::text
+        where q.id=v_item_id
+    ), 'FAIL: attempt-cap exhaustion lost the ghost pin route';
+end;
+$attempt_cap_exhaustion$;
+
 do $save_overload_binding$
 declare
     v_owner uuid := '19500000-0000-4000-8000-000000000001';
@@ -1368,9 +1751,9 @@ end;
 $save_overload_binding$;
 
 -- A picker correction must heal the ORIGINAL exhausted queue item. Fresh
--- owner/job provenance replaces the terminal resolution, then the ordinary
--- lease-token route/finalize path fulfils its still-pending destination. The
--- prior import_done notification remains a one-time unresolved snapshot.
+-- owner/job provenance replaces the terminal resolution, then canonical merge
+-- re-homes the already-fulfilled ghost pin. The prior import_done notification
+-- remains a one-time unresolved snapshot.
 insert into public.restaurants(
     id,external_id,name,verification,created_by,lat,lng,photo_source
 ) values (
@@ -1528,10 +1911,6 @@ begin
     perform public.fn_canonicalize_completeness_item(
         v_claim.id,v_claim.lease_token,v_ghost_id,'ChIJ195Corrected',v_version
     );
-    perform public.fn_route_destination(
-        v_claim.id,v_claim.lease_token,v_destination_id,
-        '19500000-aaaa-4000-8000-000000000009'
-    );
     perform public.fn_finalize_completeness_item(
         v_claim.id,v_claim.lease_token,'resolved',
         '19500000-aaaa-4000-8000-000000000009',null
@@ -1544,7 +1923,17 @@ begin
     assert (
         select outcome = 'fulfilled'
         from public.completeness_destinations where id = v_destination_id
-    ), 'FAIL: corrected item did not route its original pending destination';
+    ), 'FAIL: corrected item lost its fulfilled ghost destination';
+    assert (
+        select pg_catalog.count(*) = 1
+        from public.wishlist_items
+        where user_id = v_owner
+          and restaurant_id = '19500000-aaaa-4000-8000-000000000009'
+          and deleted_at is null
+    ) and not exists (
+        select 1 from public.wishlist_items
+        where user_id = v_owner and restaurant_id = v_ghost_id
+    ), 'FAIL: retry-to-verified did not re-home the ghost pin exactly once';
     assert (
         select pg_catalog.count(*) = 1
         from public.notifications
@@ -1573,6 +1962,14 @@ declare
     v_claim record;
     v_failed boolean;
 begin
+    insert into public.tables(id,owner_id,name)
+    values (
+        '19500000-bbbb-4000-8000-000000000390',v_owner,'Dismissal Pending Table'
+    );
+    insert into public.table_members(table_id,member_id,role)
+    values (
+        '19500000-bbbb-4000-8000-000000000390',v_owner,'admin'
+    );
     insert into public.import_resolutions(
         user_id,import_nonce,candidate_evidence,decision,created_at
     ) values (
@@ -1612,7 +2009,8 @@ begin
             pg_catalog.jsonb_build_object(
                 'item_nonce','19500000-3900-4000-8000-000000000003',
                 'destination_nonce','19500000-3900-4000-8000-000000000005',
-                'destination_kind','wishlist'
+                'destination_kind','table',
+                'target_table_id','19500000-bbbb-4000-8000-000000000390'
             )
         ),2
     );

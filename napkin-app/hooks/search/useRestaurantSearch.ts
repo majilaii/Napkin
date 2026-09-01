@@ -16,10 +16,10 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import * as Location from 'expo-location';
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import { useNearbyLocation, type NearbyPermissionStatus } from '@/hooks/useNearbyLocation';
 import { searchCache, type PlacesResult, type PersistedRow, type VisitedRow } from './searchCache';
 import { mergeSearchResults } from './mergeSearchResults';
 
@@ -65,6 +65,8 @@ export interface SearchResultRow {
      * placePayload — the trimmed row starves the restaurant page.
      */
     place?: PlacesResult;
+    /** True only for a Places ghost returned by the world-biased fallback pass. */
+    fartherAfield?: boolean;
 }
 
 export interface SearchResults {
@@ -86,16 +88,28 @@ async function fetchPlaces(
     query: string,
     coords?: SearchCoordinates | null,
 ): Promise<PlacesResult[]> {
-    const body: { query: string; limit: number; lat?: number; lng?: number } = {
+    const body: {
+        query: string;
+        limit: number;
+        lat?: number;
+        lng?: number;
+        global_fallback?: boolean;
+    } = {
         query,
         limit: 15,
     };
     if (coords) {
         body.lat = coords.latitude;
         body.lng = coords.longitude;
+        body.global_fallback = true;
     }
     const data = await callEdgeFn<PlacesResult[]>('places-search', { body });
     return data ?? [];
+}
+
+export function toCoordsBucket(coords?: SearchCoordinates | null): string | null {
+    if (!coords) return null;
+    return `${coords.latitude.toFixed(1)},${coords.longitude.toFixed(1)}`;
 }
 
 async function fetchPersistedDirect(
@@ -115,53 +129,6 @@ export { mergeUnified } from './mergeUnified';
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
-function useGrantedSearchLocation(enabled: boolean): {
-    coords: SearchCoordinates | null;
-    resolved: boolean;
-} {
-    const [coords, setCoords] = useState<SearchCoordinates | null>(null);
-    const [resolved, setResolved] = useState(false);
-    const lookupRef = useRef<Promise<SearchCoordinates | null> | null>(null);
-
-    useEffect(() => {
-        if (!enabled) return;
-        const lookup = lookupRef.current ?? (lookupRef.current = (async () => {
-            try {
-                const { status } = await Location.getForegroundPermissionsAsync();
-                if (status !== 'granted') return null;
-
-                const location =
-                    (await Location.getLastKnownPositionAsync()) ??
-                    (await Location.getCurrentPositionAsync({
-                        accuracy: Location.Accuracy.Balanced,
-                    }));
-                return location
-                    ? {
-                        latitude: location.coords.latitude,
-                        longitude: location.coords.longitude,
-                    }
-                    : null;
-            } catch {
-                // Search remains global when a granted-only location read fails.
-                return null;
-            }
-        })());
-        let active = true;
-
-        void lookup.then((location) => {
-            if (!active) return;
-            setCoords(location);
-            setResolved(true);
-        });
-
-        return () => {
-            active = false;
-        };
-    }, [enabled]);
-
-    return { coords, resolved: !enabled || resolved };
-}
-
 export function useRestaurantSearch(
     query: string,
     userId: string | null | undefined,
@@ -172,37 +139,54 @@ export function useRestaurantSearch(
     isPlacesError: boolean;
     refetch: () => void;
     coords: SearchCoordinates | null;
+    permissionStatus: NearbyPermissionStatus | null;
+    requestLocation: () => Promise<void>;
 } {
     const trimmed = query.trim();
     const enabled = trimmed.length >= 2 && !!userId;
-    const { coords, resolved: locationResolved } = useGrantedSearchLocation(
-        options?.grantedLocationBias === true,
-    );
+    const locationEnabled = options?.grantedLocationBias === true;
+    const location = useNearbyLocation();
+
+    useEffect(() => {
+        if (locationEnabled) void location.requestIfGranted();
+    }, [locationEnabled, location.requestIfGranted]);
+
+    const coords = locationEnabled ? location.coords : null;
+    const locationResolved = !locationEnabled || location.settled;
+    const coordsBucket = toCoordsBucket(coords);
+    const cacheUserId = userId ?? '';
 
     // Check LRU cache synchronously before React Query fires
-    const cachedResult = enabled ? searchCache.get(trimmed) : undefined;
+    const cachedResult = enabled
+        ? searchCache.get(cacheUserId, trimmed, coordsBucket)
+        : undefined;
 
     const placesQuery = useQuery({
-        queryKey: queryKeys.search.places(trimmed),
+        queryKey: queryKeys.search.places(cacheUserId, trimmed, coordsBucket),
         queryFn: async () => {
-            const cached = searchCache.get(trimmed);
+            const cached = searchCache.get(cacheUserId, trimmed, coordsBucket);
             if (cached) return cached.places;
             return fetchPlaces(trimmed, coords);
         },
         enabled: enabled && locationResolved && !cachedResult,
-        staleTime: 1000 * 60 * 5, // 5 minutes
+        // The combined 15-minute LRU owns successful reuse. Zero-result queries
+        // must leave React Query as soon as they become inactive so re-entry pays
+        // attention to a recovered network/provider response.
+        staleTime: 0,
+        gcTime: 0,
         retry: 1,
     });
 
     const persistedQuery = useQuery({
         queryKey: queryKeys.search.persisted(trimmed, userId ?? ''),
         queryFn: async () => {
-            const cached = searchCache.get(trimmed);
+            const cached = searchCache.get(cacheUserId, trimmed, coordsBucket);
             if (cached) return cached.persisted;
             return fetchPersistedDirect(trimmed);
         },
         enabled: enabled && !cachedResult,
-        staleTime: 1000 * 60 * 5,
+        staleTime: 0,
+        gcTime: 0,
         retry: 1,
     });
 
@@ -216,11 +200,11 @@ export function useRestaurantSearch(
             placesQuery.data &&
             persistedQuery.data
         ) {
-            searchCache.set(trimmed, {
+            searchCache.set(cacheUserId, trimmed, {
                 places: placesQuery.data,
                 persisted: persistedQuery.data,
                 timestamp: Date.now(),
-            });
+            }, coordsBucket);
         }
     }, [
         enabled,
@@ -230,6 +214,8 @@ export function useRestaurantSearch(
         placesQuery.data,
         persistedQuery.data,
         trimmed,
+        coordsBucket,
+        cacheUserId,
     ]);
 
     const results = useMemo<SearchResults>(() => {
@@ -260,6 +246,8 @@ export function useRestaurantSearch(
         isLoading,
         isPlacesError,
         coords,
+        permissionStatus: locationEnabled ? location.permissionStatus : null,
+        requestLocation: location.request,
         refetch: () => {
             placesQuery.refetch();
             persistedQuery.refetch();

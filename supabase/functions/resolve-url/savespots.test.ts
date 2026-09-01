@@ -20,9 +20,11 @@ import {
 import {
   buildGhostExternalId,
   buildInlineCompletenessClaims,
+  buildV2CompletenessClientFacts,
   buildV2CompletenessItemIdentities,
   detectSourceTypeFromHost,
   evaluateLegacySaveSunset,
+  exhaustedInlineRoute,
   expectedImportOwnerDecision,
   filterUnauthorizedTableIds,
   isGhostExternalId,
@@ -46,6 +48,35 @@ const V2_ITEM_NONCE = "19500000-0000-4000-8000-000000000002";
 const V2_RESOLUTION_ID = "19500000-0000-4000-8000-000000000003";
 const V2_DESTINATION_NONCE = "19500000-0000-4000-8000-000000000004";
 const OTHER_OWNER = "19500000-0000-4000-8000-000000000005";
+
+Deno.test("v2 inline exhaustion reports a hydrated ghost route", () => {
+  assertEquals(
+    exhaustedInlineRoute([
+      {
+        destination_kind: "wishlist",
+        outcome: "fulfilled",
+        result: {
+          wishlist_id: "wishlist-ghost",
+          restaurant_id: "restaurant-ghost",
+        },
+      },
+      {
+        destination_kind: "table",
+        outcome: "pending",
+        result: null,
+      },
+    ]),
+    { ghost: true, wishlistId: "wishlist-ghost" },
+  );
+  assertEquals(
+    exhaustedInlineRoute([{
+      destination_kind: "list",
+      outcome: "rejected",
+      result: { reason: "AUTHORITY_REVOKED" },
+    }]),
+    { ghost: false, wishlistId: null },
+  );
+});
 
 Deno.test("expected import owner fence is optional for old clients but strict when present", () => {
   assertEquals(
@@ -108,6 +139,23 @@ Deno.test("save protocol: complete v2 shape validates and client_build stays gen
     ),
     false,
   );
+});
+
+Deno.test("v2 save carries structured area into deferred completeness client facts", () => {
+  const facts = buildV2CompletenessClientFacts({
+    candidate_id: "candidate-parisik",
+    restaurant_name: "Parisik",
+    restaurant_city: "Paris",
+    area: "Le Marais",
+    place: null,
+  }, {
+    resolutionDecision: "no_result",
+    source: { type: "web", url: "https://example.invalid" },
+  });
+
+  assertEquals(facts["name"], "Parisik");
+  assertEquals(facts["city"], "Paris");
+  assertEquals(facts["area"], "Le Marais");
 });
 
 Deno.test("v2 save restores a matched known venue external_id before enqueue", () => {

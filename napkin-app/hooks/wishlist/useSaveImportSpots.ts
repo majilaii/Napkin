@@ -144,6 +144,7 @@ export function useSaveImportSpots(userId: string | null | undefined) {
                     : (s.candidate.restaurant.external_id ?? null),
                 restaurant_name: s.candidate.restaurant.name ?? null,
                 restaurant_city: s.candidate.restaurant.city ?? null,
+                area: s.candidate.area ?? null,
                 table_id: s.table_id ?? null,
                 table_client_nonce: s.table_client_nonce ?? null,
                 // Fix-pass-2 item 3: forward full place payload for metadata-complete upserts.

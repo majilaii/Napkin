@@ -112,6 +112,10 @@ import {
 } from '@/lib/largeImportJob';
 import { truncationNote } from '@/lib/importTruncation';
 import {
+    importCompletionToastCopy,
+    isListOnlyImportOutcome,
+} from '@/lib/importCompletionCopy';
+import {
     requireActiveImportOwner,
     runWithActiveImportOwner,
 } from '@/lib/importOwnerGuard';
@@ -1473,6 +1477,7 @@ export function useProcessImportQueue() {
                         external_id: c.restaurant_id ? null : (c.restaurant.external_id ?? null),
                         restaurant_name: c.restaurant.name ?? null,
                         restaurant_city: c.restaurant.city ?? null,
+                        area: c.area ?? null,
                         // Legacy single-table fields kept for back-compat readers.
                         table_id: tableIds[0] ?? null,
                         table_client_nonce: tableIds[0] ? tableShares[tableIds[0]] : null,
@@ -1720,7 +1725,7 @@ export function useProcessImportQueue() {
             const queued =
                 result?.summary?.queued ??
                 (result?.results ?? []).filter((item) => item.status === 'queued').length;
-            const listOnly = saved === 0 && ghost > 0;
+            const listOnly = isListOnlyImportOutcome(pinWishlist, ghost);
             // On a retry/re-drain the save may have landed on the prior pass and now
             // come back as already_pinned — still a success, count all three.
             const done = saved + already + ghost;
@@ -1772,34 +1777,26 @@ export function useProcessImportQueue() {
                 m.destinations.listIds.length + m.destinations.newListTitles.length === 1
                     ? 'your list'
                     : 'your lists';
-            toast.show(
-                queued > 0
-                    ? `${queued} ${queued === 1 ? 'spot is' : 'spots are'} completing…`
-                    : saved > 0
-                    ? fastPathName
-                        ? `pinned ${fastPathName}`
-                        : note
-                          ? `pinned ${saved} · ${note}`
-                          : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`
-                    : listOnly
-                      ? ghost === 1 && spots.length === 1 && spots[0].restaurant_name
-                          ? `saved ${spots[0].restaurant_name} to ${listNoun}`
-                          : `saved ${ghost} to ${listNoun}`
-                      : done > 0
-                        ? note
-                            ? `already in your wishlist · ${note}`
-                            : 'already in your wishlist'
-                        : "couldn't import that",
-                reviewAction,
-            );
+            toast.show(importCompletionToastCopy({
+                queued,
+                saved,
+                ghost,
+                done,
+                listOnly,
+                fastPathName,
+                truncationNote: note,
+                listNoun,
+                singleSpotName: spots.length === 1 ? spots[0].restaurant_name : null,
+                spotCount: spots.length,
+            }), reviewAction);
             // TICKET-120: mirror the success to a local notification when backgrounded
             // (only on a fresh save — an already-pinned re-drain stays silent).
             // Foreground = toast-only.
-            if (!isV2 && (saved > 0 || listOnly) && AppState.currentState !== 'active') {
+            if (!isV2 && (saved > 0 || ghost > 0) && AppState.currentState !== 'active') {
                 presentImportNotification({
                     title: listOnly
                         ? `saved ${ghost} to ${listNoun}`
-                        : `pinned ${saved} ${saved === 1 ? 'spot' : 'spots'}`,
+                        : `pinned ${saved + ghost} ${saved + ghost === 1 ? 'spot' : 'spots'}`,
                     body: 'tap to fix anything',
                 });
             }

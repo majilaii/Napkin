@@ -152,3 +152,18 @@ describe('mergeUnified — stable', () => {
         expect(mergeUnified(results(), 'anything')).toEqual([]);
     });
 });
+
+describe('mergeUnified — farther afield', () => {
+    it('ranks every fallback row after all non-fallback rows', () => {
+        const merged = mergeUnified(
+            results({
+                morePlaces: [
+                    row('morePlaces', 'Kono', { fartherAfield: true }),
+                    row('morePlaces', 'Kono Izakaya'),
+                ],
+            }),
+            'kono',
+        );
+        expect(merged.map((entry) => entry.fartherAfield ?? false)).toEqual([false, true]);
+    });
+});

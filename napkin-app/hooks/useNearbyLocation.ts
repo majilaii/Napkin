@@ -15,6 +15,21 @@ import type { LatLng } from '@/lib/geo';
 
 type Status = 'idle' | 'pending' | 'granted' | 'denied';
 
+// A cold GPS fix can take many seconds; consumers (search, sort) must not sit
+// behind it. Deadline the fresh read and settle with no coords — the watch
+// subscription or a later request fills them in.
+const CURRENT_POSITION_DEADLINE_MS = 2000;
+
+async function currentPositionWithDeadline(): Promise<Location.LocationObject | null> {
+    return await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), CURRENT_POSITION_DEADLINE_MS),
+        ),
+    ]);
+}
+export type NearbyPermissionStatus = Location.PermissionStatus | 'unavailable';
+
 /**
  * @param options.watch when true (and permission granted), subscribes to live
  *   position updates so distances refresh as the user moves — no app restart.
@@ -23,29 +38,45 @@ type Status = 'idle' | 'pending' | 'granted' | 'denied';
 export function useNearbyLocation(options?: { watch?: boolean }) {
     const watch = options?.watch ?? false;
     const [coords, setCoords] = useState<LatLng | null>(null);
-    const [status, setStatus] = useState<Status>('idle');
+    const [permissionStatus, setPermissionStatus] = useState<NearbyPermissionStatus | null>(null);
+    const [settled, setSettled] = useState(false);
+    const [pending, setPending] = useState(false);
     const inFlight = useRef(false);
+
+    const status: Status = pending
+        ? 'pending'
+        : permissionStatus === 'granted'
+        ? 'granted'
+        : permissionStatus === 'denied' || permissionStatus === 'unavailable'
+        ? 'denied'
+        : 'idle';
 
     const request = useCallback(async () => {
         if (inFlight.current || coords) return;
         inFlight.current = true;
-        setStatus('pending');
+        setSettled(false);
+        setPending(true);
+        let permissionReadSucceeded = false;
         try {
             const { status: perm } = await Location.requestForegroundPermissionsAsync();
+            permissionReadSucceeded = true;
+            setPermissionStatus(perm);
             if (perm !== 'granted') {
-                setStatus('denied');
                 return;
             }
             const loc =
                 (await Location.getLastKnownPositionAsync()) ??
-                (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+                (await currentPositionWithDeadline());
             if (loc) {
                 setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
             }
-            setStatus('granted');
         } catch {
-            setStatus('denied');
+            // A transient permission API failure is not a durable denial. Leave
+            // the status unresolved so a later mount can retry the read.
+            if (permissionReadSucceeded) setPermissionStatus('unavailable');
         } finally {
+            setPending(false);
+            setSettled(true);
             inFlight.current = false;
         }
     }, [coords]);
@@ -59,19 +90,23 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
     const requestIfGranted = useCallback(async () => {
         if (inFlight.current || coords) return;
         inFlight.current = true;
+        setSettled(false);
+        let permissionReadSucceeded = false;
         try {
             const { status: perm } = await Location.getForegroundPermissionsAsync();
+            permissionReadSucceeded = true;
+            setPermissionStatus(perm);
             if (perm !== 'granted') return;
             const loc =
                 (await Location.getLastKnownPositionAsync()) ??
-                (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+                (await currentPositionWithDeadline());
             if (loc) {
                 setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
             }
-            setStatus('granted');
         } catch {
-            // Silent path — swallow; the dependent section simply stays absent.
+            if (permissionReadSucceeded) setPermissionStatus('unavailable');
         } finally {
+            setSettled(true);
             inFlight.current = false;
         }
     }, [coords]);
@@ -106,5 +141,5 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
         };
     }, [watch, status]);
 
-    return { coords, status, request, requestIfGranted };
+    return { coords, status, permissionStatus, settled, request, requestIfGranted };
 }

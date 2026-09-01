@@ -1,7 +1,7 @@
 /**
  * FeedModeTabs — two-wide underline toggle for the Feed tab (TICKET-125).
  *
- * For You | Following. Intrinsic-width labels mirror the approved masthead:
+ * Friends | For You. Intrinsic-width labels mirror the approved masthead:
  * active ink, terracotta underline, a ghosted rule, and 44pt tap targets.
  */
 import React from 'react';
@@ -12,8 +12,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 export type FeedMode = 'for-you' | 'following';
 
 const TABS: { mode: FeedMode; label: string }[] = [
+    { mode: 'following', label: 'Friends' },
     { mode: 'for-you', label: 'For You' },
-    { mode: 'following', label: 'Following' },
 ];
 
 interface Props {
