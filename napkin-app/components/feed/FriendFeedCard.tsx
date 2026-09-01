@@ -23,6 +23,8 @@ import { tintFor } from '@/lib/engraving';
 
 interface Props {
     row: FriendFeedRow;
+    /** Flat note/ledger rows omit the rule when they are the final feed entry. */
+    showDivider?: boolean;
     /** TICKET-111: own cards long-press → owner sheet (Delete). */
     onLongPress?: () => void;
 }
@@ -43,7 +45,7 @@ function useRowNav(row: FriendFeedRow) {
     return { rating, onPress };
 }
 
-export function FriendFeedCard({ row }: Props) {
+export function FriendFeedCard({ row, showDivider = true }: Props) {
     const { user } = useAuth();
     const isOwn = user?.id === row.user_id;
     const deleteEntry = useDeleteEntry();
@@ -69,9 +71,9 @@ export function FriendFeedCard({ row }: Props) {
             {weight === 'card' ? (
                 <CompressedCard row={row} onLongPress={onLongPress} />
             ) : weight === 'note' ? (
-                <FeedNoteRow row={row} onLongPress={onLongPress} />
+                <FeedNoteRow row={row} onLongPress={onLongPress} showDivider={showDivider} />
             ) : (
-                <LedgerRow row={row} onLongPress={onLongPress} />
+                <LedgerRow row={row} onLongPress={onLongPress} showDivider={showDivider} />
             )}
             <OwnerActionsSheet
                 visible={sheetVisible}
@@ -86,7 +88,7 @@ export function FriendFeedCard({ row }: Props) {
 
 // ── Note row — prose or one photo, directly on the feed paper ───────────────
 
-function FeedNoteRow({ row, onLongPress }: Props) {
+function FeedNoteRow({ row, onLongPress, showDivider }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const { rating, onPress } = useRowNav(row);
@@ -96,13 +98,15 @@ function FeedNoteRow({ row, onLongPress }: Props) {
     const photo = row.photos[0];
     const time = relativeFeedTime(row.sort_date);
     const tintSeed = row.restaurant?.id ?? row.restaurant_id ?? row.id;
+    const accessibilityLabel = entryAccessibilityLabel(row, rating, true);
 
     return (
         <>
             <Pressable
                 testID="feed-note-row"
                 accessibilityRole="button"
-                accessibilityLabel={`Open ${restaurantName}`}
+                accessibilityLabel={accessibilityLabel}
+                accessibilityHint="Opens this entry"
                 onPress={onPress}
                 onLongPress={onLongPress}
                 delayLongPress={350}
@@ -174,7 +178,12 @@ function FeedNoteRow({ row, onLongPress }: Props) {
                     )}
                 </View>
             </Pressable>
-            <View style={[styles.divider, { backgroundColor: palette.dividerSoft }]} />
+            {showDivider && (
+                <View
+                    testID="feed-row-divider"
+                    style={[styles.divider, { backgroundColor: palette.dividerSoft }]}
+                />
+            )}
         </>
     );
 }
@@ -190,6 +199,8 @@ function CompressedCard({ row, onLongPress }: Props) {
     const content = row.content?.trim();
     const photos = row.photos.slice(0, 3);
     const time = relativeFeedTime(row.sort_date);
+    const tintSeed = row.restaurant?.id ?? row.restaurant_id ?? row.id;
+    const accessibilityLabel = entryAccessibilityLabel(row, rating, true);
     const likeLabel = row.reaction_count > 0
         ? `${row.reaction_count} ${row.reaction_count === 1 ? 'like' : 'likes'}`
         : null;
@@ -202,7 +213,8 @@ function CompressedCard({ row, onLongPress }: Props) {
         <Pressable
             testID="feed-photo-card"
             accessibilityRole="button"
-            accessibilityLabel={`Open ${restaurantName}`}
+            accessibilityLabel={accessibilityLabel}
+            accessibilityHint="Opens this entry"
             onPress={onPress}
             onLongPress={onLongPress}
             delayLongPress={350}
@@ -256,7 +268,12 @@ function CompressedCard({ row, onLongPress }: Props) {
                 </Text>
             )}
 
-            <PhotoStrip photos={photos} total={row.photos.length} palette={palette} />
+            <PhotoStrip
+                photos={photos}
+                total={row.photos.length}
+                tintSeed={tintSeed}
+                palette={palette}
+            />
 
             {engagementLabel && (
                 <View style={styles.cardFoot}>
@@ -274,7 +291,7 @@ function CompressedCard({ row, onLongPress }: Props) {
 
 // ── Ledger row — bare rating, unchanged one-line grammar ────────────────────
 
-function LedgerRow({ row, onLongPress }: Props) {
+function LedgerRow({ row, onLongPress, showDivider }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const { rating, onPress } = useRowNav(row);
@@ -282,13 +299,15 @@ function LedgerRow({ row, onLongPress }: Props) {
     const restaurantName = row.restaurant?.name ?? 'somewhere';
     const firstName = row.author.display_name.trim().split(/\s+/)[0] || row.author.display_name;
     const time = relativeFeedTime(row.sort_date);
+    const accessibilityLabel = entryAccessibilityLabel(row, rating, false);
 
     return (
         <>
             <Pressable
                 testID="feed-ledger-row"
                 accessibilityRole="button"
-                accessibilityLabel={`Open ${restaurantName}`}
+                accessibilityLabel={accessibilityLabel}
+                accessibilityHint="Opens this entry"
                 onPress={onPress}
                 onLongPress={onLongPress}
                 delayLongPress={350}
@@ -298,7 +317,10 @@ function LedgerRow({ row, onLongPress }: Props) {
                     {firstName}
                 </Text>
                 {rating > 0 && (
-                    <Text style={[Type.feedLedgerRating, { color: palette.star }]}>
+                    <Text
+                        testID="feed-ledger-rating"
+                        style={[Type.feedLedgerRating, { color: palette.amberBright }]}
+                    >
                         {rating.toFixed(1)}
                     </Text>
                 )}
@@ -310,9 +332,25 @@ function LedgerRow({ row, onLongPress }: Props) {
                 </Text>
                 <Text style={[Type.feedMeta, { color: palette.textFaint }]}>{time}</Text>
             </Pressable>
-            <View style={[styles.divider, { backgroundColor: palette.dividerSoft }]} />
+            {showDivider && (
+                <View
+                    testID="feed-row-divider"
+                    style={[styles.divider, { backgroundColor: palette.dividerSoft }]}
+                />
+            )}
         </>
     );
+}
+
+function entryAccessibilityLabel(row: FriendFeedRow, rating: number, includeContent: boolean): string {
+    const restaurantName = row.restaurant?.name ?? 'somewhere';
+    return [
+        row.author.display_name,
+        'noted',
+        restaurantName,
+        rating > 0 ? rating.toFixed(1) : null,
+        includeContent ? row.content?.trim() : null,
+    ].filter(Boolean).join(', ');
 }
 
 // ── Relative feed stamp ─────────────────────────────────────────────────────
@@ -334,8 +372,26 @@ function relativeFeedTime(iso: string, now: Date = new Date()): string {
 
 type Palette = typeof Colors.light;
 
-function PhotoStrip({ photos, total, palette }: { photos: string[]; total: number; palette: Palette }) {
-    const placeholderTints = [palette.plateAmber, palette.plateOlive, palette.plateGrey];
+function PhotoStrip({
+    photos,
+    total,
+    tintSeed,
+    palette,
+}: {
+    photos: string[];
+    total: number;
+    tintSeed: string;
+    palette: Palette;
+}) {
+    const plateTints = [
+        palette.plateAmber,
+        palette.plateOlive,
+        palette.plateRose,
+        palette.plateGrey,
+        palette.plateSlate,
+        palette.plateSand,
+    ];
+    const baseTintIndex = plateTints.indexOf(tintFor(tintSeed, palette));
 
     return (
         <View style={styles.photoStrip}>
@@ -346,7 +402,7 @@ function PhotoStrip({ photos, total, palette }: { photos: string[]; total: numbe
                     style={[
                         styles.photoTile,
                         {
-                            backgroundColor: placeholderTints[index],
+                            backgroundColor: plateTints[(baseTintIndex + index) % plateTints.length],
                             borderColor: palette.imageOutline,
                         },
                     ]}
@@ -455,11 +511,11 @@ const styles = StyleSheet.create({
         marginTop: Spacing.feed.metaGap,
     },
     cardQuote: {
-        marginTop: Spacing.feed.avatarOffset,
+        marginTop: Spacing.feed.quoteLead,
     },
     photoStrip: {
         flexDirection: 'row',
-        gap: Spacing.feed.metaGap,
+        gap: Spacing.feed.stripGap,
         marginTop: Spacing.feed.mediaTop,
     },
     photoTile: {
@@ -477,12 +533,12 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.feed.footerIconGap,
-        marginTop: Spacing.feed.mediaTop,
+        marginTop: Spacing.feed.footTop,
     },
     ledgerRow: {
         flexDirection: 'row',
         alignItems: 'baseline',
         gap: Spacing.sm,
-        paddingVertical: Spacing.feed.mediaTop,
+        paddingVertical: Spacing.feed.ledgerVertical,
     },
 });

@@ -5,6 +5,7 @@ import TestRenderer, { act } from 'react-test-renderer';
 
 import { Colors, Radius, Spacing } from '@/constants/theme';
 import type { FriendFeedRow } from '@/hooks/feed/useFriendsFeed';
+import { tintFor } from '@/lib/engraving';
 import { FriendFeedCard } from '../FriendFeedCard';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -62,10 +63,12 @@ function feedRow(photos: string[], content: string | null = 'quietly excellent')
     };
 }
 
-function render(row: FriendFeedRow) {
+function render(row: FriendFeedRow, showDivider = true) {
     let renderer: any;
     act(() => {
-        renderer = TestRenderer.create(<FriendFeedCard row={row} />);
+        renderer = TestRenderer.create(
+            <FriendFeedCard row={row} showDivider={showDivider} />,
+        );
     });
     return renderer;
 }
@@ -96,6 +99,13 @@ describe('FriendFeedCard density weights', () => {
             borderColor: Colors.light.imageOutline,
         });
         expect(thumbnail.props.contentFit).toBe('cover');
+        expect(flattenStyle(thumbnail.props.style).backgroundColor).toBe(
+            tintFor('restaurant-1', Colors.light),
+        );
+        expect(row.props).toMatchObject({
+            accessibilityLabel: 'Maya Chen, noted, AGORA souvla bar, 4.5, quietly excellent',
+            accessibilityHint: 'Opens this entry',
+        });
         expect(renderer.root.findAllByType('Ionicons')).toHaveLength(0);
 
         act(() => renderer.unmount());
@@ -110,7 +120,7 @@ describe('FriendFeedCard density weights', () => {
         // findAllByProps matches the composite AND host node per tile — keep host nodes only.
         const tiles = renderer.root
             .findAllByProps({ testID: 'feed-card-photo-tile' })
-            .filter((node) => typeof node.type === 'string');
+            .filter((node: any) => typeof node.type === 'string');
 
         expect(renderer.root.findAllByProps({ testID: 'feed-note-row' })).toHaveLength(0);
         expect(flattenStyle(card.props.style({ pressed: false }))).toMatchObject({
@@ -121,6 +131,15 @@ describe('FriendFeedCard density weights', () => {
             backgroundColor: Colors.light.surfaceNote,
         });
         expect(tiles).toHaveLength(2);
+        const plateTints = [
+            Colors.light.plateAmber,
+            Colors.light.plateOlive,
+            Colors.light.plateRose,
+            Colors.light.plateGrey,
+            Colors.light.plateSlate,
+            Colors.light.plateSand,
+        ];
+        const baseTintIndex = plateTints.indexOf(tintFor('restaurant-1', Colors.light));
         for (const tile of tiles) {
             expect(flattenStyle(tile.props.style)).toMatchObject({
                 height: 68,
@@ -128,12 +147,38 @@ describe('FriendFeedCard density weights', () => {
                 borderColor: Colors.light.imageOutline,
             });
         }
+        expect(flattenStyle(tiles[0].props.style).backgroundColor).toBe(plateTints[baseTintIndex]);
+        expect(flattenStyle(tiles[1].props.style).backgroundColor).toBe(
+            plateTints[(baseTintIndex + 1) % plateTints.length],
+        );
+        expect(card.props).toMatchObject({
+            accessibilityLabel: 'Maya Chen, noted, AGORA souvla bar, 4.5, quietly excellent',
+            accessibilityHint: 'Opens this entry',
+        });
         expect(renderer.root.findAllByType('ExpoImage')).toHaveLength(2);
         expect(renderer.root.findByType('Ionicons').props).toMatchObject({
             name: 'heart-outline',
             size: 15,
             color: Colors.light.textMuted,
         });
+
+        act(() => renderer.unmount());
+    });
+
+    it('uses the artboard amber and omits the trailing divider on the final ledger row', () => {
+        const renderer = render(feedRow([], null), false);
+        const ledger = renderer.root.findByProps({ testID: 'feed-ledger-row' });
+        const rating = renderer.root.findByProps({ testID: 'feed-ledger-rating' });
+
+        expect(ledger.props).toMatchObject({
+            accessibilityLabel: 'Maya Chen, noted, AGORA souvla bar, 4.5',
+            accessibilityHint: 'Opens this entry',
+        });
+        expect(flattenStyle(ledger.props.style({ pressed: false }))).toMatchObject({
+            paddingVertical: Spacing.feed.ledgerVertical,
+        });
+        expect(flattenStyle(rating.props.style).color).toBe(Colors.light.amberBright);
+        expect(renderer.root.findAllByProps({ testID: 'feed-row-divider' })).toHaveLength(0);
 
         act(() => renderer.unmount());
     });

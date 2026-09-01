@@ -147,7 +147,7 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 
 ### Feed and feed cards
 
-Source: `app/(tabs)/feed.tsx`, `components/feed/FollowingFeed.tsx`, `components/feed/ForYouFeed.tsx`, `components/feed/FriendFeedCard.tsx`, `components/feed/FeedActionRow.tsx`, `hooks/feed/useFriendsFeed.ts`, `hooks/feed/useSocials.ts`.
+Source: `app/(tabs)/feed.tsx`, `components/feed/FollowingFeed.tsx`, `components/feed/ForYouFeed.tsx`, `components/feed/FriendFeedCard.tsx`, `hooks/feed/useFriendsFeed.ts`, `hooks/feed/useSocials.ts`.
 
 - Tabs are **Friends** and **For You**, in that order; Friends is the default on every Feed landing. The internal Friends mode key remains `following`. Switching tabs is local/read-only.
 - Friends initial load with no cached rows: centered spinner.
@@ -158,7 +158,7 @@ Source: `app/(tabs)/feed.tsx`, `components/feed/FollowingFeed.tsx`, `components/
 - For You independently loads social clips, people, and public lists. Any non-empty block renders even while a sibling block loads or fails.
 - For You with no visible blocks and any active request: spinner. With any failed request: retry state. With all requests settled empty: “nothing here just yet” invitation.
 - Friend-entry routing is literal and client-only (`feedWeight`): no prose + no photos → `ledger`; prose or one photo → paper-level `note` (one photo is a 42pt thumb); two or more photos, with or without prose → compressed `card`.
-- Note and ledger rows carry no engagement controls. Compressed cards show only non-zero public like/reply counts; tapping any weight opens entry detail, and long-pressing an owned entry opens owner actions.
+- Friends-feed rows carry no engagement controls. Compressed cards show only non-zero public like/reply counts; liking or replying requires opening entry detail. Tapping any weight opens entry detail, and long-pressing an owned entry opens owner actions.
 - Tables activity cards may be entries, Suppers, Gathers, shares, floats, top-four changes, or list additions (`hooks/tables/useTableActivity.ts`, `components/tables/`). Round cards are legacy residue, not a new state to extend.
 
 ### Journal

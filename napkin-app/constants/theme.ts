@@ -228,14 +228,18 @@ export const Spacing = {
     avatarOffset: 2,
     footerIconGap: 5,
     metaGap: 6,
+    stripGap: 6,
     rowTop: 8,
     cardHeaderGap: 8,
     mediaTop: 9,
+    ledgerVertical: 9,
+    footTop: 9,
     rowBottom: 10,
     contentGap: 10,
     cardMargin: 10,
     cardTop: 12,
     cardHorizontal: 14,
+    quoteLead: 2,
   },
 } as const;
 

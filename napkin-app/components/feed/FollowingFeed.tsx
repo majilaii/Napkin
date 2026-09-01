@@ -31,7 +31,7 @@ import { FollowingEmptyState } from './FollowingEmptyState';
 
 type FeedListItem =
     | { _type: 'header'; key: string; label: string }
-    | { _type: 'row'; key: string; row: FriendFeedRow };
+    | { _type: 'row'; key: string; row: FriendFeedRow; showDivider: boolean };
 
 /**
  * Interleave a date-section header before the first row of each day boundary.
@@ -54,6 +54,7 @@ function buildFeedList(rows: FriendFeedRow[]): FeedListItem[] {
             _type: 'row',
             key: `row-${row.id}`,
             row,
+            showDivider: i < rows.length - 1,
         });
     }
     return items;
@@ -102,7 +103,7 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
             }
             return (
                 <View style={styles.rowSlot}>
-                    <FriendFeedCard row={item.row} />
+                    <FriendFeedCard row={item.row} showDivider={item.showDivider} />
                 </View>
             );
         },
