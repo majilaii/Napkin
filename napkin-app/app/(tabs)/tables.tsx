@@ -9,7 +9,7 @@
  * logic are unchanged.
  */
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -18,18 +18,21 @@ import {
     RefreshControl,
     Pressable,
     ActivityIndicator,
-    Alert,
     Share,
 } from 'react-native';
 import { WishlistGrid } from '@/components/wishlist';
 import { AtlasCityIndex } from '@/components/atlas';
 import { useTableAtlas } from '@/hooks/tables/useTableAtlas';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import {
+    applyTablesRouteParams,
+    type TablesRouteParams,
+} from '@/lib/tablesRouteParams';
 import { FRIEND_TEST } from '@/constants/flags';
 import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { track } from '@/lib/track';
@@ -54,7 +57,6 @@ import {
 import { useTableMembers } from '@/hooks/tables/useTableMembers';
 import { TableNightCard } from '@/components/feed/TableNightCard';
 import { DateSectionHeader } from '@/components/feed/DateSectionHeader';
-import { useRouter } from 'expo-router';
 import {
     TableHeader,
     EmptyChairInvitation,
@@ -160,14 +162,16 @@ export default function TablesScreen() {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'lists' | 'atlas'>('activity');
 
-    // Deep-link: notifications screen passes `selected` (tableId) when tapping a
-    // table_invite row. Auto-select the matching table on mount/focus.
-    const { selected: selectedTableId } = useLocalSearchParams<{ selected?: string }>();
+    // Deep links may select a Table and optionally force its Activity pane. Track
+    // the params object instance, not scalar equality: delivering the same id a
+    // second time must re-apply `section=activity` after the user changed panes.
+    const routeParams = useLocalSearchParams<TablesRouteParams>();
+    const appliedParamsInstance = useRef<TablesRouteParams | null>(null);
     useEffect(() => {
-        if (!selectedTableId || !tables) return;
-        const idx = tables.findIndex((t) => t.tables?.id === selectedTableId);
-        if (idx !== -1) setSelectedIndex(idx);
-    }, [selectedTableId, tables]);
+        if (!tables || appliedParamsInstance.current === routeParams) return;
+        appliedParamsInstance.current = routeParams;
+        applyTablesRouteParams(routeParams, tables, setSelectedIndex, setActiveTab);
+    }, [routeParams, tables]);
     const activeTable = tables?.[selectedIndex]?.tables ?? tables?.[0]?.tables;
     const [showTablePicker, setShowTablePicker] = useState(false);
     const [showAddMember, setShowAddMember] = useState(false);
@@ -175,20 +179,17 @@ export default function TablesScreen() {
 
     // Unseen dot system (TICKET-010)
     const { data: lastSeenAt } = useLastSeenAt(activeTable?.id, user?.id);
-    const markSeen = useMarkSeen();
+    const { mutate: markSeen } = useMarkSeen();
     const createInvite = useCreateInvite();
 
     // Fire mark_seen when the tab gains focus or activeTable changes.
     // The 30s debounce in useMarkSeen collapses rapid tab-switches.
-    // markSeen.mutate is intentionally omitted from deps — it's stable across
-    // renders (React Query memoizes it) and we only want to re-fire on table switch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     useFocusEffect(
         useCallback(() => {
             if (activeTable?.id) {
-                markSeen.mutate({ tableId: activeTable.id });
+                markSeen({ tableId: activeTable.id });
             }
-        }, [activeTable?.id])
+        }, [activeTable?.id, markSeen])
     );
 
     const {

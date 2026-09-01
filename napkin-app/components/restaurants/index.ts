@@ -9,26 +9,25 @@ export { RestaurantTabs, type RestaurantTab } from './RestaurantTabs';
 export { RestaurantTabsV3, type RestaurantTabV3 } from './RestaurantTabsV3';
 export { TableRatingBlock } from './TableRatingBlock';
 export { VoiceCard, type Voice } from './VoiceCard';
-export { BottomActionBar } from './BottomActionBar';
 export { FloatingLogButton } from './FloatingLogButton';
 export { CommunityTab } from './CommunityTab';
-// v3 components
-export { SignalStrip, type SignalTier, type SignalCellData } from './SignalStrip';
-export { SwitchableDistribution } from './SwitchableDistribution';
-export { VoicesStream } from './VoicesStream';
-export { AllReviewsFolio } from './AllReviewsFolio';
 export { YourLastKicker } from './YourLastKicker';
 export { PhotosTab } from './PhotosTab';
 export { InfoTab } from './InfoTab';
 export { InfoMapPreview } from './InfoMapPreview';
-export { FeaturedInListsBand } from './FeaturedInListsBand';
 // TICKET-054: TikTok source panel
 export { SavedFromTikTokPanel } from './SavedFromTikTokPanel';
 // TICKET-156: On Socials rail — social clippings
 export { OnSocialsRail } from './OnSocialsRail';
 export { ClippingCard, type ClippingCardData } from './ClippingCard';
-// Restaurant page 2a "Dossier, map hero" (design handoff 2026-07-01):
-// map hero + utility pills + score band; dock = reworked BottomActionBar
-export { MapHero } from './MapHero';
-export { UtilityPills, resolveDirectionsUrl } from './UtilityPills';
-export { ScoreBand } from './ScoreBand';
+export { YourHistoryDoorway, shouldShowHistoryDoorway } from './YourHistoryDoorway';
+export {
+    RestaurantTop,
+    RestaurantNumbersBand,
+    RestaurantActions,
+    FriendsNotesSection,
+    TableNotesSection,
+    FriendsSpread,
+    FeaturedListsSection,
+    RestaurantDetails,
+} from './RestaurantPageV3';

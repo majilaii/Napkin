@@ -10,7 +10,7 @@
  * returns real data.
  */
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { placesPhotoProxyUrl } from '@/lib/placesPhoto';
 import { halfDistFromLegacy } from '@/lib/ratingBins';
@@ -103,6 +103,32 @@ export type PublicReviewCard = {
     is_followee?: boolean;
 };
 
+export type SelfLogRow = {
+    id: string;
+    entry_id: string | null;
+    table_night_id: string | null;
+    source: 'solo' | 'supper';
+    rating: number | null;
+    note: string | null;
+    visited_at: string;
+    companions: string[];
+    photos: { id: string; url: string }[];
+};
+
+export type TableNoteRow = {
+    entry_id: string;
+    table_id: string;
+    table_name: string;
+    author: {
+        user_id: string;
+        display_name: string;
+        avatar_url: string | null;
+    };
+    rating: number | null;
+    note: string;
+    visited_at: string;
+};
+
 export type PhotoItem = {
     url: string;
     author_display_name: string;
@@ -115,7 +141,7 @@ export type PhotoItem = {
 export type PlaceDetails = {
     hours_today: string | null;
     open_now: boolean | null;
-    hours_week: Array<{ day_range: string; range: string }> | null;
+    hours_week: { day_range: string; range: string }[] | null;
     website: string | null;
     phone: string | null;
     menu_url: string | null;
@@ -155,6 +181,10 @@ export type RestaurantPageData = {
     visit_count: number;
     public_reviews: PublicReviewCard[];
     public_reviews_total: number;
+    self_log: SelfLogRow[];
+    table_notes: TableNoteRow[];
+    /** Reserved for TICKET-221; absent today, so the regular row stays hidden. */
+    regular?: string | null;
     // v3 additions
     distributions: {
         you: number[];          // [1★ count, 2★, 3★, 4★, 5★] — LEGACY, frozen
@@ -185,35 +215,20 @@ export type RestaurantPageData = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function fetchRestaurantPage(
+export async function fetchRestaurantPage(
     restaurantId: string,
     tableId?: string,
 ): Promise<RestaurantPageData> {
-    const params = new URLSearchParams({ action: 'page', restaurant_id: restaurantId });
-    if (tableId) params.set('table_id', tableId);
-
-    const { data: { session } } = await supabase.auth.getSession();
-    const supabaseUrl = (supabase as any).supabaseUrl as string;
-    const url = `${supabaseUrl}/functions/v1/restaurant-history?${params.toString()}`;
-
-    const res = await fetch(url, {
+    const data = await callEdgeFn<RestaurantPageData>('restaurant-history', {
         method: 'GET',
-        headers: {
-            Authorization: `Bearer ${session?.access_token ?? ''}`,
-            'Content-Type': 'application/json',
+        action: 'page',
+        params: {
+            restaurant_id: restaurantId,
+            table_id: tableId,
         },
     });
 
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`restaurant-history failed: ${res.status} ${text}`);
-    }
-
-    const json = await res.json();
-    if (json.error) throw new Error(json.error);
-
-    // Back-fill v3 fields for older edge function responses (graceful degradation)
-    const data = json.data as RestaurantPageData;
+    // Back-fill additive fields for older edge function responses (graceful degradation)
     // TICKET-057: back-fill attribution fields for responses before migration.
     if (data.restaurant && data.restaurant.photo_source === undefined) {
         (data.restaurant as any).photo_source = null;
@@ -260,6 +275,8 @@ async function fetchRestaurantPage(
     if (data.first_logged_at_by_your_table == null) data.first_logged_at_by_your_table = null;
     // TICKET-026: graceful degradation for older edge function responses
     if (!data.professional_critics) data.professional_critics = [];
+    if (!data.self_log) data.self_log = [];
+    if (!data.table_notes) data.table_notes = [];
 
     return data;
 }

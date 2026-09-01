@@ -195,10 +195,19 @@ const CHECKS: Check[] = [
         fn: 'restaurant-history',
         query: `action=page&restaurant_id=${RESTAURANT_ID}`,
         shape: (json) => {
-            const data = (json as { data?: { restaurant?: unknown; visits?: unknown[] } }).data;
+            const data = (json as {
+                data?: {
+                    restaurant?: unknown;
+                    visits?: unknown[];
+                    self_log?: unknown[];
+                    table_notes?: unknown[];
+                };
+            }).data;
             if (!data) return 'missing data envelope';
             if (!('restaurant' in data)) return 'missing data.restaurant';
             if (!('visits' in data)) return 'missing data.visits';
+            if (!Array.isArray(data.self_log)) return 'data.self_log is not an array';
+            if (!Array.isArray(data.table_notes)) return 'data.table_notes is not an array';
             return null;
         },
     },

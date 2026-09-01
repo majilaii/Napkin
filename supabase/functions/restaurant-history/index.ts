@@ -41,6 +41,13 @@ import { isInstagramUrl } from '../_shared/socialHost.ts';
 import { contentKey } from '../_shared/videoUrlKey.ts';
 import { loadVisibleEntryIds } from './entryVisibility.ts';
 import { isPeekCardContext, loadPeekCard } from './peekCard.ts';
+import {
+    appendPageProjections,
+    loadSelfLog,
+    loadTableNotes,
+    type SelfLogRow,
+    type TableNoteRow,
+} from './pageProjections.ts';
 
 type Visit = {
     kind: 'round' | 'solo';
@@ -151,6 +158,8 @@ type RestaurantPageData = {
     visit_count: number;
     public_reviews: PublicReviewCard[];
     public_reviews_total: number;
+    self_log: SelfLogRow[];
+    table_notes: TableNoteRow[];
     // v3 additions
     distributions: {
         you: number[];
@@ -1019,6 +1028,8 @@ serve(async (req) => {
                         visit_count: 0,
                         public_reviews: [],
                         public_reviews_total: 0,
+                        self_log: [],
+                        table_notes: [],
                         distributions: emptyDistributions,
                         distributions_half: emptyHalfDistributions,
                         napkin_aggregate: { average: null, count: 0 },
@@ -1133,6 +1144,21 @@ serve(async (req) => {
                 if (sharedErr) throw sharedErr;
                 sharedUserIds = [...new Set((sharedMembers ?? []).map((m: any) => m.member_id as string))];
             }
+
+            // Additive restaurant-page projections. `self_log` is scoped solely
+            // by authorship/participation. `table_notes` starts from real
+            // entry_tables share edges and applies fn_visible_entry_ids before
+            // projecting any note or author data.
+            const [selfLog, tableNotes] = await Promise.all([
+                loadSelfLog(supabase, user.id, resolvedRestaurantId),
+                loadTableNotes(
+                    supabase,
+                    user.id,
+                    resolvedRestaurantId,
+                    memberTableIds,
+                    sharedUserIds,
+                ),
+            ]);
 
             // ── Who's been ──
             let whosBeen: WhosBeenEntry[] = [];
@@ -1538,7 +1564,7 @@ serve(async (req) => {
             // (napkinAverage and napkinCount computed above from all entries)
 
             return json({
-                data: {
+                data: appendPageProjections({
                     restaurant: restaurantRow,
                     personal: { average: personalAverage, visit_count: personalVisitCount, last_visit: personalLastVisit },
                     table_chip: tableChip
@@ -1576,7 +1602,10 @@ serve(async (req) => {
                     tables_count_with_logs: tablesCountWithLogs,
                     first_logged_at_by_your_table: firstLoggedAtByYourTable,
                     professional_critics: professionalCritics,
-                } as RestaurantPageData,
+                }, {
+                    self_log: selfLog,
+                    table_notes: tableNotes,
+                }) as RestaurantPageData,
             });
         }
 
