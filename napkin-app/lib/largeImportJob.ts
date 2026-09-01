@@ -44,6 +44,7 @@ export interface LargeImportJobItem {
     wishlist_id?: string | null;
     restaurant_name?: string | null;
     restaurant_city?: string | null;
+    area?: string | null;
     external_id?: string | null;
     /** ghost / per-spot save failure / still-unrouted after the completion
      *  reconcile (P1) → digest exception. */
@@ -69,6 +70,7 @@ export interface ResolveSpotResult {
     external_id: string | null;
     restaurant_name: string | null;
     restaurant_city: string | null;
+    area?: string | null;
     place: unknown;
     confidence?: string;
     /** true ⇒ no verified Places match (similarity-gate miss / no result). */
@@ -117,6 +119,7 @@ export interface LargeImportSpotInput {
     external_id: string | null;
     restaurant_name: string | null;
     restaurant_city: string | null;
+    area?: string | null;
     table_id: null;
     table_client_nonce: null;
     place: unknown;
@@ -218,13 +221,30 @@ export function reconcileLargeJobCompleteness(
     const items = job.items.map((item): LargeImportJobItem => {
         const server = byNonce.get(item.client_nonce);
         if (!server) return item;
-        const exhaustedWithFulfilledRoute =
+        const wishlist = server.destinations.find(
+            (destination) => destination.destination_kind === 'wishlist',
+        );
+        const list = server.destinations.find(
+            (destination) =>
+                destination.destination_kind === 'list' ||
+                destination.destination_kind === 'new_list',
+        );
+        const exhaustedHasFulfilledRoute =
             server.state === 'exhausted' &&
             server.destinations.some(
                 (destination) =>
                     destination.destination_kind !== 'table' &&
                     destination.outcome === 'fulfilled',
             );
+        const exhaustedRoutesHydrated =
+            (!job.pinAll || terminalRouteIsHydrated(wishlist, 'wishlist_id')) &&
+            (job.destListTitle == null || terminalRouteIsHydrated(list, 'list_id'));
+        // Queue, destination, and ledger reads come from independent snapshots.
+        // A fulfilled destination without its acknowledged result is not yet a
+        // usable route; keep the local row byte-for-byte unchanged for the next poll.
+        if (exhaustedHasFulfilledRoute && !exhaustedRoutesHydrated) return item;
+        const exhaustedWithFulfilledRoute =
+            exhaustedHasFulfilledRoute && exhaustedRoutesHydrated;
         if (
             item.status === 'failed' &&
             (server.state === 'pending' || server.state === 'leased' || server.state === 'deferred')
@@ -254,14 +274,6 @@ export function reconcileLargeJobCompleteness(
         if (item.status !== 'queued' && !(item.status === 'failed' && exhaustedWithFulfilledRoute)) {
             return item;
         }
-        const wishlist = server.destinations.find(
-            (destination) => destination.destination_kind === 'wishlist',
-        );
-        const list = server.destinations.find(
-            (destination) =>
-                destination.destination_kind === 'list' ||
-                destination.destination_kind === 'new_list',
-        );
         const listId = resultString(list?.result ?? null, 'list_id');
         if (listId) discoveredListId = listId;
         const restaurantId =
@@ -439,6 +451,7 @@ export function normalizeLargeJob(v: unknown): LargeImportJob | undefined {
             wishlist_id: typeof r.wishlist_id === 'string' ? r.wishlist_id : null,
             restaurant_name: typeof r.restaurant_name === 'string' ? r.restaurant_name : null,
             restaurant_city: typeof r.restaurant_city === 'string' ? r.restaurant_city : null,
+            area: typeof r.area === 'string' ? r.area : null,
             external_id: typeof r.external_id === 'string' ? r.external_id : null,
             needsLook: r.needsLook === true,
             listRouted: r.listRouted === true ? true : undefined,
@@ -582,6 +595,7 @@ export interface ChunkItemOutcome {
     wishlist_id?: string | null;
     restaurant_name?: string | null;
     restaurant_city?: string | null;
+    area?: string | null;
     external_id?: string | null;
     /** P1 — whether this chunk's destination-list add_entries succeeded for the
      *  item (set via `applyListRouting`; absent when the job has no dest list). */
@@ -636,6 +650,7 @@ export function applyChunkOutcomes(
             wishlist_id: o.wishlist_id ?? it.wishlist_id ?? null,
             restaurant_name: o.restaurant_name ?? it.restaurant_name ?? it.name,
             restaurant_city: o.restaurant_city ?? it.restaurant_city ?? null,
+            area: o.area ?? it.area ?? null,
             external_id: o.external_id ?? it.external_id ?? null,
             // Monotonic once true — a resume's failed re-add must never unroute
             // an item that already landed in the list (add_entries is idempotent,
@@ -664,6 +679,7 @@ export function ghostSpot(it: LargeImportJobItem): LargeImportSpotInput {
         external_id: null,
         restaurant_name: it.name,
         restaurant_city: it.restaurant_city ?? null,
+        area: it.area ?? null,
         table_id: null,
         table_client_nonce: null,
         place: {
@@ -700,6 +716,7 @@ export function buildResolvedSpots(
             external_id: r.external_id ?? null,
             restaurant_name: r.restaurant_name ?? it.name,
             restaurant_city: r.restaurant_city ?? null,
+            area: r.area ?? null,
             table_id: null,
             table_client_nonce: null,
             place: r.place ?? null,
@@ -735,6 +752,7 @@ export function toChunkOutcomes(
             wishlist_id: sr?.wishlist_id ?? null,
             restaurant_name: rr?.restaurant_name ?? it.name,
             restaurant_city: rr?.restaurant_city ?? it.restaurant_city ?? null,
+            area: rr?.area ?? it.area ?? null,
             external_id: rr?.external_id ?? null,
         };
     });

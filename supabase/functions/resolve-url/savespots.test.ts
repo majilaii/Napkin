@@ -20,6 +20,7 @@ import {
 import {
   buildGhostExternalId,
   buildInlineCompletenessClaims,
+  buildV2CompletenessClientFacts,
   buildV2CompletenessItemIdentities,
   detectSourceTypeFromHost,
   evaluateLegacySaveSunset,
@@ -138,6 +139,23 @@ Deno.test("save protocol: complete v2 shape validates and client_build stays gen
     ),
     false,
   );
+});
+
+Deno.test("v2 save carries structured area into deferred completeness client facts", () => {
+  const facts = buildV2CompletenessClientFacts({
+    candidate_id: "candidate-parisik",
+    restaurant_name: "Parisik",
+    restaurant_city: "Paris",
+    area: "Le Marais",
+    place: null,
+  }, {
+    resolutionDecision: "no_result",
+    source: { type: "web", url: "https://example.invalid" },
+  });
+
+  assertEquals(facts["name"], "Parisik");
+  assertEquals(facts["city"], "Paris");
+  assertEquals(facts["area"], "Le Marais");
 });
 
 Deno.test("v2 save restores a matched known venue external_id before enqueue", () => {

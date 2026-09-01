@@ -25,6 +25,7 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
     const watch = options?.watch ?? false;
     const [coords, setCoords] = useState<LatLng | null>(null);
     const [permissionStatus, setPermissionStatus] = useState<NearbyPermissionStatus | null>(null);
+    const [settled, setSettled] = useState(false);
     const [pending, setPending] = useState(false);
     const inFlight = useRef(false);
 
@@ -39,9 +40,12 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
     const request = useCallback(async () => {
         if (inFlight.current || coords) return;
         inFlight.current = true;
+        setSettled(false);
         setPending(true);
+        let permissionReadSucceeded = false;
         try {
             const { status: perm } = await Location.requestForegroundPermissionsAsync();
+            permissionReadSucceeded = true;
             setPermissionStatus(perm);
             if (perm !== 'granted') {
                 return;
@@ -53,9 +57,12 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
                 setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
             }
         } catch {
-            setPermissionStatus('unavailable');
+            // A transient permission API failure is not a durable denial. Leave
+            // the status unresolved so a later mount can retry the read.
+            if (permissionReadSucceeded) setPermissionStatus('unavailable');
         } finally {
             setPending(false);
+            setSettled(true);
             inFlight.current = false;
         }
     }, [coords]);
@@ -69,8 +76,11 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
     const requestIfGranted = useCallback(async () => {
         if (inFlight.current || coords) return;
         inFlight.current = true;
+        setSettled(false);
+        let permissionReadSucceeded = false;
         try {
             const { status: perm } = await Location.getForegroundPermissionsAsync();
+            permissionReadSucceeded = true;
             setPermissionStatus(perm);
             if (perm !== 'granted') return;
             const loc =
@@ -80,8 +90,9 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
                 setCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
             }
         } catch {
-            setPermissionStatus('unavailable');
+            if (permissionReadSucceeded) setPermissionStatus('unavailable');
         } finally {
+            setSettled(true);
             inFlight.current = false;
         }
     }, [coords]);
@@ -116,5 +127,5 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
         };
     }, [watch, status]);
 
-    return { coords, status, permissionStatus, request, requestIfGranted };
+    return { coords, status, permissionStatus, settled, request, requestIfGranted };
 }

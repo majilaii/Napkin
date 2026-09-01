@@ -152,16 +152,19 @@ export function useRestaurantSearch(
     }, [locationEnabled, location.requestIfGranted]);
 
     const coords = locationEnabled ? location.coords : null;
-    const locationResolved = !locationEnabled || location.permissionStatus !== null;
+    const locationResolved = !locationEnabled || location.settled;
     const coordsBucket = toCoordsBucket(coords);
+    const cacheUserId = userId ?? '';
 
     // Check LRU cache synchronously before React Query fires
-    const cachedResult = enabled ? searchCache.get(trimmed, coordsBucket) : undefined;
+    const cachedResult = enabled
+        ? searchCache.get(cacheUserId, trimmed, coordsBucket)
+        : undefined;
 
     const placesQuery = useQuery({
-        queryKey: queryKeys.search.places(trimmed, coordsBucket),
+        queryKey: queryKeys.search.places(cacheUserId, trimmed, coordsBucket),
         queryFn: async () => {
-            const cached = searchCache.get(trimmed, coordsBucket);
+            const cached = searchCache.get(cacheUserId, trimmed, coordsBucket);
             if (cached) return cached.places;
             return fetchPlaces(trimmed, coords);
         },
@@ -177,7 +180,7 @@ export function useRestaurantSearch(
     const persistedQuery = useQuery({
         queryKey: queryKeys.search.persisted(trimmed, userId ?? ''),
         queryFn: async () => {
-            const cached = searchCache.get(trimmed, coordsBucket);
+            const cached = searchCache.get(cacheUserId, trimmed, coordsBucket);
             if (cached) return cached.persisted;
             return fetchPersistedDirect(trimmed);
         },
@@ -197,7 +200,7 @@ export function useRestaurantSearch(
             placesQuery.data &&
             persistedQuery.data
         ) {
-            searchCache.set(trimmed, {
+            searchCache.set(cacheUserId, trimmed, {
                 places: placesQuery.data,
                 persisted: persistedQuery.data,
                 timestamp: Date.now(),
@@ -212,6 +215,7 @@ export function useRestaurantSearch(
         persistedQuery.data,
         trimmed,
         coordsBucket,
+        cacheUserId,
     ]);
 
     const results = useMemo<SearchResults>(() => {

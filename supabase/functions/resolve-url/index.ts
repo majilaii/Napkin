@@ -671,6 +671,7 @@ import {
   buildInlineCompletenessClaims,
   buildPlacesSearchBody,
   buildResolveSpotDecisionResult,
+  buildV2CompletenessClientFacts,
   buildV2CompletenessItemIdentities,
   // TICKET-187: photo-field quarantine — the one upsert-input mapping (no
   // photo fields, ever) + the deferred-job id collection.
@@ -1667,6 +1668,7 @@ interface SaveSpotInput {
   external_id: string | null;
   restaurant_name: string | null;
   restaurant_city: string | null;
+  area?: string | null;
   table_id?: string | null;
   table_client_nonce?: string | null;
   /** TICKET-195 v2: server-minted, caller-bound provenance. */
@@ -1769,25 +1771,18 @@ async function handleSaveSpotsV2(
       ...identity,
       // Advisory only. The worker derives identity, coordinates, and media
       // from its own attestation; these facts are resolution hints at most.
-      client_facts: {
-        candidate_id: spot.candidate_id,
-        name: spot.restaurant_name ?? spot.place?.name ?? null,
-        city: spot.restaurant_city ?? spot.place?.location?.locality ?? null,
-        address: spot.place?.location?.address ?? null,
-        // Unlike the surrounding advisory facts, this retry hint is reloaded
-        // from append-only server evidence and cannot be supplied by the client.
-        attempted_external_id: spot.resolution_id
+      client_facts: buildV2CompletenessClientFacts(spot, {
+        // These two fields are reloaded from append-only server evidence and
+        // cannot be forged by the save caller.
+        attemptedExternalId: spot.resolution_id
           ? attemptedExternalIdByResolution.get(spot.resolution_id) ?? null
           : null,
-        // Reloaded from the caller-owned append-only resolution row, never from
-        // the save payload. Terminal auto-rejects can therefore seal the v2 job
-        // without being re-searched or turned into a ghost venue.
-        resolution_decision: spot.resolution_id
+        resolutionDecision: spot.resolution_id
           ? decisionByResolution.get(spot.resolution_id) ?? null
           : null,
-        source: body["source"] ?? null,
+        source: body["source"],
         note: typeof body["note"] === "string" ? body["note"] : null,
-      },
+      }),
     };
   });
 
@@ -2876,6 +2871,7 @@ async function handleResolveSpots(
           external_id: null,
           restaurant_name: s.extracted.name,
           restaurant_city: s.extracted.city,
+          area: s.extracted.area ?? null,
           place: { type_rejected: true as const },
           confidence: "low" as Confidence,
           ghost: false,
@@ -2901,6 +2897,7 @@ async function handleResolveSpots(
           external_id: place.id,
           restaurant_name: place.name,
           restaurant_city: place.city,
+          area: s.extracted.area ?? null,
           place: restaurant,
           confidence: "high" as Confidence,
           ghost: false,
@@ -2938,6 +2935,7 @@ async function handleResolveSpots(
         external_id: null,
         restaurant_name: s.extracted.name,
         restaurant_city: s.extracted.city,
+        area: s.extracted.area ?? null,
         place: ghostPayload,
         confidence: "low" as Confidence,
         ghost: true,

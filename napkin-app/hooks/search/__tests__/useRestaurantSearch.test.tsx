@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { selectNearbyPinned } from '@/components/search/emptyStateUtils';
+import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { searchCache } from '../searchCache';
 import { toCoordsBucket, useRestaurantSearch } from '../useRestaurantSearch';
 
@@ -46,6 +47,66 @@ beforeEach(() => {
 });
 
 describe('useRestaurantSearch cache and location lifecycle', () => {
+    it('waits through granted-with-coordinates-pending and sends one biased Places query', async () => {
+        let resolvePosition!: (value: {
+            coords: { latitude: number; longitude: number };
+        }) => void;
+        mockGetPermissions.mockResolvedValue({ status: 'granted' });
+        mockLastKnown.mockReturnValue(new Promise((resolve) => {
+            resolvePosition = resolve;
+        }));
+        const queryClient = new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+        });
+        const { result } = renderHook(
+            () => useRestaurantSearch('Parisik', 'user-1', { grantedLocationBias: true }),
+            { wrapper: wrapper(queryClient) },
+        );
+
+        await waitFor(() => expect(result.current.permissionStatus).toBe('granted'));
+        expect(
+            mockCallEdgeFn.mock.calls.filter(([name]) => name === 'places-search'),
+        ).toHaveLength(0);
+
+        await act(async () => {
+            resolvePosition({ coords: { latitude: 51.5, longitude: -0.1 } });
+        });
+
+        await waitFor(() => {
+            const placesCalls = mockCallEdgeFn.mock.calls.filter(
+                ([name]) => name === 'places-search',
+            );
+            expect(placesCalls).toHaveLength(1);
+            expect(placesCalls[0][1]).toMatchObject({
+                body: {
+                    query: 'Parisik',
+                    lat: 51.5,
+                    lng: -0.1,
+                    global_fallback: true,
+                },
+            });
+        });
+    });
+
+    it('keeps a transient permission-read failure unresolved so a later mount can retry', async () => {
+        mockGetPermissions.mockRejectedValueOnce(new Error('permission service unavailable'));
+        const first = renderHook(() => useNearbyLocation());
+        await act(async () => {
+            await first.result.current.requestIfGranted();
+        });
+        expect(first.result.current.permissionStatus).toBeNull();
+        expect(first.result.current.settled).toBe(true);
+        first.unmount();
+
+        mockGetPermissions.mockResolvedValueOnce({ status: 'undetermined' });
+        const second = renderHook(() => useNearbyLocation());
+        await act(async () => {
+            await second.result.current.requestIfGranted();
+        });
+        expect(second.result.current.permissionStatus).toBe('undetermined');
+        expect(second.result.current.settled).toBe(true);
+    });
+
     it('re-fetches both sources after leaving and re-entering an all-empty query', async () => {
         const queryClient = new QueryClient({
             defaultOptions: { queries: { retry: false } },

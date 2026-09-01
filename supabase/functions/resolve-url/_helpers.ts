@@ -649,6 +649,39 @@ export interface SaveSpotPlacePayload {
   hours?: { weekdayDescriptions: string[] } | null;
 }
 
+export interface V2CompletenessClientFactsSpot {
+  candidate_id: string;
+  restaurant_name?: string | null;
+  restaurant_city?: string | null;
+  area?: string | null;
+  place?: SaveSpotPlacePayload | null;
+}
+
+/** The one save_spots → deferred-worker advisory-facts mapping. Keeping area
+ * here prevents neighborhood evidence from disappearing between resolution
+ * and a later completeness retry. */
+export function buildV2CompletenessClientFacts(
+  spot: V2CompletenessClientFactsSpot,
+  options: {
+    attemptedExternalId?: string | null;
+    resolutionDecision?: string | null;
+    source?: unknown;
+    note?: string | null;
+  },
+): Record<string, unknown> {
+  return {
+    candidate_id: spot.candidate_id,
+    name: spot.restaurant_name ?? spot.place?.name ?? null,
+    city: spot.restaurant_city ?? spot.place?.location?.locality ?? null,
+    area: spot.area ?? null,
+    address: spot.place?.location?.address ?? null,
+    attempted_external_id: options.attemptedExternalId ?? null,
+    resolution_decision: options.resolutionDecision ?? null,
+    source: options.source ?? null,
+    note: options.note ?? null,
+  };
+}
+
 /**
  * Build the verified-restaurant upsert input for a save_spots spot (TICKET-187).
  *

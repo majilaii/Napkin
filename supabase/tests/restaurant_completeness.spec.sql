@@ -1352,6 +1352,8 @@ declare
     v_correction uuid;
     v_enqueued jsonb;
     v_item_id uuid;
+    v_wishlist_destination_id uuid;
+    v_new_list_destination_id uuid;
     v_table_destination_id uuid;
     v_ghost_id uuid;
     v_claim record;
@@ -1361,7 +1363,7 @@ begin
     insert into public.lists(id,owner_id,title,ranked,privacy)
     values
         ('19500000-2190-4000-8000-000000000010',v_owner,'Ghost Owned List',false,'public'),
-        ('19500000-2190-4000-8000-000000000011',v_other,'Ghost Revoked List',false,'public');
+        ('19500000-2190-4000-8000-000000000011',v_owner,'Ghost Revoked List',false,'public');
     insert into public.tables(id,owner_id,name)
     values ('19500000-2190-4000-8000-000000000012',v_owner,'Ghost Retry Table');
     insert into public.table_members(table_id,member_id,role)
@@ -1417,9 +1419,20 @@ begin
         ),5
     );
     v_item_id := (v_enqueued->'items'->0->>'id')::uuid;
+    select (returned.value->>'id')::uuid into v_wishlist_destination_id
+    from pg_catalog.jsonb_array_elements(v_enqueued->'destinations') as returned(value)
+    where returned.value->>'destination_nonce' = '19500000-2190-4000-8000-000000000020';
+    select (returned.value->>'id')::uuid into v_new_list_destination_id
+    from pg_catalog.jsonb_array_elements(v_enqueued->'destinations') as returned(value)
+    where returned.value->>'destination_nonce' = '19500000-2190-4000-8000-000000000022';
     select (returned.value->>'id')::uuid into v_table_destination_id
     from pg_catalog.jsonb_array_elements(v_enqueued->'destinations') as returned(value)
     where returned.value->>'destination_nonce' = '19500000-2190-4000-8000-000000000025';
+    -- Authority was valid when the immutable intent was accepted, then was
+    -- revoked before the routing write boundary.
+    update public.lists
+    set owner_id=v_other
+    where id='19500000-2190-4000-8000-000000000011';
     select * into v_claim from public.fn_claim_completeness_item(
         v_item_id,'19500000-2190-4000-8000-000000000030',120
     );
@@ -1468,6 +1481,52 @@ begin
           and d.outcome='rejected' and l.result->>'reason'='AUTHORITY_REVOKED'
           and l.acked_at is not null
     ), 'FAIL: revoked list authority was not terminally rejected';
+
+    -- Exercise the core's acknowledged-ledger replay branch. The production
+    -- guard correctly makes terminal outcomes immutable, so this contract test
+    -- temporarily disables only that trigger while constructing the crash-like
+    -- pending snapshot, then restores it before invoking the real wrapper.
+    alter table public.completeness_destinations
+        disable trigger completeness_destinations_immutable;
+    update public.completeness_destinations
+    set outcome='pending' where id=v_wishlist_destination_id;
+    alter table public.completeness_destinations
+        enable trigger completeness_destinations_immutable;
+    perform public.fn_backfill_exhausted_destinations(v_item_id);
+    assert (
+        select d.outcome = l.result->>'outcome'
+        from public.completeness_destinations d
+        join public.destination_nonce_ledger l
+          on l.ledger_key='route:'||v_owner::text||':'||(v_enqueued->>'job_id')||':'||
+              v_item_nonce::text||':'||d.destination_nonce::text
+        where d.id=v_wishlist_destination_id and l.acked_at is not null
+    ) and (
+        select pg_catalog.count(*)=1
+        from public.wishlist_items
+        where user_id=v_owner and restaurant_id=v_ghost_id and deleted_at is null
+    ), 'FAIL: wishlist route-ledger replay did not restore outcome exactly once';
+
+    alter table public.completeness_destinations
+        disable trigger completeness_destinations_immutable;
+    update public.completeness_destinations
+    set outcome='pending' where id=v_new_list_destination_id;
+    alter table public.completeness_destinations
+        enable trigger completeness_destinations_immutable;
+    perform public.fn_backfill_exhausted_destinations(v_item_id);
+    assert (
+        select d.outcome = l.result->>'outcome'
+        from public.completeness_destinations d
+        join public.destination_nonce_ledger l
+          on l.ledger_key='route:'||v_owner::text||':'||(v_enqueued->>'job_id')||':'||
+              v_item_nonce::text||':'||d.destination_nonce::text
+        where d.id=v_new_list_destination_id and l.acked_at is not null
+    ) and (
+        select pg_catalog.count(*)=1
+        from public.list_entries le
+        join public.lists l on l.id=le.list_id
+        where l.owner_id=v_owner and l.title='Ghost New List'
+          and le.restaurant_id=v_ghost_id
+    ), 'FAIL: new-list route-ledger replay did not restore outcome exactly once';
 
     assert public.fn_backfill_exhausted_destinations(v_item_id) = '[]'::jsonb,
         'FAIL: exhausted backfill replay repeated a terminal route';
@@ -1536,19 +1595,83 @@ begin
 end;
 $exhausted_ghost_routes$;
 
+-- JSON null is distinct from SQL NULL inside jsonb. Exhausted routing must
+-- normalize it before the wishlist source-shape constraint sees the value.
+do $exhausted_jsonb_null_source$
+declare
+    v_owner uuid := '19500000-0000-4000-8000-000000000001';
+    v_import uuid := '19500000-2190-4000-8000-000000000050';
+    v_resolution uuid;
+    v_enqueued jsonb;
+    v_claim record;
+begin
+    insert into public.import_resolutions(
+        user_id,import_nonce,candidate_evidence,decision,created_at
+    ) values (
+        v_owner,v_import,'{"candidate":{"name":"JSON Null Source Ghost"}}','no_result',
+        pg_catalog.clock_timestamp() - interval '1 hour'
+    ) returning resolution_id into v_resolution;
+    v_enqueued := public.fn_enqueue_completeness(
+        v_owner,v_import,'v2',
+        pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'item_nonce','19500000-2190-4000-8000-000000000051',
+            'resolution_id',v_resolution,
+            'client_facts',pg_catalog.jsonb_build_object(
+                'name','JSON Null Source Ghost','city','Paris',
+                'resolution_decision','no_result','source','null'::jsonb
+            )
+        )),
+        pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
+            'item_nonce','19500000-2190-4000-8000-000000000051',
+            'destination_nonce','19500000-2190-4000-8000-000000000052',
+            'destination_kind','wishlist'
+        )),1
+    );
+    select * into v_claim from public.fn_claim_completeness_item(
+        (v_enqueued->'items'->0->>'id')::uuid,
+        '19500000-2190-4000-8000-000000000053',120
+    );
+    perform public.fn_finalize_completeness_item(
+        v_claim.id,v_claim.lease_token,'exhausted',v_claim.restaurant_id,'no_result'
+    );
+    assert (
+        select q.state='exhausted' and d.outcome='fulfilled'
+        from public.restaurant_completeness_queue q
+        join public.completeness_destinations d
+          on d.owner_id=q.owner_id and d.job_id=q.job_id and d.item_nonce=q.item_nonce
+        where q.id=v_claim.id
+    ), 'FAIL: jsonb-null source stranded exhausted finalization';
+    assert (
+        select pg_catalog.count(*)=1
+           and pg_catalog.count(*) filter (where source is null)=1
+        from public.wishlist_items
+        where user_id=v_owner and restaurant_id=v_claim.restaurant_id and deleted_at is null
+    ), 'FAIL: jsonb-null source did not become SQL NULL on the ghost pin';
+end;
+$exhausted_jsonb_null_source$;
+
 -- Attempt-cap exhaustion never returns to the worker routing seam, so the
 -- defer RPC itself must converge through the finalizer-owned ghost route.
 do $attempt_cap_exhaustion$
 declare
     v_owner uuid := '19500000-0000-4000-8000-000000000001';
+    v_import uuid := '19500000-2190-4000-8000-000000000040';
+    v_resolution uuid;
     v_enqueued jsonb;
     v_claim record;
     v_item_id uuid;
 begin
+    insert into public.import_resolutions(
+        user_id,import_nonce,candidate_evidence,decision,created_at
+    ) values (
+        v_owner,v_import,'{"candidate":{"name":"Attempt Cap Ghost"}}','transient',
+        pg_catalog.clock_timestamp() - interval '1 hour'
+    ) returning resolution_id into v_resolution;
     v_enqueued := public.fn_enqueue_completeness(
-        v_owner,'19500000-2190-4000-8000-000000000040','v2',
+        v_owner,v_import,'v2',
         pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(
             'item_nonce','19500000-2190-4000-8000-000000000041',
+            'resolution_id',v_resolution,
             'client_facts',pg_catalog.jsonb_build_object('name','Attempt Cap Ghost','city','Paris')
         )),
         pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object(

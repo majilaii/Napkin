@@ -9,7 +9,7 @@ type EditMatchCandidate = {
 type EditMatchCoords = { latitude: number; longitude: number };
 
 export function initialImportEditMatchQuery(candidate: EditMatchCandidate): string {
-    return candidate.restaurant.name?.trim() ?? '';
+    return candidate.restaurant.name?.trim() || candidate.restaurant.city?.trim() || '';
 }
 
 export function buildImportEditMatchSearchBody(

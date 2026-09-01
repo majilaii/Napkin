@@ -130,14 +130,18 @@ begin
             user_id, restaurant_id, job_id, extraction_status, source, note, client_nonce, deleted_at
         ) values (
             v_item.owner_id, v_restaurant_id, v_item.job_id, 'resolved',
-            v_item.client_facts->'source', nullif(v_item.client_facts->>'note', ''),
+            nullif(v_item.client_facts->'source', 'null'::jsonb),
+            nullif(v_item.client_facts->>'note', ''),
             v_effect_nonce, null
         )
         on conflict (user_id, restaurant_id) do update
         set deleted_at = null,
             job_id = excluded.job_id,
             extraction_status = 'resolved',
-            source = coalesce(excluded.source, public.wishlist_items.source),
+            source = coalesce(
+                nullif(excluded.source, 'null'::jsonb),
+                public.wishlist_items.source
+            ),
             note = coalesce(excluded.note, public.wishlist_items.note)
         returning id into v_wishlist_id;
         v_result := pg_catalog.jsonb_build_object(
@@ -480,6 +484,7 @@ declare
     v_item record;
     v_wishlist_count integer;
     v_destination_count integer;
+    v_expected_ledger_count integer;
     v_ledger_count integer;
 begin
     for v_target in
@@ -537,6 +542,12 @@ begin
           and d.item_nonce = v_item.item_nonce
           and d.destination_kind = 'wishlist'
           and d.outcome = 'fulfilled';
+        select pg_catalog.count(*) into v_expected_ledger_count
+        from public.completeness_destinations d
+        where d.owner_id = v_item.owner_id
+          and d.job_id = v_item.job_id
+          and d.item_nonce = v_item.item_nonce
+          and d.destination_kind <> 'table';
         select pg_catalog.count(*) into v_ledger_count
         from public.destination_nonce_ledger l
         where l.owner_id = v_item.owner_id
@@ -544,9 +555,13 @@ begin
           and l.ledger_key like 'route:' || v_item.owner_id::text || ':' ||
               v_item.job_id::text || ':' || v_item.item_nonce::text || ':%'
           and l.acked_at is not null;
-        if v_wishlist_count <> 1 or v_destination_count <> 1 or v_ledger_count <> 1 then
-            raise exception 'founder backfill verification failed for %: wishlist %, destination %, ledger %',
-                v_target.restaurant_name, v_wishlist_count, v_destination_count, v_ledger_count;
+        if v_wishlist_count <> 1
+           or v_destination_count <> 1
+           or v_ledger_count <> v_expected_ledger_count
+        then
+            raise exception 'founder backfill verification failed for %: wishlist %, destination %, ledger %/%',
+                v_target.restaurant_name, v_wishlist_count, v_destination_count,
+                v_ledger_count, v_expected_ledger_count;
         end if;
     end loop;
 end;

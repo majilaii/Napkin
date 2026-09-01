@@ -762,7 +762,10 @@ describe('v2 completeness reconciliation', () => {
     });
 
     it('hydrates exhausted ghost pins instead of reporting a failed save', () => {
-        const job = mkJob({ items: [{ ...mkItems(1)[0], status: 'queued' }] });
+        const job = mkJob({
+            items: [{ ...mkItems(1)[0], status: 'queued' }],
+            destListTitle: null,
+        });
         const next = reconcileLargeJobCompleteness(job, {
             job_id: 'job-server',
             sealed: true,
@@ -797,6 +800,7 @@ describe('v2 completeness reconciliation', () => {
     it('upgrades a pre-fix failed manifest after the server backfills its ghost pin', () => {
         const job = mkJob({
             items: [{ ...mkItems(1)[0], status: 'failed', needsLook: true }],
+            destListTitle: null,
         });
         const next = reconcileLargeJobCompleteness(job, {
             job_id: 'job-server',
@@ -825,6 +829,33 @@ describe('v2 completeness reconciliation', () => {
             completenessItemId: 'queue-item-backfilled',
             needsLook: true,
         });
+    });
+
+    it('leaves an exhausted fulfilled route untouched until its ledger result is hydrated', () => {
+        const original: LargeImportJobItem = {
+            ...mkItems(1)[0],
+            status: 'queued',
+        };
+        const job = mkJob({ items: [original], destListTitle: null });
+        const next = reconcileLargeJobCompleteness(job, {
+            job_id: 'job-server',
+            sealed: true,
+            done_emitted: true,
+            items: [{
+                id: 'queue-item-exhausted',
+                item_nonce: 'nonce-0',
+                state: 'exhausted',
+                restaurant_id: 'private-ghost',
+                last_error: 'no_result',
+                destinations: [{
+                    destination_kind: 'wishlist',
+                    outcome: 'fulfilled',
+                    result: null,
+                }],
+            }],
+        });
+
+        expect(next.items[0]).toEqual(original);
     });
 
     it.each([

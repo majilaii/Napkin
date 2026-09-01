@@ -23,4 +23,11 @@ describe('import edit-match request', () => {
             lng: -0.1,
         });
     });
+
+    it('falls back to structured city when the candidate name is absent', () => {
+        expect(initialImportEditMatchQuery({
+            area: 'Le Marais',
+            restaurant: { name: null, city: 'Paris' },
+        })).toBe('Paris');
+    });
 });
