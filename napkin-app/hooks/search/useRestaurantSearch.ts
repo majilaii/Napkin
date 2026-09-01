@@ -22,6 +22,10 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useNearbyLocation, type NearbyPermissionStatus } from '@/hooks/useNearbyLocation';
 import { searchCache, type PlacesResult, type PersistedRow, type VisitedRow } from './searchCache';
 import { mergeSearchResults } from './mergeSearchResults';
+import {
+    cityLocalityBucket,
+    type SearchLocality,
+} from './searchLocalityStore';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +84,8 @@ type SearchCoordinates = { latitude: number; longitude: number };
 interface RestaurantSearchOptions {
     /** Silently bias Places results when foreground location is already granted. */
     grantedLocationBias?: boolean;
+    /** Search-tab override. Other pickers stay on the existing automatic behavior. */
+    locality?: SearchLocality;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -87,6 +93,7 @@ interface RestaurantSearchOptions {
 async function fetchPlaces(
     query: string,
     coords?: SearchCoordinates | null,
+    city?: string | null,
 ): Promise<PlacesResult[]> {
     const body: {
         query: string;
@@ -94,11 +101,14 @@ async function fetchPlaces(
         lat?: number;
         lng?: number;
         global_fallback?: boolean;
+        city?: string;
     } = {
         query,
         limit: 15,
     };
-    if (coords) {
+    if (city) {
+        body.city = city;
+    } else if (coords) {
         body.lat = coords.latitude;
         body.lng = coords.longitude;
         body.global_fallback = true;
@@ -144,29 +154,40 @@ export function useRestaurantSearch(
 } {
     const trimmed = query.trim();
     const enabled = trimmed.length >= 2 && !!userId;
-    const locationEnabled = options?.grantedLocationBias === true;
-    const location = useNearbyLocation();
+    const locality = options?.locality ?? 'auto';
+    const chosenCity = locality === 'auto' ? null : locality.city.trim() || null;
+    const locationAvailable = options?.grantedLocationBias === true;
+    const locationEnabled = locationAvailable && locality === 'auto';
+    const {
+        coords: nearbyCoords,
+        permissionStatus: nearbyPermissionStatus,
+        settled: locationSettled,
+        request: requestLocation,
+        requestIfGranted,
+    } = useNearbyLocation();
 
     useEffect(() => {
-        if (locationEnabled) void location.requestIfGranted();
-    }, [locationEnabled, location.requestIfGranted]);
+        if (locationEnabled) void requestIfGranted();
+    }, [locationEnabled, requestIfGranted]);
 
-    const coords = locationEnabled ? location.coords : null;
-    const locationResolved = !locationEnabled || location.settled;
-    const coordsBucket = toCoordsBucket(coords);
+    const coords = locationEnabled ? nearbyCoords : null;
+    const locationResolved = !locationEnabled || locationSettled;
+    const localityBucket = chosenCity
+        ? cityLocalityBucket(chosenCity)
+        : toCoordsBucket(coords);
     const cacheUserId = userId ?? '';
 
     // Check LRU cache synchronously before React Query fires
     const cachedResult = enabled
-        ? searchCache.get(cacheUserId, trimmed, coordsBucket)
+        ? searchCache.get(cacheUserId, trimmed, localityBucket)
         : undefined;
 
     const placesQuery = useQuery({
-        queryKey: queryKeys.search.places(cacheUserId, trimmed, coordsBucket),
+        queryKey: queryKeys.search.places(cacheUserId, trimmed, localityBucket),
         queryFn: async () => {
-            const cached = searchCache.get(cacheUserId, trimmed, coordsBucket);
+            const cached = searchCache.get(cacheUserId, trimmed, localityBucket);
             if (cached) return cached.places;
-            return fetchPlaces(trimmed, coords);
+            return fetchPlaces(trimmed, coords, chosenCity);
         },
         enabled: enabled && locationResolved && !cachedResult,
         // The combined 15-minute LRU owns successful reuse. Zero-result queries
@@ -180,7 +201,7 @@ export function useRestaurantSearch(
     const persistedQuery = useQuery({
         queryKey: queryKeys.search.persisted(trimmed, userId ?? ''),
         queryFn: async () => {
-            const cached = searchCache.get(cacheUserId, trimmed, coordsBucket);
+            const cached = searchCache.get(cacheUserId, trimmed, localityBucket);
             if (cached) return cached.persisted;
             return fetchPersistedDirect(trimmed);
         },
@@ -204,7 +225,7 @@ export function useRestaurantSearch(
                 places: placesQuery.data,
                 persisted: persistedQuery.data,
                 timestamp: Date.now(),
-            }, coordsBucket);
+            }, localityBucket);
         }
     }, [
         enabled,
@@ -214,7 +235,7 @@ export function useRestaurantSearch(
         placesQuery.data,
         persistedQuery.data,
         trimmed,
-        coordsBucket,
+        localityBucket,
         cacheUserId,
     ]);
 
@@ -245,9 +266,9 @@ export function useRestaurantSearch(
         results,
         isLoading,
         isPlacesError,
-        coords,
-        permissionStatus: locationEnabled ? location.permissionStatus : null,
-        requestLocation: location.request,
+        coords: locationAvailable ? nearbyCoords : null,
+        permissionStatus: locationAvailable ? nearbyPermissionStatus : null,
+        requestLocation,
         refetch: () => {
             placesQuery.refetch();
             persistedQuery.refetch();

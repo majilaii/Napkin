@@ -258,11 +258,14 @@ Source: `components/suppers/SupperCard.tsx`, `app/supper/[id].tsx`, `components/
 
 ### Search
 
-Source: `app/(tabs)/search.tsx` (Places pane is inline), `components/search/PeopleSearchPane.tsx`, `components/search/ListsSearchPane.tsx`, `hooks/search/useRestaurantSearch.ts`, `hooks/users/useUserSearch.ts`, `hooks/lists/useSearchPublicLists.ts`.
+Source: `app/(tabs)/search.tsx` (Places pane is inline), `components/search/SearchLocalityBar.tsx`, `components/search/PeopleSearchPane.tsx`, `components/search/ListsSearchPane.tsx`, `hooks/search/useRestaurantSearch.ts`, `hooks/search/useSearchLocality.ts`, `providers/AuthProvider.tsx`, `hooks/users/useUserSearch.ts`, `hooks/lists/useSearchPublicLists.ts`.
 
 - Places with no query: viewer recents/pins/lists sections appear only when non-empty. A brand-new account can therefore show a deliberately quiet canvas.
 - Search requests do not fire below the pane's minimum query length. With a valid query: spinner before rows, result list on success, explicit places error/retry, or no-results state.
-- Before a Places query, foreground permission resolves silently. Only `undetermined` shows the quiet “use my location” row; granting reactively refreshes the coordinate bucket, nearby pins, and biased results without remounting, while denial removes the row.
+- The Places pane always shows a quiet locality bar below its search field. Auto mode labels granted coordinates as `current location`; without coordinates it surfaces the owner profile's lowercased `home_city` (or `anywhere` when none exists); a chosen city shows its lowercased name.
+- Tapping the locality bar opens the warm-paper sheet. `current location` returns to auto and only an `undetermined` permission may prompt; a curated or free-text city becomes the session-only locality. The locality store resets to auto on cold start and every auth identity change.
+- Auto mode preserves the shipped request behavior: granted coordinates send lat/lng plus `global_fallback`; otherwise the request stays bare for the server-side home-city weld. A chosen city sends only `city` with the query, never coordinates or `global_fallback`, and occupies a distinct city locality bucket in both result caches.
+- The empty Places canvas now contains only recents, nearby pins, and lists when populated; its former `use my location` row is removed because the locality sheet owns that user-initiated affordance.
 - An empty nearby-biased Places pass may append a single **Farther afield** section when the opt-in world pass succeeds. Those flagged rows stay after every local row and show city before street address.
 - Cached results may remain during a refetch; do not label them stale/broken solely because a spinner is absent.
 - People with no query shows suggestions; a valid query can show loading, people rows, or an invite-via-SMS no-results doorway. Check hook error state because no-results and failure have less visual separation than Places.

@@ -1,7 +1,7 @@
 /**
  * Module-scope in-memory LRU cache for restaurant search.
  *
- * - Capacity: 10 entries (keyed by user, coordinate bucket, and query)
+ * - Capacity: 10 entries (keyed by user, locality bucket, and query)
  * - Result cache survives tab unmounts, dies on app cold start
  * - Tracks last 8 queries for the "recent searches" empty state
  *
@@ -116,8 +116,8 @@ function normalizeQuery(q: string): string {
     return q.trim().toLowerCase();
 }
 
-function resultKey(userId: string, query: string, coordsBucket?: string | null): string {
-    return `${userId}\u0000${coordsBucket ?? 'nolo'}\u0000${normalizeQuery(query)}`;
+function resultKey(userId: string, query: string, localityBucket?: string | null): string {
+    return `${userId}\u0000${localityBucket ?? 'nolo'}\u0000${normalizeQuery(query)}`;
 }
 
 function isFullyEmpty(result: CachedSearchResult): boolean {
@@ -180,8 +180,8 @@ function ensureRecentsHydrated(): void {
 }
 
 export const searchCache = {
-    get(userId: string, query: string, coordsBucket?: string | null): CachedSearchResult | undefined {
-        const key = resultKey(userId, query, coordsBucket);
+    get(userId: string, query: string, localityBucket?: string | null): CachedSearchResult | undefined {
+        const key = resultKey(userId, query, localityBucket);
         const result = cache.get(key);
         if (!result) return undefined;
         if (Date.now() - result.timestamp >= RESULT_TTL_MS) {
@@ -195,10 +195,10 @@ export const searchCache = {
         userId: string,
         query: string,
         result: CachedSearchResult,
-        coordsBucket?: string | null,
+        localityBucket?: string | null,
     ): void {
         if (isFullyEmpty(result)) return;
-        const key = resultKey(userId, query, coordsBucket);
+        const key = resultKey(userId, query, localityBucket);
 
         // Evict oldest if at capacity
         if (cache.size >= LRU_CAPACITY && !cache.has(key)) {
@@ -223,8 +223,8 @@ export const searchCache = {
         persistRecents();
     },
 
-    has(userId: string, query: string, coordsBucket?: string | null): boolean {
-        return this.get(userId, query, coordsBucket) !== undefined;
+    has(userId: string, query: string, localityBucket?: string | null): boolean {
+        return this.get(userId, query, localityBucket) !== undefined;
     },
 
     getRecentQueries(): readonly string[] {

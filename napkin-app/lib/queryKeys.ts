@@ -67,8 +67,8 @@ export const queryKeys = {
 
     // Search (restaurant search — Places + local DB)
     search: {
-        places: (userId: string, q: string, coordsBucket?: string | null) =>
-            ['search', 'places', userId, coordsBucket ?? 'nolo', q] as const,
+        places: (userId: string, q: string, localityBucket?: string | null) =>
+            ['search', 'places', userId, localityBucket ?? 'nolo', q] as const,
         persisted: (q: string, userId: string) => ['search', 'persisted', userId, q] as const,
     },
 

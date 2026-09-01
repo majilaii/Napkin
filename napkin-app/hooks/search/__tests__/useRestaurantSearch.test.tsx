@@ -183,4 +183,28 @@ describe('useRestaurantSearch cache and location lifecycle', () => {
             });
         });
     });
+
+    it('sends a chosen city without coordinates or global fallback', async () => {
+        const queryClient = new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+        });
+        renderHook(
+            () => useRestaurantSearch('Parisik', 'user-1', {
+                grantedLocationBias: true,
+                locality: { city: 'Paris' },
+            }),
+            { wrapper: wrapper(queryClient) },
+        );
+
+        await waitFor(() => {
+            const placesCalls = mockCallEdgeFn.mock.calls.filter(
+                ([name]) => name === 'places-search',
+            );
+            expect(placesCalls).toHaveLength(1);
+            expect(placesCalls[0][1]).toEqual({
+                body: { query: 'Parisik', limit: 15, city: 'Paris' },
+            });
+        });
+        expect(mockGetPermissions).not.toHaveBeenCalled();
+    });
 });
