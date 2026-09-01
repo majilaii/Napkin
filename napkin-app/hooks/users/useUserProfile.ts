@@ -38,6 +38,8 @@ export type UserProfileRow = {
     display_name: string;
     bio: string | null;
     avatar_url: string | null;
+    /** Owner-only in the profile aggregate; absent from public branches. */
+    home_city?: string | null;
     account_privacy: 'private' | 'public';
     allow_public_replies: boolean;
 };
@@ -172,13 +174,13 @@ export type DiaryEntryRow = {
      */
     round_kind?: 'merged';
     round_id?: string | null;
-    round_participants?: Array<{
+    round_participants?: {
         user_id: string;
         display_name: string;
         avatar_url: string | null;
         rating: number | null;
         notes: string | null;
-    }>;
+    }[];
     round_average_rating?: number | null;
 };
 

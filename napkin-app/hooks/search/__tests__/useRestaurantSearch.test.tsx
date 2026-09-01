@@ -184,11 +184,12 @@ describe('useRestaurantSearch cache and location lifecycle', () => {
         });
     });
 
-    it('sends a chosen city without coordinates or global fallback', async () => {
+    it('hydrates nearby coords in city mode without adding them to the Places request', async () => {
+        mockGetPermissions.mockResolvedValue({ status: 'granted' });
         const queryClient = new QueryClient({
             defaultOptions: { queries: { retry: false } },
         });
-        renderHook(
+        const { result } = renderHook(
             () => useRestaurantSearch('Parisik', 'user-1', {
                 grantedLocationBias: true,
                 locality: { city: 'Paris' },
@@ -205,6 +206,11 @@ describe('useRestaurantSearch cache and location lifecycle', () => {
                 body: { query: 'Parisik', limit: 15, city: 'Paris' },
             });
         });
-        expect(mockGetPermissions).not.toHaveBeenCalled();
+        await waitFor(() => expect(result.current.coords).toEqual({
+            latitude: 51.5,
+            longitude: -0.1,
+        }));
+        expect(mockGetPermissions).toHaveBeenCalledTimes(1);
+        expect(mockRequestPermissions).not.toHaveBeenCalled();
     });
 });

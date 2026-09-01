@@ -167,8 +167,8 @@ export function useRestaurantSearch(
     } = useNearbyLocation();
 
     useEffect(() => {
-        if (locationEnabled) void requestIfGranted();
-    }, [locationEnabled, requestIfGranted]);
+        if (locationAvailable) void requestIfGranted();
+    }, [locationAvailable, requestIfGranted]);
 
     const coords = locationEnabled ? nearbyCoords : null;
     const locationResolved = !locationEnabled || locationSettled;

@@ -118,10 +118,8 @@ export default function SearchScreen() {
     const router = useRouter();
     const { user } = useAuth();
     const { data: tables } = useTables(user?.id);
-    const { data: ownProfileResult } = useUserProfile(user?.id);
-    const homeCity = (
-        ownProfileResult?.data?.profile as { home_city?: string | null } | undefined
-    )?.home_city?.trim() || null;
+    const { data: ownProfileResult, isSuccess: ownProfileSettled } = useUserProfile(user?.id);
+    const homeCity = ownProfileResult?.data?.profile.home_city?.trim() || null;
     const { locality, setAuto: setAutoLocality, setCity: setCityLocality } =
         useSearchLocality(user?.id);
 
@@ -193,7 +191,12 @@ export default function SearchScreen() {
         { grantedLocationBias: true, locality },
     );
 
-    const localityLabel = searchLocalityLabel(locality, !!coords, homeCity);
+    const localityLabel = searchLocalityLabel(
+        locality,
+        !!coords,
+        homeCity,
+        ownProfileSettled,
+    );
 
     const handleCurrentLocation = useCallback(() => {
         setAutoLocality();

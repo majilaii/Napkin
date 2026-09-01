@@ -39,10 +39,13 @@ export function searchLocalityLabel(
     locality: SearchLocality,
     hasCoords: boolean,
     homeCity: string | null | undefined,
+    homeCityKnown: boolean,
 ): string {
     if (locality !== 'auto') return cityName(locality.city);
     if (hasCoords) return 'current location';
-    return cityName(homeCity ?? '') || 'anywhere';
+    const homeCityLabel = cityName(homeCity ?? '');
+    if (homeCityLabel) return homeCityLabel;
+    return homeCityKnown ? 'anywhere' : '…';
 }
 
 export const searchLocalityStore = {

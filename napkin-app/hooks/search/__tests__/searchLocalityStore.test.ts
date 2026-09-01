@@ -49,9 +49,14 @@ describe('search locality store', () => {
 
     it('derives the visible label for city, coordinates, and home-city auto states', () => {
         const { searchLocalityLabel } = freshStore();
-        expect(searchLocalityLabel({ city: ' Paris, France ' }, true, 'London')).toBe('paris');
-        expect(searchLocalityLabel('auto', true, 'London')).toBe('current location');
-        expect(searchLocalityLabel('auto', false, ' London, United Kingdom ')).toBe('london');
-        expect(searchLocalityLabel('auto', false, null)).toBe('anywhere');
+        expect(searchLocalityLabel({ city: ' Paris, France ' }, true, 'London', false)).toBe('paris');
+        expect(searchLocalityLabel('auto', true, 'London', false)).toBe('current location');
+        expect(searchLocalityLabel('auto', false, ' London, United Kingdom ', true)).toBe('london');
+        expect(searchLocalityLabel('auto', false, null, true)).toBe('anywhere');
+    });
+
+    it('stays neutral until a missing home city is known successfully', () => {
+        const { searchLocalityLabel } = freshStore();
+        expect(searchLocalityLabel('auto', false, null, false)).toBe('…');
     });
 });

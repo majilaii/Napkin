@@ -289,7 +289,7 @@ Source: `app/(tabs)/search.tsx` (Places pane is inline), `components/search/Sear
 | Wishlist: pin/unpin own spot | EF `wishlist`; pin sheets on restaurant/search/import | auth, canonical restaurant; dedupe | SAFE — self-scoped/reversible, but publicly visible when account is public |
 | Wishlist: fix/repoint unmappable spot | EF `places-search`/`wishlist` correction | auth, owned/import row, valid replacement | SAFE — self-scoped/reversible data repair |
 | Wishlist: local filters, source/list choice, clear local import history | component/device state | source available; no server membership change | SAFE |
-| Map: request location | `useNearbyLocation` → OS permission | platform permission state | SAFE only on disposable simulator/device |
+| Search locality sheet / Map: request location | locality sheet or Map → `useNearbyLocation` → OS permission | user-initiated; platform permission state | SAFE only on disposable simulator/device |
 | Import: enqueue URL/video, approve/save, retry, exclude/repoint | local manifest + `resolve-url`, `wishlist`, `lists` | auth/owner manifest, valid URL/candidates/destination; Table membership for shared destination | NEVER — creates saves/list/Table shares and may notify |
 | Import: share-extension handoff | App Group/import protocol in `app/import.tsx` | signed-in owner or pending-auth handoff; valid manifest | NEVER — begins a write workflow |
 | Profile: edit name/bio/city/photo/username/top fours/takes | `user-profile`, `top-fours`, `moderate-image` | auth/owner; format, availability, image moderation, city/entry constraints | SAFE — self-scoped/reversible, but changes public profile |

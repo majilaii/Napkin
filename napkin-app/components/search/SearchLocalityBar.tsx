@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+    Keyboard,
     KeyboardAvoidingView,
     Modal,
     Platform,
@@ -36,8 +37,14 @@ export function SearchLocalityBar({
     const [city, setCity] = React.useState('');
 
     const openSheet = () => {
+        Keyboard.dismiss();
         setCity(locality === 'auto' ? '' : locality.city);
         setSheetOpen(true);
+    };
+
+    const chooseCurrentLocation = () => {
+        setSheetOpen(false);
+        setTimeout(onSelectCurrentLocation, 0);
     };
 
     const chooseCity = (value: string) => {
@@ -120,10 +127,7 @@ export function SearchLocalityBar({
                             </Text>
 
                             <Pressable
-                                onPress={() => {
-                                    setSheetOpen(false);
-                                    onSelectCurrentLocation();
-                                }}
+                                onPress={chooseCurrentLocation}
                                 style={({ pressed }) => [
                                     styles.choiceRow,
                                     {
@@ -163,7 +167,7 @@ export function SearchLocalityBar({
                             <View
                                 style={[
                                     styles.cityField,
-                                    { backgroundColor: palette.surfaceJournalLow },
+                                    { backgroundColor: palette.background },
                                 ]}
                             >
                                 <CitySuggestField
