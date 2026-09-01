@@ -23,7 +23,7 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { flattenFriendsFeed, type FriendFeedRow, useFriendsFeed } from '@/hooks/feed';
 import { ErrorState } from '@/components/ErrorState';
-import { shouldShowSparseTail, isNoteCard } from './feedRouting';
+import { shouldShowSparseTail } from './feedRouting';
 import { feedSectionLabel } from './feedDates';
 import { FriendFeedCard } from './FriendFeedCard';
 import { FeedSparseTail } from './FeedSparseTail';
@@ -31,12 +31,12 @@ import { FollowingEmptyState } from './FollowingEmptyState';
 
 type FeedListItem =
     | { _type: 'header'; key: string; label: string }
-    | { _type: 'row'; key: string; row: FriendFeedRow; marginBottom: number };
+    | { _type: 'row'; key: string; row: FriendFeedRow; showDivider: boolean };
 
 /**
  * Interleave a date-section header before the first row of each day boundary.
- * Note cards and ledger rows carry the mock's 14px and 12px rhythm. The header
- * carries its own top margin, so trailing spacing is harmless below a boundary.
+ * Each of the three feed weights now owns its approved internal rhythm, so the
+ * list wrapper adds no generic card-sized gutter between dense rows.
  */
 function buildFeedList(rows: FriendFeedRow[]): FeedListItem[] {
     const items: FeedListItem[] = [];
@@ -54,7 +54,7 @@ function buildFeedList(rows: FriendFeedRow[]): FeedListItem[] {
             _type: 'row',
             key: `row-${row.id}`,
             row,
-            marginBottom: isNoteCard(row) ? 14 : 12,
+            showDivider: i < rows.length - 1,
         });
     }
     return items;
@@ -102,8 +102,8 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
                 );
             }
             return (
-                <View style={[styles.rowSlot, { marginBottom: item.marginBottom }]}>
-                    <FriendFeedCard row={item.row} />
+                <View style={styles.rowSlot}>
+                    <FriendFeedCard row={item.row} showDivider={item.showDivider} />
                 </View>
             );
         },

@@ -147,18 +147,18 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 
 ### Feed and feed cards
 
-Source: `app/(tabs)/feed.tsx`, `components/feed/FollowingFeed.tsx`, `components/feed/ForYouFeed.tsx`, `components/feed/FriendFeedCard.tsx`, `components/feed/FeedActionRow.tsx`, `hooks/feed/useFriendsFeed.ts`, `hooks/feed/useSocials.ts`.
+Source: `app/(tabs)/feed.tsx`, `components/feed/FollowingFeed.tsx`, `components/feed/ForYouFeed.tsx`, `components/feed/FriendFeedCard.tsx`, `hooks/feed/useFriendsFeed.ts`, `hooks/feed/useSocials.ts`.
 
 - Tabs are **Friends** and **For You**, in that order; Friends is the default on every Feed landing. The internal Friends mode key remains `following`. Switching tabs is local/read-only.
 - Friends initial load with no cached rows: centered spinner.
 - Friends initial failure with zero rows: explicit error state and retry.
 - Friends later failure with cached rows: existing cards remain; do not call the retained list an empty success.
 - Friends settled zero rows: invitation/switch-tab empty state. This is intended-empty only when `isError` is false.
-- Friends content: chronological friend entry cards; pagination adds a footer spinner. A sparse/end tail is deliberate when the backend reports no more eligible entries.
+- Friends content: chronological friend entries in three visual weights; pagination adds a footer spinner. A sparse/end tail is deliberate when the backend reports no more eligible entries.
 - For You independently loads social clips, people, and public lists. Any non-empty block renders even while a sibling block loads or fails.
 - For You with no visible blocks and any active request: spinner. With any failed request: retry state. With all requests settled empty: “nothing here just yet” invitation.
-- Friend cards render a ledger entry or note treatment, photo/no-photo variants, table context, comments, and the author's own overflow controls.
-- Reactions are heart-only. `FeedActionRow` toggles like/unlike; legacy non-heart reaction rows can count as liked and are removed by unlike, but no picker is rendered.
+- Friend-entry routing is literal and client-only (`feedWeight`): no prose + no photos → `ledger`; prose or one photo → paper-level `note` (one photo is a 42pt thumb); two or more photos, with or without prose → compressed `card`.
+- Friends-feed rows carry no engagement controls. Compressed cards show only non-zero public like/reply counts; liking or replying requires opening entry detail. Tapping any weight opens entry detail, and long-pressing an owned entry opens owner actions.
 - Tables activity cards may be entries, Suppers, Gathers, shares, floats, top-four changes, or list additions (`hooks/tables/useTableActivity.ts`, `components/tables/`). Round cards are legacy residue, not a new state to extend.
 
 ### Journal
@@ -343,7 +343,7 @@ Composer visibility (fixed 2026-08-26, TICKET-217 P0-1/P1-4): `lib/composer.ts::
 | Restaurant Napkin count or photo rails differ by viewer | This is privacy filtering, not missing data. The service-role `restaurant-history` endpoint sends separate aggregate and photo batches through `fn_visible_entry_ids`. The aggregate filters on privacy only (blocks, private accounts, and private visibility), never note length; photos additionally require canonical review-content parity. Authorized Table/companion/Supper scopes remain. | `supabase/functions/restaurant-history/index.ts`; `supabase/migrations/20260826155643_ticket_217_restaurant_privacy_gates.sql` |
 | Only two reviews appear inline | `VoicesStream` intentionally slices to two; use the folio doorway for all reviews. | `napkin-app/components/restaurants/VoicesStream.tsx`; `napkin-app/components/restaurants/AllReviewsFolio.tsx` |
 | Journal includes Table-shared entries despite `useMySoloEntries` name | This is current scope by design: all entries authored by the user, no Table filter. | `napkin-app/hooks/entries/useMySoloEntries.ts`; `supabase/migrations/20260616000100_my_journal_all_entries.sql` |
-| Feed has no emoji reaction picker | Heart-only like/unlike is deliberate; legacy emoji-shaped backend fields remain compatibility data. | `napkin-app/components/feed/FeedActionRow.tsx`; `napkin-app/components/feed/FriendFeedCard.tsx`; `supabase/functions/post-interactions/index.ts` |
+| Feed has no emoji reaction picker | Heart-only like/unlike is deliberate; legacy emoji-shaped backend fields remain compatibility data. | `napkin-app/components/feed/FeedActionRow.tsx`; `supabase/functions/post-interactions/index.ts` |
 | Round/table-night cards or routes exist | They are legacy/dead product code. New group meals are Suppers grouped by `supper_id`. | `napkin-app/app/table-night.tsx`; `napkin-app/app/table-night-detail.tsx`; `napkin-app/hooks/suppers/index.ts`; `supabase/functions/entry/index.ts` |
 | Private profile looks like a partial/broken profile | `private_stub` is an explicit server variant; a blocked view is a separate `blocked_by_viewer` variant. | `napkin-app/components/profile/ProfileScreenBody.tsx`; `supabase/functions/user-profile/index.ts` |
 | Saved pin appears on somebody's profile without a review | Saves are standalone public-by-default signals gated only by account privacy, read by `fn_restaurant_saves_visible`. | `supabase/functions/restaurant-history/index.ts`; `supabase/migrations/20260710160000_fn_restaurant_saves_visible.sql` |

@@ -1,39 +1,37 @@
-/**
- * TICKET-103 — the feed routing predicate. Prose or photos → note card;
- * bare rating → ledger line. Tested against all four content×photo combos.
- * (The TICKET-104 shouldShowDiscoveryLedger gate was reaped with the
- * DiscoveryLedger in TICKET-189 §7.)
- */
-import { isNoteCard } from '../feedRouting';
+/** TICKET-226 — deterministic three-weight routing at the photo boundary. */
+import { feedWeight, isNoteCard } from '../feedRouting';
 
 function row(content: string | null, photos: string[]) {
     return { content, photos };
 }
 
-describe('isNoteCard', () => {
-    it('content + photos → note card', () => {
-        expect(isNoteCard(row('lovely', ['p1']))).toBe(true);
+describe('feedWeight', () => {
+    it('routes a bare rating to the ledger weight', () => {
+        expect(feedWeight(row(null, []))).toBe('ledger');
+        expect(feedWeight(row('', []))).toBe('ledger');
+        expect(feedWeight(row('   \n  ', []))).toBe('ledger');
     });
 
-    it('content only → note card', () => {
-        expect(isNoteCard(row('lovely', []))).toBe(true);
+    it('routes prose without a photo to the compact note row', () => {
+        expect(feedWeight(row('lovely', []))).toBe('note');
     });
 
-    it('photo only → note card', () => {
-        expect(isNoteCard(row(null, ['p1']))).toBe(true);
-        expect(isNoteCard(row('', ['p1']))).toBe(true);
+    it('keeps the one-photo boundary in the note-with-thumb weight', () => {
+        expect(feedWeight(row('lovely', ['p1']))).toBe('note');
+        expect(feedWeight(row(null, ['p1']))).toBe('note');
     });
 
-    it('neither → ledger line', () => {
+    it('routes two or more photos to the compressed card with or without prose', () => {
+        expect(feedWeight(row('lovely', ['p1', 'p2']))).toBe('card');
+        expect(feedWeight(row(null, ['p1', 'p2']))).toBe('card');
+        expect(feedWeight(row('', ['p1', 'p2', 'p3']))).toBe('card');
+    });
+});
+
+describe('isNoteCard compatibility alias', () => {
+    it('is false only for ledger rows', () => {
         expect(isNoteCard(row(null, []))).toBe(false);
-        expect(isNoteCard(row('', []))).toBe(false);
-    });
-
-    it('whitespace-only content is not prose → ledger line', () => {
-        expect(isNoteCard(row('   \n  ', []))).toBe(false);
-    });
-
-    it('whitespace-only content but has a photo → note card', () => {
-        expect(isNoteCard(row('   ', ['p1']))).toBe(true);
+        expect(isNoteCard(row('lovely', []))).toBe(true);
+        expect(isNoteCard(row(null, ['p1', 'p2']))).toBe(true);
     });
 });

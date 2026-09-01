@@ -613,6 +613,16 @@ const TYPE_FLOORS = {
     bodySmall: 14,
     caption: 13,
     metadata: 13,
+    feedMeta: 13,
+    feedMetaStrong: 13,
+    feedNoteRestaurant: 16,
+    feedCardRestaurant: 17,
+    feedNoteRating: 16,
+    feedCardRating: 17,
+    feedQuote: 15,
+    feedLedger: 15,
+    feedLedgerRating: 15,
+    feedPhotoCount: 14,
     label: 11,
     labelSmall: 11,
     sectionKicker: 11,
@@ -627,6 +637,11 @@ const ALLOWED_ITALIC_TYPE_TOKENS = new Set([
     'ratingCompact',
     'rating',
     'ratingLarge',
+    // TICKET-226 founder-approved artboard: italic ratings and pull-quotes are brand carve-outs.
+    'feedNoteRating',
+    'feedCardRating',
+    'feedQuote',
+    'feedLedgerRating',
 ]);
 
 function italicTypeTokens(themeSource) {
