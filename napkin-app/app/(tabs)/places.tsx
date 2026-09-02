@@ -416,11 +416,14 @@ export default function PlacesScreen() {
             : queryActive
               ? 'results'
               : 'guidance';
+    // The mounted list follows the DEBOUNCED query: a new query remounts the
+    // scroll surface, so it must join the key or a stale offset survives A→B.
+    const contentQueryKey = debouncedQuery.trim().toLowerCase();
     const sheetContentKey = activeSegment === 'lists'
-        ? `lists:${immediateQuery.trim().length < 2 ? 'guidance' : 'results'}`
+        ? `lists:${immediateQuery.trim().length < 2 ? 'guidance' : 'results'}:${contentQueryKey}`
         : activeSegment === 'people'
-          ? `people:${immediateQuery.trim().length === 0 ? 'guidance' : 'results'}`
-          : `places:${placesContentBranch}`;
+          ? `people:${immediateQuery.trim().length === 0 ? 'guidance' : 'results'}:${contentQueryKey}`
+          : `places:${placesContentBranch}:${contentQueryKey}`;
     const currentPins = useMemo(() => projectPlacesPins(filteredRows), [filteredRows]);
     const currentScopeKey = queryActive
         ? `search:${locality === 'auto' ? 'auto' : locality.city.trim().toLowerCase()}:${debouncedQuery.trim().toLowerCase()}`

@@ -144,6 +144,47 @@ describe('SnapSheet content handoff reset', () => {
         expect(sheetRef.current?.currentSnap()).toBe(PEEK);
     });
 
+    it('collapses after a scrolled Lists query is replaced by a new query at the top', () => {
+        const sheetRef = React.createRef<SnapSheetHandle>();
+        const onSettle = jest.fn();
+        let contentContext: SnapSheetContentContext | null = null;
+        const node = (contentKey: string) => (
+            <SnapSheet
+                H={800}
+                initialSnap={FULL}
+                sheetRef={sheetRef}
+                onSettle={onSettle}
+                metrics={PLACES_SNAP_METRICS}
+                contentKey={contentKey}
+                renderContent={(context) => {
+                    contentContext = context;
+                    return React.createElement('ListsResults');
+                }}
+            />
+        );
+        const screen = render(node('lists:results:brat'));
+        onSettle.mockClear();
+
+        act(() => {
+            const onScroll = contentContext!.onScroll as unknown as (
+                event: { contentOffset: { y: number } },
+            ) => void;
+            onScroll({ contentOffset: { y: 400 } });
+        });
+        // Same segment + branch, different debounced query ⇒ the list remounts at the top.
+        screen.rerender(node('lists:results:kiln'));
+
+        const pan = latestListPan();
+        act(() => {
+            pan.onBegin?.();
+            pan.onUpdate?.({ translationY: 100 });
+            pan.onFinalize?.({ velocityY: 2000 });
+        });
+
+        expect(onSettle).toHaveBeenCalledWith(PEEK, 250);
+        expect(sheetRef.current?.currentSnap()).toBe(PEEK);
+    });
+
     it('keeps ListDetailSheet parity when contentKey is omitted', () => {
         const sheetRef = React.createRef<SnapSheetHandle>();
         const onSettle = jest.fn();
