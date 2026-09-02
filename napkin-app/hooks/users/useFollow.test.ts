@@ -98,6 +98,9 @@ describe('useFollow', () => {
         expect(profile?.data?.is_following_viewer).toBe(true);
         expect(profile?.data?.stats?.followers_count).toBe(6);
         expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.pageAll(),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.recentCompanions(VIEWER_ID),
         });
         expect(invalidate).toHaveBeenCalledWith({
@@ -303,6 +306,9 @@ describe('useUnfollow', () => {
         const profile = client.getQueryData<UserProfileResult>(targetKey);
         expect(profile?.data?.is_following_viewer).toBe(false);
         expect(profile?.data?.stats?.followers_count).toBe(5);
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.pageAll(),
+        });
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.recentCompanions(VIEWER_ID),
         });

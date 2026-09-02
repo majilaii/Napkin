@@ -73,6 +73,7 @@ import {
     StartRoundPill,
     AddMemberSheet,
     TableListsBlock,
+    TableLedgerModule,
 } from '@/components/tables';
 import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
@@ -593,6 +594,10 @@ export default function TablesScreen() {
                     {!FRIEND_TEST.hideSuppers && isSocialTable && activeTable && (
                         <UpcomingStrip tableId={activeTable.id} tableName={activeTable.name} />
                     )}
+
+                    {isSocialTable && activeTable && (members?.length ?? 0) >= 2 ? (
+                        <TableLedgerModule viewerId={user?.id} tableId={activeTable.id} />
+                    ) : null}
 
                     {/* Empty-chair invitation — users with a single table, dismissable.
                         Curtained during friend-test as part of the emergence-arc nudge;

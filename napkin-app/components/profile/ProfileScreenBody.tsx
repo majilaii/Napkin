@@ -41,6 +41,7 @@ import { useUpdateProfile } from '@/hooks/users/useUpdateProfile';
 import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
 import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account';
 import { useImportSlot } from '@/hooks/imports/useImportSlot';
+import { deviceTimeZone, ledgerMonthFor, useLedger } from '@/hooks/users/useLedger';
 
 import { ProfileHeader } from './ProfileHeader';
 import { ImportAttentionCard } from './ImportAttentionCard';
@@ -52,9 +53,11 @@ import { TasteSignature } from './TasteSignature';
 import { ListsShelf } from './ListsShelf';
 import { ProfileIndex } from './ProfileIndex';
 import { TablesInCommonSection } from './TablesInCommonSection';
+import { ProfileNapkinsLine } from './ProfileNapkinsLine';
 import { NotFoundState } from './NotFoundState';
 import type { IndexSection } from './ProfileIndex';
 import { useConnectivity } from '@/providers/ConnectivityProvider';
+import { useAuth } from '@/providers/AuthProvider';
 import {
     chooseAndSaveNewProfilePhoto,
     shouldBlockProfilePhotoPicker,
@@ -72,6 +75,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const { user } = useAuth();
 
     const { data: result, isLoading, error, refetch, isRefetching } = useUserProfile(identifier);
 
@@ -84,6 +88,16 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
     const relationship = profileData?.viewer_target_relationship ?? 'none';
     const isSelf = profileData?.is_self ?? false;
     const canChangeProfilePhoto = isSelf && inTab;
+    const ledgerTz = useMemo(() => deviceTimeZone(), []);
+    const ledgerMonth = useMemo(() => ledgerMonthFor(new Date(), ledgerTz), [ledgerTz]);
+    const ledger = useLedger(
+        user?.id,
+        ledgerMonth,
+        ledgerTz,
+        undefined,
+        canChangeProfilePhoto,
+    );
+    const viewerLedgerRow = ledger.data?.rows.find((row) => row.is_viewer) ?? null;
     const hasPalateAccess =
         relationship === 'self' ||
         relationship === 'public_only' ||
@@ -312,6 +326,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                     onRefresh={() => {
                         refetch();
                         refetchSpots();
+                        if (canChangeProfilePhoto) void ledger.refetch();
                     }}
                     tintColor={palette.primary}
                 />
@@ -332,6 +347,17 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
                 isChangingPhoto={canChangeProfilePhoto && profilePhotoWorking}
                 importSlot={isSelf ? importSlot : null}
             />
+
+            {canChangeProfilePhoto && viewerLedgerRow ? (
+                <ProfileNapkinsLine
+                    count={viewerLedgerRow.napkins}
+                    onPress={() => router.push({
+                        pathname: '/ledger',
+                        params: { month: ledgerMonth },
+                    })}
+                    palette={palette}
+                />
+            ) : null}
 
             {/* Imports, above the fold (TICKET-191 rev 2): the card renders ONLY
                 when the slot owes an action; calm states leave the body clean. */}

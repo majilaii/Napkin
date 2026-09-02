@@ -29,5 +29,6 @@ export function invalidateEntryTasteCaches(
     queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(userId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.spots(userId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.taste(userId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(userId) });
     invalidateRestaurantEntryCaches(queryClient, userId, opts?.restaurantId);
 }

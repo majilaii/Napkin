@@ -9,6 +9,10 @@ const mockAlert = jest.fn();
 const mockRefetchProfile = jest.fn();
 const mockRefetchSpots = jest.fn();
 const mockUpdateProfile = jest.fn();
+const mockUseLedger = jest.fn((..._args: unknown[]) => ({
+    data: { rows: [] },
+    refetch: jest.fn(),
+}));
 let mockConnectivityStatus: 'checking' | 'online' | 'offline' = 'online';
 
 const mockProfileResult = {
@@ -84,6 +88,11 @@ jest.mock('@/hooks/users/useUserSpots', () => ({
     useUserSpots: () => ({ data: [], refetch: mockRefetchSpots }),
     deriveTaste: () => ({ topCuisines: [], cityCount: 0, countryCount: 0 }),
 }));
+jest.mock('@/hooks/users/useLedger', () => ({
+    deviceTimeZone: () => 'UTC',
+    ledgerMonthFor: () => '2026-09',
+    useLedger: (...args: unknown[]) => mockUseLedger(...args),
+}));
 jest.mock('@/hooks/account', () => ({
     useReportContent: () => ({ mutate: jest.fn() }),
     useBlockUser: () => ({ mutate: jest.fn() }),
@@ -94,6 +103,9 @@ jest.mock('@/hooks/imports/useImportSlot', () => ({
 }));
 jest.mock('@/providers/ConnectivityProvider', () => ({
     useConnectivity: () => ({ status: mockConnectivityStatus }),
+}));
+jest.mock('@/providers/AuthProvider', () => ({
+    useAuth: () => ({ user: { id: 'viewer-id' } }),
 }));
 jest.mock('@/lib/profilePhoto', () => ({
     chooseAndSaveNewProfilePhoto: jest.fn(),
@@ -121,6 +133,7 @@ jest.mock('../TablesInCommonSection', () => ({
     TablesInCommonSection: 'TablesInCommonSection',
 }));
 jest.mock('../NotFoundState', () => ({ NotFoundState: 'NotFoundState' }));
+jest.mock('../ProfileNapkinsLine', () => ({ ProfileNapkinsLine: 'ProfileNapkinsLine' }));
 
 import { chooseAndSaveNewProfilePhoto } from '@/lib/profilePhoto';
 import { ProfileScreenBody } from '../ProfileScreenBody';
@@ -130,7 +143,6 @@ const mockChooseAndSave = chooseAndSaveNewProfilePhoto as jest.MockedFunction<
 >;
 
 function renderBody(inTab = true) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(
@@ -150,6 +162,7 @@ describe('ProfileScreenBody avatar-swap orchestration', () => {
         mockAlert.mockReset();
         mockChooseAndSave.mockReset();
         mockUpdateProfile.mockReset();
+        mockUseLedger.mockClear();
     });
 
     it('does not expose the swap action on the public profile surface, even for self', () => {
@@ -157,6 +170,8 @@ describe('ProfileScreenBody avatar-swap orchestration', () => {
 
         expect(profileHeader(renderer).props.onChangePhoto).toBeUndefined();
         expect(profileHeader(renderer).props.isChangingPhoto).toBe(false);
+        expect(mockUseLedger).toHaveBeenCalledWith('viewer-id', '2026-09', 'UTC', undefined, false);
+        expect(renderer.root.findAllByType('ProfileNapkinsLine')).toHaveLength(0);
         act(() => renderer.unmount());
     });
 

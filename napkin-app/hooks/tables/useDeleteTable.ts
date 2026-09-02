@@ -56,6 +56,9 @@ export function useDeleteTable(userId: string | null | undefined) {
         onSuccess: (_, { tableId }) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.tables.detail(tableId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.tables.members(tableId) });
+            if (userId) {
+                queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(userId) });
+            }
         },
     });
 }

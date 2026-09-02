@@ -32,6 +32,7 @@ export function useJoinByInvite(userId: string | null | undefined) {
         onSuccess: (result) => {
             if (userId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.tables.list(userId) });
+                queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(userId) });
             }
             queryClient.invalidateQueries({ queryKey: queryKeys.tables.detail(result.table_id) });
             queryClient.invalidateQueries({ queryKey: queryKeys.tables.members(result.table_id) });

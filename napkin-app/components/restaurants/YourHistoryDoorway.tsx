@@ -9,7 +9,6 @@ type Props = {
     visitCount: number;
     onPress: () => void;
     palette: typeof Colors.light;
-    regular?: string | null;
 };
 
 export function shouldShowHistoryDoorway(
@@ -24,7 +23,6 @@ export function YourHistoryDoorway({
     visitCount,
     onPress,
     palette,
-    regular = null,
 }: Props) {
     const visitLabel = `${visitCount} visit${visitCount === 1 ? '' : 's'}`;
     return (
@@ -44,17 +42,6 @@ export function YourHistoryDoorway({
                 </Text>
                 <Ionicons name="chevron-forward" size={18} color={palette.textFaint} />
             </Pressable>
-            {regular ? (
-                <>
-                    <View style={[styles.divider, { backgroundColor: palette.dividerSoft }]} />
-                    <View style={styles.regularRow}>
-                        <Ionicons name="ribbon-outline" size={IconSize.md} color={palette.amberBright} />
-                        <Text style={[Type.metadata, styles.regularCopy, { color: palette.textMuted }]}>
-                            {regular}
-                        </Text>
-                    </View>
-                </>
-            ) : null}
         </View>
     );
 }
@@ -72,13 +59,5 @@ const styles = StyleSheet.create({
         marginTop: Spacing.xs,
     },
     copy: { flex: 1, ...Type.restaurantDoorway },
-    regularRow: {
-        minHeight: Spacing.restaurant.quietActionHeight,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.restaurant.actionGap,
-    },
-    regularCopy: { flex: 1 },
-    divider: { height: StyleSheet.hairlineWidth },
     pressed: { opacity: 0.8 },
 });

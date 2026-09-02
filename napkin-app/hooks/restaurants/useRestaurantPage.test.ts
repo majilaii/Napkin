@@ -47,6 +47,8 @@ function pageData(): RestaurantPageData {
         public_reviews_total: 0,
         self_log: [],
         table_notes: [],
+        regular: null,
+        regular_detail: null,
         distributions: { you: [], your_table: null, napkin: [] },
         distributions_half: { you: [], your_table: null, napkin: [] },
         napkin_aggregate: { average: null, count: 0 },

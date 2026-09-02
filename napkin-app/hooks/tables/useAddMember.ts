@@ -5,6 +5,8 @@
  * upserts a PENDING invitation and notifies the invitee, who must accept
  * (useRespondInvitation) before a table_members row exists. This hook therefore
  * no longer patches tables.detail / tables.members — there is no new member yet.
+ * It invalidates the viewer's ledger prefix so already-member/idempotent results
+ * and the eventual accepted-invitation path cannot leave standings stale.
  *
  * Optimistic patch (mutations.md): snapshot + add the target id to the
  * ['tablePendingInvites', tableId] Set so the AddMemberSheet chip flips to
@@ -23,6 +25,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { pendingInvitesQueryKey } from '@/hooks/tables/usePendingInvitations';
+import { queryKeys } from '@/lib/queryKeys';
 
 export interface AddMemberInput {
     tableId: string;
@@ -71,7 +74,7 @@ interface MutationContext {
     tableId: string;
 }
 
-export function useAddMember(_userId: string | null | undefined) {
+export function useAddMember(userId: string | null | undefined) {
     const queryClient = useQueryClient();
 
     return useMutation<AddMemberResult, AddMemberError, AddMemberInput, MutationContext | undefined>({
@@ -106,6 +109,9 @@ export function useAddMember(_userId: string | null | undefined) {
             // and already_invited both mean a live pending invite exists — keep it.
             if (result.already_member) {
                 queryClient.setQueryData(pendingInvitesQueryKey(tableId), ctx.previous);
+            }
+            if (userId) {
+                queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(userId) });
             }
         },
     });

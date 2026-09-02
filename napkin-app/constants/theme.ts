@@ -222,6 +222,9 @@ export const Spacing = {
   lg: 24,
   xl: 32,
   xxl: 48,
+  hitTarget: 44,
+  pageGutter: 20,
+  saverAvatar: { size: 22, overlap: 6, ring: 1.5 },
   /** Founder-approved compact Friends-feed rhythm (TICKET-226). */
   feed: {
     stackGap: 1,
@@ -466,6 +469,21 @@ export const Type = {
     fontWeight: '500' as const,
     fontFamily: 'Manrope_500Medium',
     lineHeight: 19,
+  } as TextStyle,
+  /** Ledger standings numeral — upright, tabular, never an italic rating. */
+  ledgerValue: {
+    fontSize: 15,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    lineHeight: 20,
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+  /** Upright authored Table name field; italic serif remains rating/quote-only. */
+  tableNameInput: {
+    fontSize: 28,
+    fontWeight: '500' as const,
+    fontFamily: 'Newsreader_500Medium',
+    lineHeight: 34,
   } as TextStyle,
   /** Compact Friends-feed metadata, bylines, and relative timestamps. */
   feedMeta: {

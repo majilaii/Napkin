@@ -1,5 +1,6 @@
 jest.mock('@/providers/AuthProvider', () => ({ useAuth: jest.fn() }));
 jest.mock('@/hooks/wishlist/useTableWishlist', () => ({ useTableWishlist: jest.fn() }));
+jest.mock('../TableWishlistRow', () => ({ TableWishlistRow: 'TableWishlistRow' }));
 // Neither expo-router nor useMyWishlist's transitive supabase import
 // (react-native-url-polyfill) survives the jest transform allowlist — every
 // suite that renders a router/wishlist consumer mocks them locally

@@ -4,7 +4,7 @@
  * ("Editorial masthead", taken forward — handoff 2026-06-30).
  *
  * One calm column: kicker → big serif title → italic one-liner → hairline →
- * Name (underline field + helper) → Invite the table (you·founder chip, search
+ * Name (underline field + helper) → Invite (you·founder chip, search
  * row, invite-by-link) → a confident terracotta "Create table" CTA.
  *
  * Backend: useCreateTable creates the table (creator auto-added as admin), then
@@ -40,7 +40,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
-import { Colors } from '@/constants/theme';
+import { Colors, IconSize, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
@@ -50,6 +50,10 @@ import { useCreateInvite } from '@/hooks/tables/useCreateInvite';
 import { TESTFLIGHT_INVITE_URL } from '@/constants/links';
 import { useUserSearch, type UserSearchResult } from '@/hooks/users/useUserSearch';
 import { Avatar } from '@/components/feed/Avatar';
+import {
+    CREATE_TABLE_COPY,
+    CREATE_TABLE_NAME_TYPE,
+} from '@/components/tables/createTablePresentation';
 
 type Palette = typeof Colors.light;
 
@@ -203,9 +207,15 @@ export default function CreateTableScreen() {
                 automaticallyAdjustKeyboardInsets
                 showsVerticalScrollIndicator={false}
             >
-                {/* Cancel */}
-                <Pressable onPress={() => router.back()} hitSlop={8} accessibilityRole="button" accessibilityLabel="Cancel">
-                    <Text style={[styles.cancel, { color: palette.textMuted }]}>Cancel</Text>
+                {/* Back */}
+                <Pressable
+                    onPress={() => router.back()}
+                    hitSlop={8}
+                    style={styles.backAction}
+                    accessibilityRole="button"
+                    accessibilityLabel="Back"
+                >
+                    <Ionicons name="chevron-back" size={IconSize.lg} color={palette.text} />
                 </Pressable>
 
                 {/* Name */}
@@ -225,7 +235,7 @@ export default function CreateTableScreen() {
                             onBlur={() => setNameFocused(false)}
                             placeholder="Sunday Roast Club"
                             placeholderTextColor={palette.textMuted}
-                            style={[styles.nameInput, { color: palette.text }]}
+                            style={[CREATE_TABLE_NAME_TYPE, styles.nameInput, { color: palette.text }]}
                             selectionColor={palette.primary}
                             returnKeyType="done"
                             maxLength={60}
@@ -233,11 +243,12 @@ export default function CreateTableScreen() {
                     </View>
                 </View>
 
-                {/* Invite the table */}
+                {/* Invite */}
                 <View style={styles.inviteSection}>
                     <View style={styles.inviteHeaderRow}>
-                        <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>Invite the table</Text>
-                        <Text style={[styles.optional, { color: palette.textMuted }]}>· optional</Text>
+                        <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>
+                            {CREATE_TABLE_COPY.inviteLabel}
+                        </Text>
                     </View>
 
                     {/* you · founder + any added members */}
@@ -308,9 +319,8 @@ export default function CreateTableScreen() {
                         ) : (
                             <View style={styles.centerBlock}>
                                 <Ionicons name="person-outline" size={32} color={palette.textMuted} style={{ opacity: 0.5 }} />
-                                <Text style={[styles.emptyTitle, { color: palette.text }]}>no one to invite yet</Text>
-                                <Text style={[styles.emptyBody, { color: palette.textMuted }]}>
-                                    create now — invite them once they follow you back.
+                                <Text style={[Type.metadata, styles.emptyLine, { color: palette.textMuted }]}>
+                                    {CREATE_TABLE_COPY.emptyMutuals}
                                 </Text>
                             </View>
                         )
@@ -449,7 +459,12 @@ const styles = StyleSheet.create({
     handleWrap: { alignItems: 'center', paddingTop: 9, paddingBottom: 2 },
     handle: { width: 36, height: 5, borderRadius: 9999 },
 
-    cancel: { fontFamily: 'Manrope_500Medium', fontSize: 15, paddingVertical: 4 },
+    backAction: {
+        width: Spacing.hitTarget,
+        minHeight: Spacing.hitTarget,
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+    },
 
     // Shared field label
     fieldLabel: {
@@ -463,15 +478,11 @@ const styles = StyleSheet.create({
     nameSection: { paddingTop: 24 },
     nameUnderline: { borderBottomWidth: 2, paddingBottom: 9, marginTop: 12 },
     nameInput: {
-        fontFamily: 'Newsreader_500Medium_Italic',
-        fontSize: 26,
-        lineHeight: 31,
         padding: 0,
     },
     // Invite
     inviteSection: { paddingTop: 28 },
     inviteHeaderRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-    optional: { fontFamily: 'Manrope_400Regular', fontSize: 12 },
 
     chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
     chip: {
@@ -509,8 +520,7 @@ const styles = StyleSheet.create({
     addedText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
 
     centerBlock: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 28 },
-    emptyTitle: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 20, lineHeight: 26, marginTop: 14 },
-    emptyBody: { fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 21, textAlign: 'center', marginTop: 9, maxWidth: 250 },
+    emptyLine: { textAlign: 'center', marginTop: Spacing.sm },
 
     // Invite by link
     linkRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 20 },

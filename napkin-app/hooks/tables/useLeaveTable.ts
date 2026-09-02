@@ -60,6 +60,9 @@ export function useLeaveTable(userId: string | null | undefined) {
             // the user navigates back via deeplink.
             queryClient.invalidateQueries({ queryKey: queryKeys.tables.detail(tableId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.tables.members(tableId) });
+            if (userId) {
+                queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(userId) });
+            }
         },
     });
 }

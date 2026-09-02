@@ -29,7 +29,7 @@ Reading screens, switching local tabs/filters, opening and dismissing sheets, mo
 ### Shell and route-count conventions
 
 - Five layout modules shape navigation but are not counted as pages: `app/_layout.tsx`, `app/(tabs)/_layout.tsx`, `app/admin/_layout.tsx`, `app/onboarding/_layout.tsx`, and `app/settings/_layout.tsx`.
-- There are **70 default-export `.tsx` modules** under `app/`: five layouts plus **65 route modules** (64 intended pages and the accidentally routable `/onboarding/OnboardingProgress` support component).
+- There are **71 default-export `.tsx` modules** under `app/`: five layouts plus **66 route modules** (65 intended pages and the accidentally routable `/onboarding/OnboardingProgress` support component).
 - `app/onboarding/OnboardingDraftContext.tsx` and `app/onboarding/styles.ts` are support modules, not routes.
 - Root Stack configuration mentions `/day/[date]`, but no `app/day/[date].tsx` exists (`app/_layout.tsx`); it is a dangling registration, not a drivable route.
 - The custom signed-in navigation is `app/_layout.tsx::BottomNavBar`: **FEED · TABLE · PLACES · PROFILE**. Expo's built-in tab bar is hidden in `app/(tabs)/_layout.tsx`; `/wishlist` and the legacy `/search` redirect both mark PLACES active.
@@ -46,10 +46,10 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 | `/feed` | `napkin-app/app/(tabs)/feed.tsx` | `useFriendsFeed`, `useSocials`, `useFollowCandidates`, `useBrowsePublicLists` | `feed-friends` / `fn_friends_feed`; `feed-socials`; `user-profile`; `lists` | `entries`, `entry_photos`, `post_reactions`, `profiles`, `restaurants`, `clip_thumbs`, `lists`, `list_entries`, `follows` |
 | `/journal` | `napkin-app/app/(tabs)/journal.tsx` | `useMySoloEntries`, `useUnreadCount` | RPC `fn_my_solo_entries`; EF `notifications` | `entries`, `entry_tables`, `restaurants`, `profiles`, `notifications` |
 | `/log` | `napkin-app/app/(tabs)/log.tsx` | none; blank legacy placeholder | — | — |
-| `/profile` | `napkin-app/app/(tabs)/profile.tsx` → `components/profile/ProfileScreenBody.tsx` | `useUserProfile`, `useUserSpots`, list and import hooks | `user-profile`, `lists`, `wishlist` | `profiles`, `entries`, `entry_photos`, `follows`, `lists`, `list_entries`, `table_members`, `tables`, `user_top_4`, `user_profile_takes`, `import_jobs` |
+| `/profile` | `napkin-app/app/(tabs)/profile.tsx` → `components/profile/ProfileScreenBody.tsx` | `useUserProfile`, `useUserSpots`, `useLedger`, list and import hooks | `user-profile`, `lists`, `wishlist`; RPC `fn_visible_entry_ids` | `profiles`, `entries`, `entry_photos`, `follows`, `lists`, `list_entries`, `table_members`, `tables`, `user_top_4`, `user_profile_takes`, `import_jobs` |
 | `/places` | `napkin-app/app/(tabs)/places.tsx` | `useRestaurantSearch`, `useMyWishlist`, `useUserSpots`, `useMyLists`, `useUserSearch`, `useSearchPublicLists`, `useSearchLocality`; `placesScreenState` | `places-search`, `restaurant-history?action=search`, `wishlist`, `user-profile`, `lists`; RPC `fn_visible_entry_ids` | `restaurants`, `entries`, `profiles`, `follows`, `wishlist_items`, `lists`, `list_entries` |
 | `/search` | `napkin-app/app/(tabs)/search.tsx` | param-preserving `Redirect` (`q`, `mode`) to `/(tabs)/places` | — | — |
-| `/tables` | `napkin-app/app/(tabs)/tables.tsx` | `useTables`, `useTableActivity`, `useTableAtlas`, `useTableMembers`, `useTableTopFour` | `table-management`, `table-activity`, `table-atlas` | `tables`, `table_members`, `entries`, `entry_photos`, `restaurants`, `profiles`, `suppers`, `supper_members`, `gatherings`, `gathering_rsvps`, `table_shares`, `wishlist_items`, `user_top_4`, legacy `table_nights` |
+| `/tables` | `napkin-app/app/(tabs)/tables.tsx` | `useTables`, `useTableActivity`, `useTableAtlas`, `useTableMembers`, `useTableTopFour`, `TableLedgerModule` → `useLedger` | `table-management`, `table-activity`, `table-atlas`, `user-profile?action=ledger` | `tables`, `table_members`, `entries`, `entry_photos`, `restaurants`, `profiles`, `suppers`, `supper_members`, `gatherings`, `gathering_rsvps`, `table_shares`, `wishlist_items`, `user_top_4`, `blocked_users`, legacy `table_nights` |
 | `/wishlist` | `napkin-app/app/wishlist.tsx` | `useMyWishlist`, `useUserSpots`, `useNetworkMapPins`, `useTablesOverlap`, `useTables`, list/import hooks | `wishlist`, `user-profile`, `lists`, `table-management`, `places-search` | `wishlist_items`, `entries`, `restaurants`, `profiles`, `follows`, `lists`, `list_entries`, `table_members`, `tables`, `import_jobs`, `list_imports` |
 
 ### Auth and onboarding
@@ -75,6 +75,7 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 | `/reviews` | `napkin-app/app/reviews.tsx` | `useUserReviews` | `user-profile?action=reviews` | `entries`, `entry_photos`, `profiles`, `restaurants` |
 | `/spots` | `napkin-app/app/spots.tsx` | `useUserSpots` | `user-profile?action=spots` | `entries`, `profiles`, `restaurants` |
 | `/taste` | `napkin-app/app/taste.tsx` | `useUserTaste`, `useUserSpots` | `user-profile?action=taste/spots` | `entries`, `profiles`, `restaurants` |
+| `/ledger` | `napkin-app/app/ledger.tsx` → `components/ledger/LedgerScreen.tsx` | `useLedger` (`users.ledger(viewer, month, tz, tableId?)`) | `user-profile?action=ledger`; RPC `fn_visible_entry_ids` | `follows`, `profiles`, `tables`, `table_members`, `entries`, `entry_tables`, `entry_companions`, `supper_members`, `blocked_users` |
 | `/top-fours` | `napkin-app/app/top-fours.tsx` | `useTopFours` and top-four editor hooks | `top-fours` | `user_top_4`, `user_top_4_history`, `user_claimed_cities`, `user_claim_nudge`, `entries`, `entry_photos`, `profiles`, `restaurants` |
 | `/follows` | `napkin-app/app/follows.tsx` | `useFollowList`; `FollowButton` → `useFollow` | `user-profile?action=followers/following/follow` | `profiles`, `follows`, `blocked_users` |
 | `/member/[userId]` | `napkin-app/app/member/[userId].tsx` | member-profile query | `member-profile` | `profiles`, `entries`, `table_members`, legacy `table_nights` |
@@ -87,7 +88,7 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 
 | Route | Component file | Feeding hook(s) / client | EF / RPC | Backing tables |
 |---|---|---|---|---|
-| `/create-table` | `napkin-app/app/create-table.tsx` | `useCreateTable`, `useAddMember`, `useCreateInvite`, user search | `table-management`, `user-profile` | `tables`, `table_members`, `table_invites`, `table_invitations`, `profiles`, `follows` |
+| `/create-table` | `napkin-app/app/create-table.tsx` | `useCreateTable`, `useAddMember`, `useCreateInvite`, mutual-only user search | `table-management`, `user-profile` | `tables`, `table_members`, `table_invites`, `table_invitations`, `profiles`, `follows` |
 | `/join-table` | `napkin-app/app/join-table.tsx` | `useJoinByInvite` | `table-management` | `table_invites`, `tables`, `table_members` |
 | `/table/[id]/settings` | `napkin-app/app/table/[id]/settings.tsx` | `useTables`, member query, update/leave/delete hooks | `table-management` | `tables`, `table_members`, `table_invites`, `table_invitations` |
 | `/table/[id]/atlas/[city]` | `napkin-app/app/table/[id]/atlas/[city].tsx` | table atlas and member hooks | `table-atlas` | `entries`, `entry_photos`, `profiles`, `restaurants`, `tables`, `table_members`, `suppers`, `supper_members`, legacy `table_nights` |
@@ -102,6 +103,10 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 Entry companion pickers list mutual follows only. Search uses `user-profile?action=search` with `mutual_only=true` and suppresses non-mutual rows; the recent row uses `user-profile?action=recent_companions`, which rechecks current mutual-follow and either-direction block state before hydration.
 
 `/table-night` and `/table-night-detail` are retained code, not live product surfaces. The live group-meal model is Supper: `supper_id` clusters individual entries (`supabase/functions/entry/index.ts`, `hooks/suppers/index.ts`). Do not resurrect round UI when changing Tables.
+
+- On a social Table with at least two current members, `TableLedgerModule` sits in Activity after `UpcomingStrip` and before invitations/feed content. Loading, query error, and an all-zero response are deliberately hidden with no spacer; populated state shows the first three rows and a trailing viewer rank when needed. The whole module opens `/ledger?tableId=` while leaving each trio member's summary available to accessibility readers.
+- The Table Wishlist row and its `/table-map` consumer show up to three overlapping 22pt saver avatars and `+N` beyond three. One saver is one avatar with no count label; the numeric pill no longer exists.
+- `/create-table` uses the standard back chevron, an upright 28/34 Newsreader Table-name field, `Invite`, and the single-line `no mutual follows yet` empty result. The enabled-without-invites CTA and mutation behavior are unchanged.
 
 ### Lists, handoffs, notifications, and imports
 
@@ -183,7 +188,7 @@ Source: `app/entry-detail.tsx`, `lib/screenLoadState.ts`.
 
 ### Restaurant page sections
 
-Source: `app/restaurant/[id].tsx`, `app/restaurant-history.tsx`, `components/restaurants/MemoriesStrip.tsx`, `components/restaurants/RestaurantHistoryRows.tsx`, `components/restaurants/RestaurantPageV3.tsx`, `components/restaurants/YourHistoryDoorway.tsx`, `hooks/restaurants/useRestaurantPage.ts`.
+Source: `app/restaurant/[id].tsx`, `app/restaurant-history.tsx`, `components/restaurants/MemoriesStrip.tsx`, `components/restaurants/RestaurantHistoryRows.tsx`, `components/restaurants/RestaurantPageV3.tsx`, `components/restaurants/YourHistoryDoorway.tsx`, `components/restaurants/RestaurantRegularRow.tsx`, `hooks/restaurants/useRestaurantPage.ts`.
 
 - A persisted restaurant starts with a loading treatment. A Places payload/lookup can synthesize a ghost identity before a canonical row exists. Failure before identity exists shows the escaped “could not load this restaurant” shell with back + retry; a resolved `restaurant:null` is broken-empty, never blank paper.
 - Cold success collapses to plain masthead, an authorized memories strip when available, the three-tier numbers band (Google may be the only numeral), actions, and real Places details. There is deliberately no `MapHero`, Places venue photo, tag strip, relationship sentence, bottom dock, or set-a-table action.
@@ -191,23 +196,35 @@ Source: `app/restaurant/[id].tsx`, `app/restaurant-history.tsx`, `components/res
 - YOU comes from `personal.average`; its visit count comes from `self_log.length`, with `personal.visit_count` used only when an older server omits `self_log`. FRIENDS comes only from followee `public_reviews` deduped by author; GOOGLE remains a labelled external 0–5 value. The friend spread derives from the same followee cohort and is intended-empty below three people.
 - `FROM FRIENDS` renders at most two followee public notes and opens `/restaurant-reviews`; with public reviews but no followee cards it collapses to one `REVIEWS · all N reviews` doorway row. `FROM <TABLE>` renders at most two rows from one authorized `table_notes` share-edge group and opens `/(tabs)/tables?selected=&section=activity`. Table-note authors must be current members of that exact shared Table; the rings never cross-feed.
 - The history doorway is intended-empty when a resolved `self_log` is empty or the restaurant is a ghost. When an older server omits `self_log`, its compatible `personal.visit_count` controls the page count and doorway gate. Warm scoped and unscoped arrivals reuse the exact `restaurants.page(id, tableId?)` cache; a cold `/restaurant-history?id=` deep link shows loading, then the ledger, and its back control replaces to the restaurant when no parent exists. Query error without cache is broken-empty (`ErrorState` + retry); a warm refetch error keeps cached content and shows a one-line retry state on both screens.
+- The amber `RestaurantRegularRow` follows the history-doorway slot but is not inside its gate: a followee can hold the rolling-90-day crown when the viewer has no visit here. It is hidden when `regular_detail` is null; crown-read failures are non-fatal and suppress only this row, never the core restaurant page. Eligible meals are rated restaurant entries; cohort filtering precedes the shared visibility RPC, so public strangers and unauthorized private logs never affect the crown while authorized Table/companion/Supper rows can.
 - `/restaurant-history` renders every viewer-authored visit as a paper-level row, including unrated, non-host, revealed, and closed legacy takes. Rows keep full notes, optional companions, and 96pt photo layouts (one/two squares or a three-up fill with `+N` on overflow), separated only by `dividerSoft`; there is no card fill or shadow. A resolved empty `self_log` is an intended empty invitation; an omitted legacy-server projection shows the degraded inline retry state and never fabricates an empty ledger. `table_notes` follows the same optional-projection rule, so omission hides the section. `ELSEWHERE` is intended-empty unless a pin, containing list, or self clipping exists. It is read-only: row navigation and list doorways mutate nothing.
 - Featured lists, social clips, Table atlas context, hours, phone, website, and reserve are conditional real-data sections. Reserve is hidden until the lazy resolver yields a real booking page. Hours make an `open until` claim only with `place_details.open_now === true`; otherwise Details uses the weekday line. On Socials keeps its rail behavior under the shared left-kicker heading. The Tables `section=activity` arrival is consumed once per stable navigation params object; later pane/Table changes stay selected, while a new params object re-applies and omitting `section` preserves the current pane.
 
 ### Profile sections
 
-Source: `components/profile/ProfileScreenBody.tsx`, `hooks/users/useUserProfile.ts`, `hooks/users/useUserSpots.ts`, `supabase/functions/user-profile/index.ts`.
+Source: `components/profile/ProfileScreenBody.tsx`, `components/profile/ProfileNapkinsLine.tsx`, `hooks/users/useUserProfile.ts`, `hooks/users/useUserSpots.ts`, `hooks/users/useLedger.ts`, `supabase/functions/user-profile/index.ts`.
 
 - Missing route identity or initial load: spinner. Query error: “Couldn't load”. `isNotFound`: not-found page.
 - `blocked_by_viewer`: blocked-user stub with an unblock doorway. This is not a missing profile.
 - `private_stub`: identity, relationship controls, and allowed counts remain; journal/palate content is withheld with a private-account message.
 - Normal self/public profile: identity header plus conditional palate, top-four, quick-take, list, activity, and spot sections.
+- The monthly napkins line is rendered and fetched only for `isSelf && inTab`; its cache key uses the authenticated viewer id. `/u/[identifier]` neither paints nor enables the ledger query. It opens the friends-scoped `/ledger` one level down from Profile.
 - Self with zero logs: cold-start nudge. Empty top fours, quick takes, lists, or imports are omitted by their array/gate logic; imports are self-only and appear when an action is owed.
 - Intended empty is an explicit server state (`private_stub`, `blocked_by_viewer`, `isNotFound`) or successful empty section array. Broken empty is `isError`, an unresolved identity, or a section request that failed while the main profile stayed cached.
 
+### The ledger
+
+Source: `app/ledger.tsx`, `components/ledger/LedgerScreen.tsx`, `hooks/users/useLedger.ts`, `supabase/functions/_shared/ledger.ts`, `supabase/functions/user-profile/index.ts`.
+
+- Friends scope is the viewer plus their 500 most-recently-followed accounts (maximum cohort 501). This implementation cap is intentionally not on-screen copy.
+- Table scope is the 500 most-recent current members by `joined_at`; it is entered only from a Table doorway. Membership is checked after month/time-zone validation and before candidate reads; non-members receive structured `NOT_A_MEMBER` 403. Private solo entries remain invisible while entries shared through an authorized Table/companion/Supper scope can survive the same gate.
+- Month and IANA time zone are required. The server derives half-open local-month bounds; past months snapshot at month end, the current month ends at now, and future months return structured `FUTURE_MONTH` 400.
+- Every meal, crown-window, and new-place lookback read uses separate paginated `visited_at` and null-`visited_at`/`created_at` branches. Cohort filtering happens before one deduplicated visibility pass over all non-self candidates; self rows bypass RPC. Meals, visible-first new places, and crowns are aggregated only after that gate.
+- The masthead kicker identifies only `FRIENDS` or the Table name; the picker owns the single month label and there is no scope toggle. The month arrows move one calendar month, refresh their future gate when the route regains focus, and use 44pt hit targets. A friends ring with no followees shows `follow a few friends and the ledger fills itself`; loading and error remain distinct states. Rows are read-only, ranked, virtualized through `FlatList`, and the viewer row alone uses `primaryMuted`.
+
 ### Wishlist and Map
 
-Source: `app/wishlist.tsx`, `components/wishlist/WishlistMapView.tsx`, `components/wishlist/WishlistGrid.tsx`, `hooks/wishlist/useMyWishlist.ts`, `hooks/users/useUserSpots.ts`, `hooks/users/useNetworkMapPins.ts`, `hooks/wishlist/useTablesOverlap.ts`.
+Source: `app/wishlist.tsx`, `app/table-map.tsx`, `components/wishlist/WishlistMapView.tsx`, `components/wishlist/WishlistGrid.tsx`, `components/wishlist/TableWishlistRow.tsx`, `hooks/wishlist/useMyWishlist.ts`, `hooks/users/useUserSpots.ts`, `hooks/users/useNetworkMapPins.ts`, `hooks/wishlist/useTablesOverlap.ts`.
 
 The former bottom-nav Map item is superseded by Places. `/wishlist` remains a supported direct/deep-link workspace and still uses its existing Saved/Been/Network behavior; the four-item bar marks PLACES active there.
 

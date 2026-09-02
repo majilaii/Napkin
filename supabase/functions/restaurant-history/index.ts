@@ -39,7 +39,12 @@ import { isInstagramUrl } from '../_shared/socialHost.ts';
 // SAME normalizer the capture action and backfill import, so read/capture/
 // backfill keys never diverge.
 import { contentKey } from '../_shared/videoUrlKey.ts';
-import { loadVisibleEntryIds } from './entryVisibility.ts';
+import { loadVisibleEntryIds } from '../_shared/entryVisibility.ts';
+import {
+    createSupabaseLedgerReader,
+    loadRestaurantRegularNonFatal,
+    type RegularDetail,
+} from '../_shared/ledger.ts';
 import { enrichSearchRows } from './searchProjection.ts';
 import { isPeekCardContext, loadPeekCard } from './peekCard.ts';
 import {
@@ -162,6 +167,10 @@ type RestaurantPageData = {
     public_reviews_total: number;
     self_log: SelfLogRow[];
     table_notes: TableNoteRow[];
+    /** Compatibility display string for installed clients. */
+    regular: string | null;
+    /** Structured rolling-90-day friends crown for current clients. */
+    regular_detail: RegularDetail | null;
     // v3 additions
     distributions: {
         you: number[];
@@ -1038,6 +1047,8 @@ serve(async (req) => {
                         public_reviews_total: 0,
                         self_log: [],
                         table_notes: [],
+                        regular: null,
+                        regular_detail: null,
                         distributions: emptyDistributions,
                         distributions_half: emptyHalfDistributions,
                         napkin_aggregate: { average: null, count: 0 },
@@ -1162,13 +1173,18 @@ serve(async (req) => {
             // by authorship/participation. `table_notes` starts from real
             // entry_tables share edges and applies fn_visible_entry_ids before
             // projecting any note or author data.
-            const [selfLog, tableNotes] = await Promise.all([
+            const [selfLog, tableNotes, regularSnapshot] = await Promise.all([
                 loadSelfLog(supabase, user.id, resolvedRestaurantId),
                 loadTableNotes(
                     supabase,
                     user.id,
                     resolvedRestaurantId,
                     sharedMembershipPairs,
+                ),
+                loadRestaurantRegularNonFatal(
+                    createSupabaseLedgerReader(supabase),
+                    user.id,
+                    resolvedRestaurantId,
                 ),
             ]);
 
@@ -1590,6 +1606,8 @@ serve(async (req) => {
                     visit_count: visitsRaw.length,
                     public_reviews: publicReviews,
                     public_reviews_total: publicReviewsTotal,
+                    regular: regularSnapshot.data.regular,
+                    regular_detail: regularSnapshot.data.regular_detail,
                     distributions: {
                         you: youDist,
                         your_table: yourTableDist,

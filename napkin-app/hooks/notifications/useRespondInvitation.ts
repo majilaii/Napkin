@@ -84,6 +84,9 @@ export function useRespondInvitation(userId: string | null | undefined) {
             // invalidate: the new membership is server-derived — the tables list
             // row (name / owner / role / counts) can't be synthesised client-side.
             qc.invalidateQueries({ queryKey: queryKeys.tables.list(userId ?? '') });
+            if (userId) {
+                qc.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(userId) });
+            }
             if (tableId) {
                 // invalidate: member join display data (avatars, roles) is a
                 // server join not present in the respond_invitation response.

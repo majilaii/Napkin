@@ -1,7 +1,7 @@
 import {
     loadVisibleEntryIds,
     type EntryVisibilityRpcClient,
-} from './entryVisibility.ts';
+} from '../_shared/entryVisibility.ts';
 
 export type SearchRating = {
     tier: 'you' | 'friends' | 'google';
