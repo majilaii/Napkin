@@ -28,7 +28,10 @@ export interface ExhaustedResponse {
     has_more?: boolean;
 }
 
-export function useExhaustedCompletenessItems(userId: string | null | undefined) {
+export function useExhaustedCompletenessItems(
+    userId: string | null | undefined,
+    { pollMs = 15_000 }: { pollMs?: number } = {},
+) {
     const query = useInfiniteQuery<ExhaustedResponse, Error>({
         queryKey: queryKeys.completeness.exhausted(userId ?? 'signed-out'),
         enabled: !!userId,
@@ -42,7 +45,7 @@ export function useExhaustedCompletenessItems(userId: string | null | undefined)
         initialPageParam: null as string | null,
         getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
         staleTime: 15_000,
-        refetchInterval: 15_000,
+        refetchInterval: pollMs,
     });
     return {
         ...query,

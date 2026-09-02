@@ -18,6 +18,9 @@ module.exports = {
 
     // Module resolution
     moduleNameMapper: {
+        // The real media-extract imports the native 'expo' package at module
+        // top level, which the jest environment cannot evaluate (__DEV__).
+        '^@/modules/media-extract$': '<rootDir>/__mocks__/mediaExtract.js',
         '^@/(.*)$': '<rootDir>/$1',
     },
 

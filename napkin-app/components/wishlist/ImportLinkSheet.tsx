@@ -133,6 +133,8 @@ interface InlineSearchResult {
 export interface ImportLinkSheetProps {
     visible: boolean;
     onDismiss: () => void;
+    /** Additive launcher hint; existing callers keep the full source menu. */
+    openTo?: 'menu' | 'video';
     /**
      * When set, the sheet skips the paste step and jumps directly to the
      * 'loading' state with this URL pre-resolved. Used by the iOS share
@@ -158,7 +160,14 @@ type Palette = typeof Colors.light;
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportNonce, initialVideoPath }: ImportLinkSheetProps) {
+export function ImportLinkSheet({
+    visible,
+    onDismiss,
+    openTo = 'menu',
+    initialUrl,
+    initialImportNonce,
+    initialVideoPath,
+}: ImportLinkSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const insets = useSafeAreaInsets();
@@ -784,6 +793,23 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
         }
         if (!visible) videoStartedRef.current = false;
     }, [visible, initialVideoPath, runVideoExtraction]);
+
+    // TICKET-230: the Places tray can launch the existing saved-video path
+    // directly. This stays additive: every existing caller defaults to `menu`.
+    const openToStartedRef = useRef(false);
+    useEffect(() => {
+        if (
+            visible &&
+            openTo === 'video' &&
+            !initialUrl &&
+            !initialVideoPath &&
+            !openToStartedRef.current
+        ) {
+            openToStartedRef.current = true;
+            if (VIDEO_IMPORT_AVAILABLE) void handlePickVideo();
+        }
+        if (!visible) openToStartedRef.current = false;
+    }, [handlePickVideo, initialUrl, initialVideoPath, openTo, visible]);
 
     // TICKET-060: handle destination confirm (async capture fan-out)
     const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
