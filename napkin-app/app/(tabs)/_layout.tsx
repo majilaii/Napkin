@@ -7,11 +7,11 @@ import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 /**
- * TICKET-069: Skinny-five tab layout.
+ * TICKET-228: four-tab layout — FEED · TABLE · PLACES · PROFILE.
  * TICKET-070: IA update — Profile replaces Journal in the nav.
  *   - profile: activated (href: null removed)
  *   - journal: demoted to hidden (deep-link safe; no longer a tab button)
- *   - wishlist: still a Stack route (BottomNavBar points to /wishlist)
+ *   - wishlist: still a reachable Stack route and marks Places active
  *
  * The built-in tab bar is HIDDEN (`display: 'none'`) — navigation is handled
  * entirely by the custom BottomNavBar in `app/_layout.tsx`.
@@ -21,7 +21,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
  * Active routes (appear in BottomNavBar):
  *   - feed     (Feed tab — TICKET-098 friends feed + trending rail, leftmost)
  *   - tables   (Table tab)
- *   - search   (Search tab)
+ *   - places   (Places tab)
  *   - profile  (Profile tab — TICKET-070)
  *
  * Hidden routes (preserved for deep-link safety):
@@ -65,11 +65,11 @@ export default function TabsLayout() {
                 }}
             />
             <Tabs.Screen
-                name="search"
+                name="places"
                 options={{
-                    title: 'Search',
+                    title: 'Places',
                     tabBarIcon: ({ color, size }) => (
-                        <Ionicons name="search-outline" size={size} color={color} />
+                        <Ionicons name="location-outline" size={size} color={color} />
                     ),
                 }}
             />
@@ -85,6 +85,10 @@ export default function TabsLayout() {
 
             {/* === Hidden routes — preserved for deep-link safety === */}
             {/* journal: demoted from tab in TICKET-070; /journal still reachable */}
+            <Tabs.Screen
+                name="search"
+                options={{ href: null }}
+            />
             <Tabs.Screen
                 name="journal"
                 options={{ href: null }}

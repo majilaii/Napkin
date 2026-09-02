@@ -17,11 +17,11 @@ export const PHOTO_SKU = "places_photo" as const;
 export const FROZEN_ATTESTATION_FIELD_MASK =
   "displayName,location,addressComponents,formattedAddress,photos.name,photos.authorAttributions,rating,userRatingCount,priceLevel,types,primaryType,websiteUri,googleMapsUri,nationalPhoneNumber,regularOpeningHours";
 
-// Text Search returns only the evidence required by the deferred scorer. Hero
-// metadata and coordinates are deliberately re-derived at the Details choke
-// point above, where the single-flight attestation lease lives.
+// SKU check recorded 2026-09-02 against Google's Text Search (New) field table:
+// addressComponents and location both trigger Text Search Pro. Adding location
+// therefore does not raise the request's SKU tier or add a second paid call.
 export const FROZEN_DEFERRED_TEXT_SEARCH_FIELD_MASK =
-  "places.id,places.displayName,places.formattedAddress,places.addressComponents,places.types,places.primaryType";
+  "places.id,places.displayName,places.formattedAddress,places.addressComponents,places.location,places.types,places.primaryType";
 
 export const PLACE_DETAILS_ENDPOINT =
   "https://places.googleapis.com/v1/places/";

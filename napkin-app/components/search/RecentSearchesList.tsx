@@ -35,7 +35,6 @@ export function RecentSearchesList({ queries, onSelect, onClear }: Props) {
                     key={q}
                     style={({ pressed }) => [
                         styles.row,
-                        { borderBottomColor: palette.divider },
                         pressed && { backgroundColor: palette.surfaceContainer },
                     ]}
                     onPress={() => onSelect(q)}
@@ -59,7 +58,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: Spacing.md,
         paddingVertical: Spacing.sm + 2,
-        borderBottomWidth: StyleSheet.hairlineWidth,
         gap: Spacing.sm,
     },
     queryText: {

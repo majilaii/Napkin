@@ -265,12 +265,12 @@ export function PublicListsBrowseBlock({ lists }: { lists: PublicListResult[] })
                 </ScrollView>
             )}
             <PressableScale
-                onPress={() => router.push({ pathname: '/(tabs)/search', params: { mode: 'lists' } })}
+                onPress={() => router.push({ pathname: '/(tabs)/places', params: { mode: 'lists' } })}
                 style={styles.browseAll}
                 accessibilityRole="button"
-                accessibilityLabel="Browse all public lists"
+                accessibilityLabel="Search public lists"
             >
-                <Text style={[styles.browseAllText, { color: palette.primary }]}>browse all lists</Text>
+                <Text style={[styles.browseAllText, { color: palette.primary }]}>search lists</Text>
             </PressableScale>
         </View>
     );

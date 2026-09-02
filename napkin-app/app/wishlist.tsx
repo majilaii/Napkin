@@ -1149,7 +1149,7 @@ export default function WishlistScreen() {
                             <WishlistEmptyState
                                 palette={palette}
                                 onImport={() => setImportSheetVisible(true)}
-                                onSearch={() => router.push('/search' as any)}
+                                onSearch={() => router.push('/(tabs)/places' as any)}
                                 hasImported={hasImported}
                                 onImportsHub={() => router.push('/import-progress' as any)}
                             />

@@ -84,23 +84,13 @@ if (!(globalThis as { __napkinFatalHook?: boolean }).__napkinFatalHook) {
  * (founder-requested 2026-07-07 — supersedes the edge-to-edge opaque bar of
  * 2026-07-02 for the container only).
  *
- * 5 tabs: Feed · Table · Search · Wishlist · Profile
- * Icons: 21px outline + labels — SAME icons, SAME labels, SAME routes/handlers
- * as before the pill (items are untouched; only the container changed).
- * Journal exits the nav (route stays alive for deep links). Post-auth redirect
- * stays `/wishlist`.
+ * 4 tabs: FEED · TABLE · PLACES · PROFILE. Outline icons are 24px and
+ * labels stay uppercase. Search + Map collapse into the Places surface.
  *
- * ARCHITECT-REVIEW: TICKET-130 §7 specs a terracotta `+` button (46×46,
- * marginTop −20) for the pill, but the nav has had NO `+` since TICKET-069
- * (skinny five: FAB dead — LogSheet on the restaurant page is the sole write
- * path). Adding one would invent a new route/handler, contradicting the same
- * ticket's "SAME routes/badges/handlers" constraint, so the pill ships with
- * the 5 existing tabs only. If the founder wants the `+` back, a follow-up
- * must spec what it opens.
+ * No floating `+`; LogSheet on restaurant detail remains the write doorway.
  *
- * Wishlist routing: points to the existing Stack route `app/wishlist.tsx`
- * (`/wishlist`). inTabs includes `segments[0] === 'wishlist'` so the bar
- * remains visible there.
+ * The existing `/wishlist` Stack route remains deep-link safe. inTabs includes
+ * it so the bar remains visible and marks PLACES active there.
  */
 // TICKET-130 pill background — mock literals (surfaceNote/card at 0.94).
 const PILL_BG = {
@@ -122,11 +112,13 @@ function BottomNavBar() {
   // Active tab detection. Widen first: without generated .expo/types,
   // useSegments() is the tuple [string] and segments[1] is a TS2493.
   const seg1 = (segments as string[])[1] as string | undefined;
-  // When on the wishlist Stack route, segments[0] = 'wishlist', segments[1] = undefined
+  // Wishlist and the legacy Search redirect both mark Places active.
   const activeTab =
     segments[0] === 'wishlist'
-      ? 'wishlist'
-      : seg1 ?? 'tables';
+      ? 'places'
+      : seg1 === 'search' || seg1 === 'places'
+        ? 'places'
+        : seg1 ?? 'tables';
 
   // Active terracotta, inactive textSecondary (TICKET-130 pill spec).
   const tabColor = (name: string) =>
@@ -157,8 +149,8 @@ function BottomNavBar() {
         accessibilityLabel="Feed"
         accessibilityRole="tab"
       >
-        <Ionicons name="newspaper-outline" size={21} color={tabColor('feed')} />
-        <Text style={labelStyle('feed')}>Feed</Text>
+        <Ionicons name="newspaper-outline" size={24} color={tabColor('feed')} />
+        <Text style={labelStyle('feed')}>FEED</Text>
       </Pressable>
 
       {/* Table */}
@@ -168,30 +160,19 @@ function BottomNavBar() {
         accessibilityLabel="Table"
         accessibilityRole="tab"
       >
-        <Ionicons name="restaurant-outline" size={21} color={tabColor('tables')} />
-        <Text style={labelStyle('tables')}>Table</Text>
+        <Ionicons name="restaurant-outline" size={24} color={tabColor('tables')} />
+        <Text style={labelStyle('tables')}>TABLE</Text>
       </Pressable>
 
-      {/* Search */}
+      {/* Places — merged search + map */}
       <Pressable
-        onPress={() => router.replace('/search')}
+        onPress={() => router.replace('/places')}
         style={navStyles.tab}
-        accessibilityLabel="Search"
+        accessibilityLabel="Places"
         accessibilityRole="tab"
       >
-        <Ionicons name="search-outline" size={21} color={tabColor('search')} />
-        <Text style={labelStyle('search')}>Search</Text>
-      </Pressable>
-
-      {/* Map (TICKET-134 — formerly Wishlist) — points to existing /wishlist route */}
-      <Pressable
-        onPress={() => router.replace('/wishlist')}
-        style={navStyles.tab}
-        accessibilityLabel="Map"
-        accessibilityRole="tab"
-      >
-        <Ionicons name="map-outline" size={21} color={tabColor('wishlist')} />
-        <Text style={labelStyle('wishlist')}>Map</Text>
+        <Ionicons name="location-outline" size={24} color={tabColor('places')} />
+        <Text style={labelStyle('places')}>PLACES</Text>
       </Pressable>
 
       {/* Profile */}
@@ -201,8 +182,8 @@ function BottomNavBar() {
         accessibilityLabel="Profile"
         accessibilityRole="tab"
       >
-        <Ionicons name="person-circle-outline" size={21} color={tabColor('profile')} />
-        <Text style={labelStyle('profile')}>Profile</Text>
+        <Ionicons name="person-circle-outline" size={24} color={tabColor('profile')} />
+        <Text style={labelStyle('profile')}>PROFILE</Text>
       </Pressable>
     </View>
   );
@@ -351,9 +332,7 @@ function RootLayoutNav() {
     }
 
     if (inAuthGroup) {
-      // Launch-readiness (2026-07-03): onboarded users land on Wishlist, not
-      // Tables — the capture surface is the product's first-value moment.
-      router.replace('/wishlist');
+      router.replace('/places');
     }
   }, [session, isLoading, onboardedAt, previewOnLaunch, segments, router]);
 

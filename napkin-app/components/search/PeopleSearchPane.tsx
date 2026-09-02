@@ -12,13 +12,13 @@ import React, { useCallback, useMemo } from 'react';
 import {
     View,
     Text,
-    FlatList,
     StyleSheet,
     Linking,
     Pressable,
     ActivityIndicator,
     Keyboard,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -29,11 +29,15 @@ import { useUserSearch } from '@/hooks/users/useUserSearch';
 import { useFollowingList } from '@/hooks/users/useFollowingList';
 import { useRecentCompanions } from '@/hooks/users/useRecentCompanions';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
+import type { SnapSheetContentContext } from '@/components/sheets/SnapSheet';
 import { PeopleResultRow } from './PeopleResultRow';
 
 interface Props {
     query: string;
     debouncedQuery: string;
+    /** Optional sheet adapter; legacy callers stay independently scrollable. */
+    scrollEnabled?: boolean;
+    onScroll?: SnapSheetContentContext['onScroll'];
 }
 
 const INVITE_LINK = 'https://napkinapp.com/i/';
@@ -76,7 +80,12 @@ function InviteViaSmsRow({ query }: { query: string }) {
     );
 }
 
-export function PeopleSearchPane({ query, debouncedQuery }: Props) {
+export function PeopleSearchPane({
+    query,
+    debouncedQuery,
+    scrollEnabled = true,
+    onScroll,
+}: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -125,35 +134,6 @@ export function PeopleSearchPane({ query, debouncedQuery }: Props) {
         router.push(`/u/${userId}`);
     }, [router]);
 
-    // ── Empty query: suggested people ─────────────────────────────────────
-
-    if (!hasQuery) {
-        return (
-            <Pressable style={styles.pane} onPress={Keyboard.dismiss} accessible={false}>
-                {suggestedPeople.length > 0 && (
-                    <Text style={[styles.sectionHeader, { color: palette.textMuted }]}>
-                        Suggested
-                    </Text>
-                )}
-                {suggestedPeople.map((u) => (
-                    <PeopleResultRow
-                        key={u.user_id}
-                        user_id={u.user_id}
-                        display_name={u.display_name}
-                        avatar_url={u.avatar_url}
-                        is_following={u.is_following}
-                        onPress={handleRowPress}
-                    />
-                ))}
-                {suggestedPeople.length === 0 && (
-                    <Text style={[Type.body, styles.emptyHint, { color: palette.textMuted }]}>
-                        Search for people on Napkin
-                    </Text>
-                )}
-            </Pressable>
-        );
-    }
-
     // ── Loading ───────────────────────────────────────────────────────────
 
     if (isSearchLoading) {
@@ -164,21 +144,11 @@ export function PeopleSearchPane({ query, debouncedQuery }: Props) {
         );
     }
 
-    // ── No results: invite row ────────────────────────────────────────────
-
-    if (!searchResults || searchResults.length === 0) {
-        return (
-            <Pressable style={styles.pane} onPress={Keyboard.dismiss} accessible={false}>
-                <InviteViaSmsRow query={debouncedQuery} />
-            </Pressable>
-        );
-    }
-
-    // ── Results ───────────────────────────────────────────────────────────
-
+    const rows = hasQuery ? searchResults ?? [] : suggestedPeople;
     return (
-        <FlatList
-            data={searchResults}
+        <Animated.FlatList
+            testID="people-search-results"
+            data={rows}
             keyExtractor={(item) => item.user_id}
             renderItem={({ item }) => (
                 <PeopleResultRow
@@ -192,14 +162,26 @@ export function PeopleSearchPane({ query, debouncedQuery }: Props) {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             style={styles.list}
+            scrollEnabled={scrollEnabled}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            ListHeaderComponent={!hasQuery && rows.length > 0 ? (
+                <Text style={[styles.sectionHeader, { color: palette.textMuted }]}>Suggested</Text>
+            ) : null}
+            ListEmptyComponent={hasQuery ? (
+                <InviteViaSmsRow query={debouncedQuery} />
+            ) : (
+                <Pressable style={styles.centered} onPress={Keyboard.dismiss} accessible={false}>
+                    <Text style={[Type.body, styles.emptyHint, { color: palette.textMuted }]}>
+                        Search for people on Napkin
+                    </Text>
+                </Pressable>
+            )}
         />
     );
 }
 
 const styles = StyleSheet.create({
-    pane: {
-        flex: 1,
-    },
     centered: {
         flex: 1,
         alignItems: 'center',
@@ -243,12 +225,10 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     inviteLabel: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 15,
+        ...Type.body,
     },
     inviteHint: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
+        ...Type.caption,
         marginTop: 2,
     },
 });

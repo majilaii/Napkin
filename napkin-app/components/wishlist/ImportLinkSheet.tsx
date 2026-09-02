@@ -87,15 +87,16 @@ import {
     initialImportEditMatchQuery,
 } from '@/lib/importEditMatch';
 
-// Gate the video-import entry point on the iOS-only native module actually being
-// linked. Computed once at import (safe — never throws). Android keeps the link
-// and screenshot rows but never renders the saved-video row.
-const VIDEO_IMPORT_AVAILABLE = Platform.OS === 'ios' && isVideoImportAvailable();
 import { safeRandomUUID } from '@/lib/uuid';
 import { sourceNoun } from '@/lib/sourceNoun';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
 import { useToast } from '@/providers/ToastProvider';
 import { CandidatePickerPanel, buildInitialTicked, keyFor, isResolved } from './CandidatePickerPanel';
+
+// Gate the video-import entry point on the iOS-only native module actually being
+// linked. Computed once at import (safe — never throws). Android keeps the link
+// and screenshot rows but never renders the saved-video row.
+const VIDEO_IMPORT_AVAILABLE = Platform.OS === 'ios' && isVideoImportAvailable();
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -625,12 +626,12 @@ export function ImportLinkSheet({ visible, onDismiss, initialUrl, initialImportN
                 },
             },
         );
-    }, [user?.id, inputValue, resolvedData, saveImportSpots, handleDismiss, chosenTable]);
+    }, [user?.id, inputValue, resolvedData, saveImportSpots, handleDismiss, chosenTable, toast]);
 
     const handleSearchManually = useCallback((query?: string) => {
         handleDismiss();
         router.push({
-            pathname: '/(tabs)/search',
+            pathname: '/(tabs)/places',
             params: { q: query ?? resolvedData?.best_query ?? '' },
         });
     }, [handleDismiss, router, resolvedData]);

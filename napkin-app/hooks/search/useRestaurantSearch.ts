@@ -19,7 +19,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-import { useNearbyLocation, type NearbyPermissionStatus } from '@/hooks/useNearbyLocation';
+import {
+    useNearbyLocation,
+    type NearbyLocationStatus,
+    type NearbyPermissionStatus,
+} from '@/hooks/useNearbyLocation';
 import { searchCache, type PlacesResult, type PersistedRow, type VisitedRow } from './searchCache';
 import { mergeSearchResults } from './mergeSearchResults';
 import {
@@ -71,6 +75,18 @@ export interface SearchResultRow {
     place?: PlacesResult;
     /** True only for a Places ghost returned by the world-biased fallback pass. */
     fartherAfield?: boolean;
+    /** Search/map projection fields (optional so stale cache rows fail closed). */
+    lat?: number | null;
+    lng?: number | null;
+    isPinned?: boolean;
+    friendsBeenCount?: number;
+    rating?: {
+        tier: 'you' | 'friends' | 'google';
+        value: number;
+        scale: 5;
+    } | null;
+    googleRating?: number | null;
+    priceLevel?: number | null;
 }
 
 export interface SearchResults {
@@ -81,11 +97,13 @@ export interface SearchResults {
 
 type SearchCoordinates = { latitude: number; longitude: number };
 
-interface RestaurantSearchOptions {
+export interface RestaurantSearchOptions {
     /** Silently bias Places results when foreground location is already granted. */
     grantedLocationBias?: boolean;
     /** Search-tab override. Other pickers stay on the existing automatic behavior. */
     locality?: SearchLocality;
+    /** Cost gate: false disables both Places and persisted restaurant requests. */
+    enabled?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -147,13 +165,20 @@ export function useRestaurantSearch(
     results: SearchResults;
     isLoading: boolean;
     isPlacesError: boolean;
+    isPersistedError: boolean;
+    placesError: Error | null;
+    persistedError: Error | null;
     refetch: () => void;
+    refetchPlaces: () => void;
+    refetchPersisted: () => void;
     coords: SearchCoordinates | null;
     permissionStatus: NearbyPermissionStatus | null;
+    locationStatus: NearbyLocationStatus;
+    locationSettled: boolean;
     requestLocation: () => Promise<void>;
 } {
     const trimmed = query.trim();
-    const enabled = trimmed.length >= 2 && !!userId;
+    const enabled = trimmed.length >= 2 && !!userId && options?.enabled !== false;
     const locality = options?.locality ?? 'auto';
     const chosenCity = locality === 'auto' ? null : locality.city.trim() || null;
     const locationAvailable = options?.grantedLocationBias === true;
@@ -162,6 +187,7 @@ export function useRestaurantSearch(
         coords: nearbyCoords,
         permissionStatus: nearbyPermissionStatus,
         settled: locationSettled,
+        status: nearbyLocationStatus,
         request: requestLocation,
         requestIfGranted,
     } = useNearbyLocation();
@@ -260,18 +286,44 @@ export function useRestaurantSearch(
         !cachedResult &&
         enabled &&
         (!locationResolved || placesQuery.isLoading || persistedQuery.isLoading);
-    const isPlacesError = !cachedResult && placesQuery.isError;
+    const placesError = placesQuery.error instanceof Error ? placesQuery.error : null;
+    const persistedError = persistedQuery.error instanceof Error ? persistedQuery.error : null;
+    const isPlacesError = placesQuery.isError;
+    const isPersistedError = persistedQuery.isError;
+
+    const clearCombinedCache = () => {
+        searchCache.remove(cacheUserId, trimmed, localityBucket);
+    };
+    const refetchPlaces = () => {
+        if (!enabled) return;
+        clearCombinedCache();
+        void placesQuery.refetch();
+    };
+    const refetchPersisted = () => {
+        if (!enabled) return;
+        clearCombinedCache();
+        void persistedQuery.refetch();
+    };
 
     return {
         results,
         isLoading,
         isPlacesError,
+        isPersistedError,
+        placesError,
+        persistedError,
         coords: locationAvailable ? nearbyCoords : null,
         permissionStatus: locationAvailable ? nearbyPermissionStatus : null,
+        locationStatus: nearbyLocationStatus,
+        locationSettled,
         requestLocation,
+        refetchPlaces,
+        refetchPersisted,
         refetch: () => {
-            placesQuery.refetch();
-            persistedQuery.refetch();
+            if (!enabled) return;
+            clearCombinedCache();
+            void placesQuery.refetch();
+            void persistedQuery.refetch();
         },
     };
 }

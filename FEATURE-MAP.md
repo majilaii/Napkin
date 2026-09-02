@@ -9,7 +9,7 @@ Code-traceable operating map for agents driving the Expo app. Route inventory is
 1. Use an iOS Simulator with the Napkin development client (`com.majilaii.dining-journal-app`). The bundle identifier is declared in `napkin-app/app.config.ts`.
 2. In `napkin-app/`, run `npm start` to start Metro for an already-installed development client (`napkin-app/package.json`).
 3. If the development client is absent or native code/patches changed, run `npm run ios` for a fresh native build (`napkin-app/package.json`). `postinstall` applies `patch-package`, so install dependencies before judging native-patch behavior.
-4. Let `app/_layout.tsx::AuthGate` choose auth, onboarding, or the signed-in shell. `/` itself redirects to `/wishlist` (`app/index.tsx`).
+4. Let `app/_layout.tsx::AuthGate` choose auth, onboarding, or the signed-in shell. `/` itself redirects to `/(tabs)/places` (`app/index.tsx`).
 5. Navigate to every changed state, not merely every changed route. Capture a screenshot of each loading, content, empty, error, permission, privacy, and modal state affected by the change.
 6. For a first-screen touch check, tap controls near the bottom of the first native screen mounted after launch; see TICKET-212 in section 5.
 
@@ -29,10 +29,10 @@ Reading screens, switching local tabs/filters, opening and dismissing sheets, mo
 ### Shell and route-count conventions
 
 - Five layout modules shape navigation but are not counted as pages: `app/_layout.tsx`, `app/(tabs)/_layout.tsx`, `app/admin/_layout.tsx`, `app/onboarding/_layout.tsx`, and `app/settings/_layout.tsx`.
-- There are **63 default-export `.tsx` route modules** below: 62 intended pages plus the accidentally routable `/onboarding/OnboardingProgress` support component.
+- There are **70 default-export `.tsx` modules** under `app/`: five layouts plus **65 route modules** (64 intended pages and the accidentally routable `/onboarding/OnboardingProgress` support component).
 - `app/onboarding/OnboardingDraftContext.tsx` and `app/onboarding/styles.ts` are support modules, not routes.
 - Root Stack configuration mentions `/day/[date]`, but no `app/day/[date].tsx` exists (`app/_layout.tsx`); it is a dangling registration, not a drivable route.
-- The custom signed-in navigation is `app/_layout.tsx::BottomNavBar`; Expo's built-in tab bar is hidden in `app/(tabs)/_layout.tsx`.
+- The custom signed-in navigation is `app/_layout.tsx::BottomNavBar`: **FEED · TABLE · PLACES · PROFILE**. Expo's built-in tab bar is hidden in `app/(tabs)/_layout.tsx`; `/wishlist` and the legacy `/search` redirect both mark PLACES active.
 
 ## 2. Page map
 
@@ -47,7 +47,8 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 | `/journal` | `napkin-app/app/(tabs)/journal.tsx` | `useMySoloEntries`, `useUnreadCount` | RPC `fn_my_solo_entries`; EF `notifications` | `entries`, `entry_tables`, `restaurants`, `profiles`, `notifications` |
 | `/log` | `napkin-app/app/(tabs)/log.tsx` | none; blank legacy placeholder | — | — |
 | `/profile` | `napkin-app/app/(tabs)/profile.tsx` → `components/profile/ProfileScreenBody.tsx` | `useUserProfile`, `useUserSpots`, list and import hooks | `user-profile`, `lists`, `wishlist` | `profiles`, `entries`, `entry_photos`, `follows`, `lists`, `list_entries`, `table_members`, `tables`, `user_top_4`, `user_profile_takes`, `import_jobs` |
-| `/search` | `napkin-app/app/(tabs)/search.tsx` | `useRestaurantSearch`, `useUserSearch`, `useSearchPublicLists`, personal list/wishlist/table hooks | `places-search`, `restaurant-history?action=search`, `user-profile`, `lists`, `wishlist`, `table-management` | `restaurants`, `profiles`, `lists`, `list_entries`, `wishlist_items`, `tables`, `table_members` |
+| `/places` | `napkin-app/app/(tabs)/places.tsx` | `useRestaurantSearch`, `useMyWishlist`, `useUserSpots`, `useUserSearch`, `useSearchPublicLists`, `useSearchLocality`; `placesScreenState` | `places-search`, `restaurant-history?action=search`, `wishlist`, `user-profile`, `lists`; RPC `fn_visible_entry_ids` | `restaurants`, `entries`, `profiles`, `follows`, `wishlist_items`, `lists`, `list_entries` |
+| `/search` | `napkin-app/app/(tabs)/search.tsx` | param-preserving `Redirect` (`q`, `mode`) to `/(tabs)/places` | — | — |
 | `/tables` | `napkin-app/app/(tabs)/tables.tsx` | `useTables`, `useTableActivity`, `useTableAtlas`, `useTableMembers`, `useTableTopFour` | `table-management`, `table-activity`, `table-atlas` | `tables`, `table_members`, `entries`, `entry_photos`, `restaurants`, `profiles`, `suppers`, `supper_members`, `gatherings`, `gathering_rsvps`, `table_shares`, `wishlist_items`, `user_top_4`, legacy `table_nights` |
 | `/wishlist` | `napkin-app/app/wishlist.tsx` | `useMyWishlist`, `useUserSpots`, `useNetworkMapPins`, `useTablesOverlap`, `useTables`, list/import hooks | `wishlist`, `user-profile`, `lists`, `table-management`, `places-search` | `wishlist_items`, `entries`, `restaurants`, `profiles`, `follows`, `lists`, `list_entries`, `table_members`, `tables`, `import_jobs`, `list_imports` |
 
@@ -205,6 +206,8 @@ Source: `components/profile/ProfileScreenBody.tsx`, `hooks/users/useUserProfile.
 
 Source: `app/wishlist.tsx`, `components/wishlist/WishlistMapView.tsx`, `components/wishlist/WishlistGrid.tsx`, `hooks/wishlist/useMyWishlist.ts`, `hooks/users/useUserSpots.ts`, `hooks/users/useNetworkMapPins.ts`, `hooks/wishlist/useTablesOverlap.ts`.
 
+The former bottom-nav Map item is superseded by Places. `/wishlist` remains a supported direct/deep-link workspace and still uses its existing Saved/Been/Network behavior; the four-item bar marks PLACES active there.
+
 - Primary surface toggles ledger and map locally. Sources include saved, been, network, Table-overlap, and selected-list rows; some heavier sources arm only when selected.
 - Initial wishlist load: spinner. Pending imports render separately from pinned rows. A true zero-row result produces the designed empty invitation.
 - Wishlist-query failure with no cached rows shows “could not load your spots” plus retry in both pinned-list and Your-map modes. It never renders the first-run invitation or the map's zero-geocode murmur. Cached rows remain visible after a later refetch failure.
@@ -255,20 +258,21 @@ Source: `components/suppers/SupperCard.tsx`, `app/supper/[id].tsx`, `components/
 - Host affordances include reschedule/cancel/clear/rescue under state gates. `GONE_CODES` are terminal server states; a cache seed may remain briefly while a detail refetch resolves.
 - Rescue is host-only for an expired, unrescued Gather and opens a nested table-selection flow. A transient fetch error is not an expired Gather.
 
-### Search
+### Places (supersedes the Search tab and nav Map item)
 
-Source: `app/(tabs)/search.tsx` (Places pane is inline), `components/search/SearchLocalityBar.tsx`, `components/search/PeopleSearchPane.tsx`, `components/search/ListsSearchPane.tsx`, `hooks/search/useRestaurantSearch.ts`, `hooks/search/useSearchLocality.ts`, `providers/AuthProvider.tsx`, `hooks/users/useUserSearch.ts`, `hooks/lists/useSearchPublicLists.ts`.
+Source: `app/(tabs)/places.tsx`, `components/wishlist/WishlistMapView.tsx`, `components/sheets/SnapSheet.tsx`, `components/places/placesPresentation.ts`, `components/search/SearchLocalityBar.tsx`, `components/search/PeopleSearchPane.tsx`, `components/search/ListsSearchPane.tsx`, `components/search/RecentSearchesList.tsx`, `hooks/search/useRestaurantSearch.ts`, `hooks/search/placesScreenState.ts`, `hooks/search/useSearchLocality.ts`, `providers/AuthProvider.tsx`.
 
-- Places with no query: viewer recents/pins/lists sections appear only when non-empty. A brand-new account can therefore show a deliberately quiet canvas.
-- Search requests do not fire below the pane's minimum query length. With a valid query: spinner before rows, result list on success, explicit places error/retry, or no-results state.
-- The Places pane always shows a quiet locality bar below its search field. Auto mode labels granted coordinates as `current location`; without coordinates it surfaces the owner profile's lowercased `home_city` (or `anywhere` when none exists); a chosen city shows its lowercased name.
-- Tapping the locality bar opens the warm-paper sheet. `current location` returns to auto and only an `undetermined` permission may prompt; a curated or free-text city becomes the session-only locality. The locality store resets to auto on cold start and every auth identity change.
-- Auto mode preserves the shipped request behavior: granted coordinates send lat/lng plus `global_fallback`; otherwise the request stays bare for the server-side home-city weld. A chosen city sends only `city` with the query, never coordinates or `global_fallback`, and occupies a distinct city locality bucket in both result caches.
-- The empty Places canvas now contains only recents, nearby pins, and lists when populated; its former `use my location` row is removed because the locality sheet owns that user-initiated affordance.
-- An empty nearby-biased Places pass may append a single **Farther afield** section when the opt-in world pass succeeds. Those flagged rows stay after every local row and show city before street address.
-- Cached results may remain during a refetch; do not label them stale/broken solely because a spinner is absent.
-- People with no query shows suggestions; a valid query can show loading, people rows, or an invite-via-SMS no-results doorway. Check hook error state because no-results and failure have less visual separation than Places.
-- Lists below the minimum length shows guidance; valid queries show loading, public list rows, or empty copy. Check `useSearchPublicLists` error state before accepting empty copy as intended.
+- **Nearby / nearby-empty:** no query renders the selected pinned or been layer, filtered locally. Valid coordinates permit nearest-first order and distance tokens; denied/no coordinates preserve source order and omit distance. A cold wishlist/been source failure renders the retryable broken-empty treatment. A refetch failure with cached rows preserves those rows and adds the compact inline retry treatment.
+- **Searching / results:** two or more characters enable both `places-search` and `restaurant-history?action=search` only while the `places` segment is active. Results render labelled rating tiers (`you`, `friends`, or `google`); Google always reads `<value> · google`. Coordinate-bearing rows create temporary pins. A cold failure from either search source renders broken-empty; a failed refresh keeps merged cached rows with inline retry.
+- **Selected pin / ghost pin:** marker selection remains controlled by per-user `placesScreenState`; the compact caption opens the same route as its row. Opening a row or pin carrying a full sanitized Place never buys a duplicate Details call. Text-search ghosts are explicitly marked deferred, so the restaurant page may buy one required Details enrichment when their payload is still thin (`googleRating == null` is thin); a full enriched payload keeps the production lookup gate disabled.
+- **Sheet geometry / handoff:** the Places sheet exposes about 250pt at peek including navigation, without changing List Detail defaults. Places, Lists, and People results all use the same native-list scroll adapter, so a scrolled list owns downward gestures until it reaches offset zero. Changing segment or results/guidance/loading surface resets the sheet's tracked native offset before the replacement list can gesture; List Detail omits that content identity and keeps its existing offsets. The settle callback commits even on the mount snap.
+- **No-query recents:** successful per-user search queries appear as a quiet row above the no-query Places result. Selecting one searches again; clear removes the scoped history. This is the reader paired with `searchCache.addRecent`.
+- **Lists search / guidance:** `mode=lists` reveals `places · lists · people`, selects Lists, and focuses the shared field. An arrival without `q` explicitly clears immediate, debounced, and stored query state before showing “Search public lists”; valid queries reuse `ListsSearchPane`. There is no browse-all feed on this destination.
+- **People at the full (~70%) detent:** reuses `PeopleSearchPane`. An arrival without `q` clears stale query state. Both restaurant queries are disabled, including while typing. Pins, selection, and camera remain the last projection committed while `activeSegment === 'places'`; the frozen snapshot is never committed outside that segment. Leaving People restores the prior detent.
+- **People-hidden fallback:** with `FRIEND_TEST.hidePeopleSearch`, `mode=people` still reveals the two-segment header but selects Places at the normal detent and permits restaurant search.
+- **Locality / distance:** auto mode uses granted coordinates for bias, the native dot, locate, distance, and nearby order. A selected city sends only `city`; real device coordinates remain only the native dot/locate target. Explicit-city and denied/no-location rows/captions omit distance, preserve source/server order, and frame the result collection without geocoding.
+- **Framing stability:** result-collection framing depends on a stable selection dispatcher whose latest parent callback lives in a ref. An inline `onSelectedChange` identity change cannot cancel the pending 260ms fit.
+- **Per-user isolation:** query, selection, scroll, snap, active segment, detent restoration, locality, caches, and recent-search storage reset at auth identity change. The old device-global recents key is deleted, never migrated.
 
 ## 4. Write paths
 
@@ -288,7 +292,7 @@ Source: `app/(tabs)/search.tsx` (Places pane is inline), `components/search/Sear
 | Wishlist: pin/unpin own spot | EF `wishlist`; pin sheets on restaurant/search/import | auth, canonical restaurant; dedupe | SAFE — self-scoped/reversible, but publicly visible when account is public |
 | Wishlist: fix/repoint unmappable spot | EF `places-search`/`wishlist` correction | auth, owned/import row, valid replacement | SAFE — self-scoped/reversible data repair |
 | Wishlist: local filters, source/list choice, clear local import history | component/device state | source available; no server membership change | SAFE |
-| Search locality sheet / Map: request location | locality sheet or Map → `useNearbyLocation` → OS permission | user-initiated; platform permission state | SAFE only on disposable simulator/device |
+| Places locality sheet / Map: request location | locality sheet or Map → `useNearbyLocation` → OS permission | user-initiated; platform permission state | SAFE only on disposable simulator/device |
 | Import: enqueue URL/video, approve/save, retry, exclude/repoint | local manifest + `resolve-url`, `wishlist`, `lists` | auth/owner manifest, valid URL/candidates/destination; Table membership for shared destination | NEVER — creates saves/list/Table shares and may notify |
 | Import: share-extension handoff | App Group/import protocol in `app/import.tsx` | signed-in owner or pending-auth handoff; valid manifest | NEVER — begins a write workflow |
 | Profile: edit name/bio/city/photo/username/top fours/takes | `user-profile`, `top-fours`, `moderate-image` | auth/owner; format, availability, image moderation, city/entry constraints | SAFE — self-scoped/reversible, but changes public profile |
@@ -352,7 +356,7 @@ Composer visibility (fixed 2026-08-26, TICKET-217 P0-1/P1-4): `lib/composer.ts::
 
 These are not silently resolved here; agents should preserve the code truth and escalate the product mismatch.
 
-1. **Bottom-nav `+`:** doctrine says Ionicons + labels with a floating terracotta `+` is non-negotiable. `app/_layout.tsx::BottomNavBar` renders five Ionicon/label items and explicitly comments that the nav has had no `+` since TICKET-069. The hidden Expo tab bar in `app/(tabs)/_layout.tsx` does not supply one.
+1. **Bottom-nav `+`: RESOLVED by TICKET-228.** The founder-approved bar is FEED · TABLE · PLACES · PROFILE with 24px outline Ionicons and uppercase labels. There is no floating `+`; restaurant detail remains the write doorway.
 2. **Solo visibility default:** RESOLVED 2026-08-26 (TICKET-217 P0-1). All composer paths (`lib/composer.ts`, `components/logging/FastLogForm.tsx`) now emit `'friends'` for solo / `'table'` for table-shared, and the server paths in `supabase/functions/entry/index.ts` (`merge_with`, `attach-take`) fall back to `'table'`, never `'private'`. If any path is ever seen emitting `'private'` as a default again, that is a regression against the 2026-07-22 founder order — flag it, do not preserve it.
 3. **Map count bubbles:** doctrine says the Map has no cluster/count bubbles. `components/wishlist/WishlistMapView.tsx` correctly removed zoom-out clustering and renders individual pins, but it deliberately renders an amber numeric face for Table overlaps where `overlap.count >= 2`; `app/table-map.tsx` also describes overlap count bubbles. Cluster bubbles are absent; overlap count bubbles remain.
 
@@ -405,11 +409,13 @@ All recipes are read-only unless they explicitly say **fixture/test only**. Pref
 3. Seed cached cards, then fail the next page/refetch; confirm cards remain and only the incremental failure treatment changes (`components/feed/FollowingFeed.tsx`).
 4. For For You, vary social/people/list queries independently to cover partial content, all-loading, any-error, and all-success-empty (`components/feed/ForYouFeed.tsx`).
 
-### Search empty versus failure
+### Places states and failure
 
-1. Open `/search` with an empty query to capture the quiet/recent state.
-2. Enter a below-threshold query and confirm no request starts.
-3. With a valid query, mock zero results and then an error for each Places, People, and Lists pane. Capture both because People/Lists visually separate them less strongly (`components/search/*Pane.tsx`).
+1. Open `/places` with an empty successful pinned result and capture nearby-empty; switch to been locally. Separately reject the wishlist and been sources so intended-empty and cold broken-empty stay distinct. Seed cached rows, fail each refetch, and confirm rows remain under the inline retry treatment.
+2. Enter a below-threshold query and confirm no restaurant request starts. With a valid query, capture spinner, zero results, cold error, and cached-row refresh error; then select a marker and capture the compact caption. Confirm the peek leaves about 250pt visible including navigation.
+3. Set locality to Paris while simulator coordinates remain in London; search `parisik` and confirm pin + row, no distance token, and fit-to-results framing. Do not accept a geocode call.
+4. Seed a saved query, then open `/(tabs)/places?mode=lists` without `q`; capture the revealed segment header and “Search public lists” guidance with focused empty field. Repeat with a query for rows. Scroll Lists away from zero and verify the list—not the sheet—owns the downward gesture.
+5. With People visible, enter it from peek and half: it must rise to full, clear a stale query on a no-`q` mode arrival, freeze pins/selection/camera, issue no restaurant searches, and restore the prior detent on exit. Scroll People away from zero and verify native-list handoff. Repeat `mode=people` with the hidden flag in a test fixture for the two-segment Places fallback.
 
 ### Gather expired/rescue state
 

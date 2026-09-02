@@ -15,6 +15,7 @@ export function mergeSearchResults(
     places: PlacesResult[],
     persisted: PersistedSearchResult,
 ): SearchResults {
+    const placesById = new Map(places.map((place) => [place.id, place]));
     // Build the set of Google Place IDs already represented by persisted rows.
     const persistedExternalIds = new Set<string>();
     for (const row of persisted.visitedByMyTables) {
@@ -38,6 +39,15 @@ export function mergeSearchResults(
         tier: 'visited',
         socialTag: `visited by ${row.table_name}`,
         mostRecentActivityAt: row.most_recent_activity_at,
+        lat: row.lat ?? (row.external_id ? placesById.get(row.external_id)?.latitude : null) ?? null,
+        lng: row.lng ?? (row.external_id ? placesById.get(row.external_id)?.longitude : null) ?? null,
+        isPinned: row.is_pinned ?? false,
+        friendsBeenCount: row.friends_been_count ?? 0,
+        rating: row.rating ?? null,
+        googleRating: row.external_id
+            ? placesById.get(row.external_id)?.googleRating ?? row.google_rating ?? null
+            : row.google_rating ?? null,
+        priceLevel: row.external_id ? placesById.get(row.external_id)?.priceLevel ?? null : null,
     }));
 
     const onNapkin: SearchResultRow[] = persisted.onNapkin.map((row) => ({
@@ -52,6 +62,15 @@ export function mergeSearchResults(
         photoReference: null,
         photoAttributionHtml: row.places_photo_attribution_html ?? null,
         tier: 'onNapkin',
+        lat: row.lat ?? (row.external_id ? placesById.get(row.external_id)?.latitude : null) ?? null,
+        lng: row.lng ?? (row.external_id ? placesById.get(row.external_id)?.longitude : null) ?? null,
+        isPinned: row.is_pinned ?? false,
+        friendsBeenCount: row.friends_been_count ?? 0,
+        rating: row.rating ?? null,
+        googleRating: row.external_id
+            ? placesById.get(row.external_id)?.googleRating ?? row.google_rating ?? null
+            : row.google_rating ?? null,
+        priceLevel: row.external_id ? placesById.get(row.external_id)?.priceLevel ?? null : null,
     }));
 
     // Places-only rows intentionally remain text-only until persistence.
@@ -70,6 +89,15 @@ export function mergeSearchResults(
             tier: 'morePlaces',
             fartherAfield: place.fartherAfield === true,
             place,
+            lat: place.latitude,
+            lng: place.longitude,
+            isPinned: false,
+            friendsBeenCount: 0,
+            rating: typeof place.googleRating === 'number'
+                ? { tier: 'google', value: place.googleRating, scale: 5 }
+                : null,
+            googleRating: place.googleRating ?? null,
+            priceLevel: place.priceLevel ?? null,
         }));
 
     return { visited, onNapkin, morePlaces };

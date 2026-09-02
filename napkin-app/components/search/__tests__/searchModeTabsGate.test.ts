@@ -4,11 +4,11 @@
 import { visibleSearchTabs } from '../searchModeTabsGate';
 
 describe('visibleSearchTabs', () => {
-    it('shows Places · People · Lists in order when people-search is on', () => {
+    it('shows places · lists · people in order when people-search is on', () => {
         expect(visibleSearchTabs(false).map((t) => t.mode)).toEqual([
             'places',
-            'people',
             'lists',
+            'people',
         ]);
     });
 

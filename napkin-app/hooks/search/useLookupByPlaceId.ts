@@ -20,6 +20,20 @@ import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { PlacesResult } from './searchCache';
 
+export function shouldLookupPlaceDetails(args: {
+    isGhost: boolean;
+    placeId: string | null | undefined;
+    placePayload: Partial<PlacesResult> | null;
+}): boolean {
+    const { isGhost, placeId, placePayload } = args;
+    if (!isGhost || !placeId) return false;
+    if (!placePayload) return true;
+    return placePayload.deferred === true
+        || placePayload.latitude == null
+        || placePayload.longitude == null
+        || placePayload.googleRating == null;
+}
+
 async function lookupByPlaceId(
     placeId: string,
     persist: boolean,

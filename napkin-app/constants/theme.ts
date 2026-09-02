@@ -271,6 +271,13 @@ export const Spacing = {
     ledgerEmptyGutter: 40,
     ledgerPhotoSize: 64,
   },
+  /** Shared sheet chrome; detent geometry remains component-owned. */
+  sheet: {
+    handleWidth: 36,
+    handleHeight: 4,
+    handleTop: 8,
+    handleBottom: 6,
+  },
 } as const;
 
 export const Radius = {

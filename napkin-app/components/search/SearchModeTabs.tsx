@@ -1,6 +1,5 @@
 /**
- * SearchModeTabs — two-wide pill segmented control for Places | People.
- * TICKET-028
+ * SearchModeTabs — compact places · lists · people segmented control.
  *
  * Design: warm paper background, upright functional labels,
  * selected = terracotta underline + text, unselected = textMuted.
@@ -29,7 +28,7 @@ export function SearchModeTabs({ mode, onModeChange, hidePeople = false }: Props
     const tabs = visibleSearchTabs(hidePeople);
 
     return (
-        <View style={[styles.container, { backgroundColor: palette.background }]}>
+        <View style={styles.container}>
             {tabs.map((tab) => {
                 const isActive = tab.mode === mode;
                 return (
@@ -72,28 +71,31 @@ export function SearchModeTabs({ mode, onModeChange, hidePeople = false }: Props
 const styles = StyleSheet.create({
     container: {
         flexDirection: 'row',
-        paddingHorizontal: Spacing.md,
-        paddingBottom: Spacing.xs,
+        alignSelf: 'flex-start',
+        paddingHorizontal: Spacing.sm,
     },
     tab: {
-        flex: 1,
-        height: 44,
+        minWidth: 64,
+        height: 40,
         alignItems: 'center',
         justifyContent: 'center',
         position: 'relative',
+        paddingHorizontal: Spacing.sm,
     },
     tabPressed: {
         opacity: 0.7,
     },
     label: {
-        ...Type.titleMedium,
-        lineHeight: 22,
+        ...Type.metadata,
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 13,
+        lineHeight: 18,
     },
     underline: {
         position: 'absolute',
         bottom: 0,
-        left: 8,
-        right: 8,
+        left: 10,
+        right: 10,
         height: 2,
         borderRadius: 1,
     },

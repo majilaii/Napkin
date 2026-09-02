@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 import type { LatLng } from '@/lib/geo';
 
-type Status = 'idle' | 'pending' | 'granted' | 'denied';
+export type NearbyLocationStatus = 'idle' | 'pending' | 'granted' | 'denied';
 
 // A cold GPS fix can take many seconds; consumers (search, sort) must not sit
 // behind it. Deadline the fresh read and settle with no coords — the watch
@@ -43,7 +43,7 @@ export function useNearbyLocation(options?: { watch?: boolean }) {
     const [pending, setPending] = useState(false);
     const inFlight = useRef(false);
 
-    const status: Status = pending
+    const status: NearbyLocationStatus = pending
         ? 'pending'
         : permissionStatus === 'granted'
         ? 'granted'
