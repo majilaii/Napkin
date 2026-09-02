@@ -154,11 +154,16 @@ Deno.test('update-companions: only mutual, unblocked candidates survive the matr
     assertEquals(result, [MUTUAL]);
 });
 
-Deno.test('solo create companion gate exposes follows read failures to its non-fatal caller', async () => {
-    await assertFollowsFailureRejects();
+Deno.test('supper participant validation drops a real stranger before seating members', async () => {
+    const { client } = fakeCompanionGate(matrixRows);
+
+    assertEquals(
+        await filterMutualCompanionIds(client, AUTHOR, [MUTUAL, STRANGER]),
+        [MUTUAL],
+    );
 });
 
-Deno.test('supper create companion gate exposes follows read failures to its non-fatal caller', async () => {
+Deno.test('solo create companion gate exposes follows read failures to its non-fatal caller', async () => {
     await assertFollowsFailureRejects();
 });
 

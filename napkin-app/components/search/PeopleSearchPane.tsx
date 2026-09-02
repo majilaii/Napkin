@@ -2,7 +2,7 @@
  * PeopleSearchPane — body for the People tab in Search. TICKET-028.
  *
  * Three states:
- *   1. Empty query  → "Suggested" header + merged followingList + recentCompanions (dedupe, cap 10)
+ *   1. Empty query  → "Suggested" header + merged followingList + coDiners (dedupe, cap 10)
  *   2. Query, results found → flat FlatList of PeopleResultRow
  *   3. Query, no results → InviteViaSmsRow
  *
@@ -27,7 +27,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserSearch } from '@/hooks/users/useUserSearch';
 import { useFollowingList } from '@/hooks/users/useFollowingList';
-import { useRecentCompanions } from '@/hooks/users/useRecentCompanions';
+import { useCoDiners } from '@/hooks/feed/useCoDiners';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 import type { SnapSheetContentContext } from '@/components/sheets/SnapSheet';
 import { PeopleResultRow } from './PeopleResultRow';
@@ -100,11 +100,11 @@ export function PeopleSearchPane({
         hasDebouncedQuery
     );
 
-    // Suggested people: following list + recent companions (empty-state only)
+    // Suggested people: following list + co-diners not followed yet (empty-state only)
     const { data: followingList } = useFollowingList(user?.id);
-    const { data: recentCompanions } = useRecentCompanions(user?.id);
+    const { data: coDiners } = useCoDiners(user?.id);
 
-    // Deduplicated suggested list — following first, then companions, cap at SUGGESTED_CAP
+    // Deduplicated suggested list — following first, then co-diners, cap at SUGGESTED_CAP
     const suggestedPeople = useMemo<UserSearchResult[]>(() => {
         const seen = new Set<string>();
         const merged: UserSearchResult[] = [];
@@ -118,17 +118,17 @@ export function PeopleSearchPane({
         }
 
         if (merged.length < SUGGESTED_CAP) {
-            for (const u of (recentCompanions ?? [])) {
+            for (const u of (coDiners ?? [])) {
                 if (!seen.has(u.user_id)) {
                     seen.add(u.user_id);
-                    merged.push(u);
+                    merged.push({ ...u, is_following: false });
                 }
                 if (merged.length >= SUGGESTED_CAP) break;
             }
         }
 
         return merged;
-    }, [followingList, recentCompanions]);
+    }, [followingList, coDiners]);
 
     const handleRowPress = useCallback((userId: string) => {
         router.push(`/u/${userId}`);

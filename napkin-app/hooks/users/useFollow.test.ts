@@ -100,6 +100,9 @@ describe('useFollow', () => {
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.recentCompanions(VIEWER_ID),
         });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.users.searchAll(),
+        });
     });
 
     it('(b) restores target profile on server error', async () => {
@@ -299,6 +302,9 @@ describe('useUnfollow', () => {
         expect(profile?.data?.stats?.followers_count).toBe(5);
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.recentCompanions(VIEWER_ID),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.users.searchAll(),
         });
     });
 

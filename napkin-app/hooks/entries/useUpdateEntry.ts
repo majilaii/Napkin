@@ -42,6 +42,11 @@ export interface UpdateEntryInput {
     optimisticCompanions?: { user_id: string; display_name: string }[];
 }
 
+interface UpdateEntryResult {
+    persisted: unknown;
+    acceptedCompanionIds?: string[];
+}
+
 export function useUpdateEntry(entryId: string) {
     const qc = useQueryClient();
 
@@ -55,13 +60,19 @@ export function useUpdateEntry(entryId: string) {
             } = input;
             const hasPhotoUrl = Object.prototype.hasOwnProperty.call(input, 'photo_url');
             let result: unknown = null;
+            let acceptedCompanionIds: string[] | undefined;
 
             if (companion_ids !== undefined) {
                 // Companion edit path — edge function (service role)
-                result = await callEdgeFn<unknown>('entry', {
+                const companionResult = await callEdgeFn<{
+                    entry_id: string;
+                    companion_ids: string[];
+                }>('entry', {
                     action: 'update-companions',
                     body: { entry_id: entryId, companion_ids },
                 });
+                acceptedCompanionIds = companionResult.companion_ids;
+                result = companionResult;
             }
 
             if (hasPhotoUrl) {
@@ -84,7 +95,9 @@ export function useUpdateEntry(entryId: string) {
             }
 
             // Direct PATCH is intentionally image-free before B-2 revokes land.
-            if (Object.keys(scalarInput).length === 0) return result;
+            if (Object.keys(scalarInput).length === 0) {
+                return { persisted: result, acceptedCompanionIds } satisfies UpdateEntryResult;
+            }
 
             // TICKET-043: explicit column list excludes table_id (column-level revoke
             // prevents authenticated from reading entries.table_id directly).
@@ -105,7 +118,10 @@ export function useUpdateEntry(entryId: string) {
                 .single();
 
             if (error) throw error;
-            return data ?? result;
+            return {
+                persisted: data ?? result,
+                acceptedCompanionIds,
+            } satisfies UpdateEntryResult;
         },
 
         onMutate: async (input) => {
@@ -146,8 +162,22 @@ export function useUpdateEntry(entryId: string) {
         },
 
         onSuccess: (data, input) => {
+            if (data.acceptedCompanionIds !== undefined) {
+                const acceptedIds = new Set(data.acceptedCompanionIds);
+                qc.setQueryData(queryKeys.entries.detail(entryId), (old: any) => {
+                    if (!old) return old;
+                    return {
+                        ...old,
+                        companions: (old.companions ?? []).filter(
+                            (companion: { user_id: string }) => acceptedIds.has(companion.user_id),
+                        ),
+                    };
+                });
+            }
+
             // Companion edits already carry the exact display rows selected by the
-            // user. Mark the detail stale for the next mount/focus, but do not
+            // user, reconciled above to the IDs the server accepted. Mark the
+            // detail stale for the next mount/focus, but do not
             // immediately refetch the active screen: that refetch can replace the
             // optimistic names with an older join-table snapshot and make a saved
             // companion appear to vanish. Scalar-only edits can reconcile now.
@@ -203,7 +233,7 @@ export function useUpdateEntry(entryId: string) {
             // scalar edit lands. The scalar PATCH returns the row, so user_id is
             // in hand; a companions-only edit never reaches here (early return
             // above) and doesn't touch stats anyway.
-            const ownerId = (data as { user_id?: string } | null)?.user_id;
+            const ownerId = (data.persisted as { user_id?: string } | null)?.user_id;
             if (ownerId) {
                 invalidateEntryTasteCaches(qc, ownerId);
             }

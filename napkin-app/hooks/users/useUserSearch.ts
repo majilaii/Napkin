@@ -29,7 +29,7 @@ export interface UserSearchResult {
 }
 
 interface SearchOptions {
-    /** When true, each row includes is_mutual: boolean. Mutuals sort first. */
+    /** When true, restrict results to mutual follows and include is_mutual. */
     mutualOnly: boolean;
 }
 

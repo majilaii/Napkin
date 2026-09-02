@@ -278,6 +278,7 @@ export function useFollow() {
             queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
             // TICKET-189: the newly-followed author's reviews belong in
             // Following now — narrow, viewer-scoped refetch. The candidate
             // patches above stand (no blanket invalidation).
@@ -376,6 +377,7 @@ export function useUnfollow() {
             queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
             if (viewerId) {
                 queryClient.invalidateQueries({
                     queryKey: queryKeys.users.recentCompanions(viewerId),

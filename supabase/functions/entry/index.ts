@@ -1661,7 +1661,24 @@ serve(async (req) => {
                     const realSet = new Set((realProfiles ?? []).map((p: { user_id: string }) => p.user_id));
                     sids = sids.filter((id) => realSet.has(id));
                 }
-                validSupperParticipantIds = sids;
+                try {
+                    validSupperParticipantIds = await filterMutualCompanionIds(
+                        supabase,
+                        user.id,
+                        sids,
+                    );
+                } catch (err) {
+                    console.error('[entry] companion gate unavailable (supper validation):', err);
+                    return errorResponse(
+                        'COMPANION_GATE_UNAVAILABLE',
+                        'Could not validate Supper participants',
+                        503,
+                    );
+                }
+                const supperParticipantDroppedCount = sids.length - validSupperParticipantIds.length;
+                if (supperParticipantDroppedCount > 0) {
+                    console.warn(`[entry] companions_dropped=${supperParticipantDroppedCount}`);
+                }
             }
 
             // Prepare participant list before creating entry

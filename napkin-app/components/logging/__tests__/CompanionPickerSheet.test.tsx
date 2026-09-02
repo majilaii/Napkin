@@ -1,20 +1,42 @@
-import type ReactType from 'react';
-
-(globalThis as typeof globalThis & { __DEV__: boolean }).__DEV__ = true;
-
-jest.unmock('react-native');
-// Match the iOS resolution supplied by the React Native/Jest preset; the
-// repository's custom Jest resolver does not apply platform extensions.
-jest.mock('react-native/Libraries/Utilities/Platform', () =>
-    jest.requireActual('react-native/Libraries/Utilities/Platform.ios')
-);
-jest.mock('react-native/Libraries/Modal/Modal', () => {
+/* eslint-disable import/first -- Jest mocks must be registered before module imports. */
+jest.mock('react-native', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const ReactModule = require('react') as typeof ReactType;
+    const ReactModule = require('react') as typeof import('react');
+    const host = (name: string) => (props: Record<string, unknown>) =>
+        ReactModule.createElement(name, props, props.children as React.ReactNode);
+    class Value {
+        setValue = jest.fn();
+    }
     return {
-        __esModule: true,
-        default: ({ children, visible }: { children: ReactType.ReactNode; visible?: boolean }) =>
+        ActivityIndicator: host('ActivityIndicator'),
+        Animated: {
+            View: host('AnimatedView'),
+            Value,
+            add: jest.fn(() => 0),
+            parallel: jest.fn(() => ({ start: jest.fn() })),
+            spring: jest.fn(() => ({ start: jest.fn() })),
+            timing: jest.fn(() => ({ start: jest.fn() })),
+        },
+        Modal: ({ children, visible }: { children: React.ReactNode; visible?: boolean }) =>
             visible ? ReactModule.createElement(ReactModule.Fragment, null, children) : null,
+        PanResponder: { create: jest.fn(() => ({ panHandlers: {} })) },
+        Platform: {
+            OS: 'ios',
+            select: (options: Record<string, unknown>) => options.ios ?? options.default,
+        },
+        Pressable: host('Pressable'),
+        ScrollView: host('ScrollView'),
+        StyleSheet: {
+            absoluteFill: { position: 'absolute' },
+            create: (styles: unknown) => styles,
+            flatten: (style: unknown) => Array.isArray(style)
+                ? Object.assign({}, ...style.filter(Boolean))
+                : (style ?? {}),
+        },
+        Text: host('Text'),
+        TextInput: host('TextInput'),
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+        View: host('View'),
     };
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
@@ -22,23 +44,13 @@ jest.mock('@/hooks/useKeyboardHeight', () => ({ useKeyboardHeight: () => 0 }));
 jest.mock('@/hooks/users/useUserSearch', () => ({ useUserSearch: jest.fn() }));
 jest.mock('@/hooks/users/useRecentCompanions', () => ({ useRecentCompanions: jest.fn() }));
 
-// Runtime imports must follow __DEV__ because this suite opts out of the repo's
-// global react-native mock and exercises the real host components.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-require('react-native/jest/setup');
-(globalThis as typeof globalThis & { dispatchEvent: () => boolean }).dispatchEvent = jest.fn(() => true);
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const React = require('react') as typeof ReactType;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { act, fireEvent, render } = require('@testing-library/react-native') as typeof import('@testing-library/react-native');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { Colors } = require('@/constants/theme') as typeof import('@/constants/theme');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { useRecentCompanions } = require('@/hooks/users/useRecentCompanions') as typeof import('@/hooks/users/useRecentCompanions');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { useUserSearch } = require('@/hooks/users/useUserSearch') as typeof import('@/hooks/users/useUserSearch');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { CompanionPickerSheet } = require('../CompanionPickerSheet') as typeof import('../CompanionPickerSheet');
+import React from 'react';
+import { act, fireEvent, render } from '@testing-library/react-native';
+
+import { Colors } from '@/constants/theme';
+import { useRecentCompanions } from '@/hooks/users/useRecentCompanions';
+import { useUserSearch } from '@/hooks/users/useUserSearch';
+import { CompanionPickerSheet } from '../CompanionPickerSheet';
 
 const baseProps = {
     visible: true,
