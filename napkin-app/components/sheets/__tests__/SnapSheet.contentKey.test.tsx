@@ -185,6 +185,34 @@ describe('SnapSheet content handoff reset', () => {
         expect(sheetRef.current?.currentSnap()).toBe(PEEK);
     });
 
+    it('remounts the content surface when contentKey changes (and not otherwise)', () => {
+        let mounts = 0;
+        function Probe() {
+            React.useEffect(() => {
+                mounts += 1;
+            }, []);
+            return null;
+        }
+        const sheetRef = React.createRef<SnapSheetHandle>();
+        const node = (contentKey: string) => (
+            <SnapSheet
+                H={800}
+                initialSnap={FULL}
+                sheetRef={sheetRef}
+                onSettle={jest.fn()}
+                metrics={PLACES_SNAP_METRICS}
+                contentKey={contentKey}
+                renderContent={() => <Probe />}
+            />
+        );
+        const screen = render(node('people:results:a'));
+        expect(mounts).toBe(1);
+        screen.rerender(node('people:results:a'));
+        expect(mounts).toBe(1);
+        screen.rerender(node('people:results:b'));
+        expect(mounts).toBe(2);
+    });
+
     it('keeps ListDetailSheet parity when contentKey is omitted', () => {
         const sheetRef = React.createRef<SnapSheetHandle>();
         const onSettle = jest.fn();

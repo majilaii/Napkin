@@ -222,7 +222,10 @@ export function SnapSheet({
                 </View>
             </GestureDetector>
             <GestureDetector gesture={Gesture.Simultaneous(listPan, nativeScroll)}>
-                <View style={styles.content} collapsable={false}>
+                {/* Keyed on contentKey so the native scroll surface remounts atomically
+                    with the handoff reset — a retained (placeholderData) list can never
+                    stay scrolled while the controller believes it is at the top. */}
+                <View key={contentKey ?? 'content'} style={styles.content} collapsable={false}>
                     {renderContent({ scrollEnabled, onScroll })}
                 </View>
             </GestureDetector>
