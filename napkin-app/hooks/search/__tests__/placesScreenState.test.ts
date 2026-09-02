@@ -97,13 +97,13 @@ describe('focused Places search transitions', () => {
         sheetSnap: HALF,
         selectedPinId: 'restaurant-1',
         scrollOffset: 42,
-        activeSegment: 'places' as const,
+        activeSegment: 'lists' as const,
         layerFilter: 'pinned' as const,
         previousNonPeopleSnap: null,
         previousNonSearchSnap: null,
     };
 
-    it('focuses at full height and back restores the prior snap with the filter intact', () => {
+    it('focuses at full height and back restores the snap, segment, and filter', () => {
         jest.resetModules();
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { enterPlacesSearch, leavePlacesSearch } = require('../placesScreenState');
@@ -115,6 +115,7 @@ describe('focused Places search transitions', () => {
         expect(leavePlacesSearch({ ...focused, query: 'parisik' })).toMatchObject({
             query: '',
             sheetSnap: HALF,
+            activeSegment: 'lists',
             layerFilter: 'pinned',
             previousNonSearchSnap: null,
         });

@@ -56,7 +56,6 @@ export function leavePlacesSearch(current: PlacesScreenSnapshot): PlacesScreenSn
         sheetSnap: current.previousNonSearchSnap,
         selectedPinId: null,
         scrollOffset: 0,
-        activeSegment: 'places',
         previousNonPeopleSnap: null,
         previousNonSearchSnap: null,
     };

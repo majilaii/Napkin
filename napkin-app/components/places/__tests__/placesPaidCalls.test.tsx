@@ -12,6 +12,7 @@ const mockPush = jest.fn();
 const mockRequestIfGranted = jest.fn().mockResolvedValue(undefined);
 let mockRouteParams: { mode?: string; q?: string } = { mode: 'people' };
 const mockWishlistRefetch = jest.fn();
+const mockUseMyLists = jest.fn();
 let mockCoords: { latitude: number; longitude: number } | null = null;
 let mockSpots: unknown[] = [];
 let mockWishlistState = {
@@ -114,21 +115,24 @@ jest.mock('@/hooks/users/useUserSpots', () => ({
     }),
 }));
 jest.mock('@/hooks/lists/useMyLists', () => ({
-    useMyLists: () => ({
-        data: [{
-            id: 'list-1',
-            owner_id: 'viewer',
-            title: 'Late suppers',
-            description: null,
-            ranked: false,
-            privacy: 'private',
-            emoji: null,
-            entry_count: 3,
-            cover_photo_url: null,
-            created_at: '2026-09-02T00:00:00Z',
-            updated_at: '2026-09-02T00:00:00Z',
-        }],
-    }),
+    useMyLists: (userId: string | null | undefined) => {
+        mockUseMyLists(userId);
+        return {
+            data: [{
+                id: 'list-1',
+                owner_id: 'viewer',
+                title: 'Late suppers',
+                description: null,
+                ranked: false,
+                privacy: 'private',
+                emoji: null,
+                entry_count: 3,
+                cover_photo_url: null,
+                created_at: '2026-09-02T00:00:00Z',
+                updated_at: '2026-09-02T00:00:00Z',
+            }],
+        };
+    },
 }));
 jest.mock('@/hooks/wishlist/useMyWishlist', () => ({
     useMyWishlist: () => mockWishlistState,
@@ -229,6 +233,7 @@ describe('Places People-segment paid-call gate', () => {
         expect(placesCalls).toHaveLength(0);
         expect(persistedSearchCalls).toHaveLength(0);
         expect(mockCallEdgeFn).toHaveBeenCalledTimes(0);
+        expect(mockUseMyLists).toHaveBeenLastCalledWith(null);
     });
 
     it('opens mode=lists without q on guidance instead of stale saved results', () => {
@@ -262,6 +267,7 @@ describe('Places People-segment paid-call gate', () => {
         );
 
         expect(screen.getByText("couldn't load places")).toBeTruthy();
+        expect(mockUseMyLists).toHaveBeenLastCalledWith(null);
         fireEvent.press(screen.getByText('try again'));
         expect(mockWishlistRefetch).toHaveBeenCalledTimes(1);
     });

@@ -440,6 +440,7 @@ export default function PlacesScreen() {
         [allLayerRows, distanceOrigin],
     );
     const searchGuidanceBranch = placesSearchBranch(immediateQuery);
+    const guidanceSearchMode = searchMode && searchGuidanceBranch !== 'results';
     const placesContentBranch = searchMode && searchGuidanceBranch !== 'results'
         ? searchGuidanceBranch
         : isLoading && decoratedRows.length === 0 && queryActive
@@ -485,19 +486,19 @@ export default function PlacesScreen() {
         frozenProjectionRef.current = emptyProjection();
     }
 
-    // Only Places browse may commit the frozen projection. Focused search and
-    // disabled Lists/People queries never replace the map behind the scrim.
+    // Guidance freezes the map; results commit their live projection so result
+    // pins remain usable when the sheet is dragged down.
     useEffect(() => {
-        if (activeSegment === 'places' && !searchMode) {
+        if (activeSegment === 'places' && !guidanceSearchMode) {
             frozenProjectionRef.current = currentProjection;
         }
-    }, [activeSegment, currentProjection, searchMode]);
+    }, [activeSegment, currentProjection, guidanceSearchMode]);
 
     const renderedProjection = resolvePlacesProjection(
         activeSegment,
         currentProjection,
         frozenProjectionRef.current,
-        searchMode,
+        guidanceSearchMode,
     ).rendered;
     const selectedRow = renderedProjection.rows.find(
         (row) => row.id === screenState.selectedPinId,
@@ -688,7 +689,7 @@ export default function PlacesScreen() {
                 palette={palette}
             />
 
-            {searchMode ? (
+            {guidanceSearchMode ? (
                 <Pressable
                     testID="places-search-map-scrim"
                     onPress={handleLeaveSearch}
@@ -847,7 +848,7 @@ export default function PlacesScreen() {
             <SnapSheet
                 H={sheetH}
                 initialSnap={firstSnap}
-                locked={searchMode}
+                locked={guidanceSearchMode}
                 lockedSnap={FULL}
                 unlockedSnap={screenState.sheetSnap}
                 sheetRef={sheetRef}
@@ -895,6 +896,7 @@ export default function PlacesScreen() {
                                 onScroll={onScroll}
                                 scrollEventThrottle={16}
                                 keyboardShouldPersistTaps="handled"
+                                keyboardDismissMode="on-drag"
                                 contentContainerStyle={[
                                     styles.searchSectionsContent,
                                     { paddingBottom: insets.bottom + NAV_CLEARANCE },
@@ -933,6 +935,20 @@ export default function PlacesScreen() {
                                                 ))}
                                             </View>
                                         ) : null}
+                                        {recentSearches.length === 0
+                                            && nearbySearchRows.length === 0
+                                            && myLists.length === 0 ? (
+                                                <View style={styles.emptyResults}>
+                                                    <Text
+                                                        style={[
+                                                            Type.metadata,
+                                                            { color: palette.textMuted },
+                                                        ]}
+                                                    >
+                                                        search a place, list or person
+                                                    </Text>
+                                                </View>
+                                            ) : null}
                                     </>
                                 )}
                             />
