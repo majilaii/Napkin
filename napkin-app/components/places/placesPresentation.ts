@@ -286,7 +286,7 @@ export function resolvePlacesListsBranch(args: {
 }): PlacesListsBranch {
     const hasRows = args.myCount + args.savedCount > 0;
     if (!hasRows && (args.myLoading || args.savedLoading)) return 'loading';
-    if (args.myError && args.myCount === 0) return 'error';
+    if (args.myError && !hasRows) return 'error';
     if (args.savedError || hasRows) return 'rows';
     return 'empty';
 }

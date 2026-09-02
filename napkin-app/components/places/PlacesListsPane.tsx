@@ -138,9 +138,10 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.sm,
     },
     empty: {
-        ...Type.metadata,
+        ...Type.quote,
+        textAlign: 'center',
         paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
+        paddingVertical: Spacing.md,
     },
     newRow: {
         minHeight: Spacing.xxl,

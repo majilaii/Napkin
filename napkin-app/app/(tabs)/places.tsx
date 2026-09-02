@@ -202,6 +202,8 @@ function SheetStatePane({
             scrollEnabled={scrollEnabled}
             onScroll={onScroll}
             scrollEventThrottle={16}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             contentContainerStyle={styles.statePane}
             ListEmptyComponent={<View style={styles.statePaneBody}>{children}</View>}
         />
@@ -838,6 +840,8 @@ export default function PlacesScreen() {
                 bottomInset={bottomInset}
                 preserveItemOrder={!distanceOrigin}
                 collectionScopeKey={renderedProjection.scopeKey}
+                // Murmur sits below the search pill + chip row (top wash is opaque to ~130pt).
+                chromeTopOffset={insets.top + 108}
                 palette={palette}
             />
 

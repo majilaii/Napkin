@@ -273,6 +273,7 @@ describe('Places projection', () => {
         expect(resolvePlacesListsBranch({ ...base, myError: true })).toBe('error');
         expect(resolvePlacesListsBranch(base)).toBe('empty');
         expect(resolvePlacesListsBranch({ ...base, myCount: 1, myError: true })).toBe('rows');
+        expect(resolvePlacesListsBranch({ ...base, savedCount: 2, myError: true })).toBe('rows');
         expect(resolvePlacesListsBranch({ ...base, savedError: true })).toBe('rows');
     });
 
