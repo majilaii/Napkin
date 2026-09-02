@@ -1,9 +1,14 @@
 import type { MyList } from '@/hooks/lists/useMyLists';
 import type { SelfLogRow } from '@/hooks/restaurants/useRestaurantPage';
 
-function shortDate(value: string): string {
+const LEDGER_MONTHS = [
+    'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+    'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+] as const;
+
+export function shortLedgerDate(value: string): string {
     const date = new Date(value);
-    return `${date.getDate()} ${date.toLocaleDateString('en-GB', { month: 'short' }).toLowerCase()} ${date.getFullYear()}`;
+    return `${date.getDate()} ${LEDGER_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
 export function deriveLedgerStats(rows: SelfLogRow[]) {
@@ -19,15 +24,9 @@ export function deriveLedgerStats(rows: SelfLogRow[]) {
             ? rated.reduce((sum, rating) => sum + rating, 0) / rated.length
             : null,
         count: rows.length,
-        first: timestamps[0] ? shortDate(timestamps[0]) : null,
-        last: timestamps.at(-1) ? shortDate(timestamps.at(-1)!) : null,
+        first: timestamps[0] ? shortLedgerDate(timestamps[0]) : null,
+        last: timestamps.at(-1) ? shortLedgerDate(timestamps.at(-1)!) : null,
     };
-}
-
-export function formatLedgerMeta(rows: SelfLogRow[]): string {
-    const stats = deriveLedgerStats(rows);
-    if (stats.count === 0 || !stats.first || !stats.last) return '';
-    return `${stats.count} visit${stats.count === 1 ? '' : 's'} · first ${stats.first} · last ${stats.last}`;
 }
 
 export type ElsewherePart =

@@ -131,6 +131,9 @@ describe('useCreateEntry', () => {
         expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.users.profile(USER_ID) });
         expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.users.spots(USER_ID) });
         expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.users.taste(USER_ID) });
+        expect(spy).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.page(SERVER_ENTRY.restaurant_id),
+        });
     });
 
     it('(b) rolls back mySolo and forDay on server error', async () => {

@@ -1,7 +1,6 @@
 import {
     buildElsewhereParts,
     deriveLedgerStats,
-    formatLedgerMeta,
     leaveRestaurantHistory,
     selfLogTarget,
 } from './restaurantHistoryLedger';
@@ -32,7 +31,8 @@ describe('restaurant history ledger', () => {
 
         expect(stats.average).toBe(4);
         expect(stats.rows.map((item) => item.id)).toEqual(['new', 'unrated', 'old']);
-        expect(formatLedgerMeta(rows)).toBe('3 visits · first 12 mar 2025 · last 16 apr 2026');
+        expect(stats.first).toBe('12 mar 2025');
+        expect(stats.last).toBe('16 apr 2026');
     });
 
     it('returns an em dash average state when nothing is rated', () => {

@@ -7,17 +7,16 @@ import {
     Text,
     View,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ErrorState, InlineErrorState } from '@/components/ErrorState';
-import { Colors, IconSize, Radius, Shadow, Spacing, Type } from '@/constants/theme';
+import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
-import { useRestaurantPage, type SelfLogRow } from '@/hooks/restaurants/useRestaurantPage';
+import { useRestaurantPage } from '@/hooks/restaurants/useRestaurantPage';
 import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
 import { useListsContainingRestaurant } from '@/hooks/lists/useListsContainingRestaurant';
 import { useMyLists } from '@/hooks/lists/useMyLists';
@@ -25,78 +24,13 @@ import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippin
 import {
     buildElsewhereParts,
     deriveLedgerStats,
-    formatLedgerMeta,
     leaveRestaurantHistory,
     selfLogTarget,
 } from '@/lib/restaurantHistoryLedger';
-
-function formatLedgerDate(value: string): string {
-    return new Date(value).toLocaleDateString('en-GB', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-    }).toUpperCase();
-}
-
-function LedgerCard({
-    row,
-    onPress,
-    palette,
-}: {
-    row: SelfLogRow;
-    onPress?: () => void;
-    palette: typeof Colors.light;
-}) {
-    const card = (
-        <View style={[styles.card, { backgroundColor: palette.surfaceNote }, Shadow.ambient]}>
-            <View style={styles.cardTop}>
-                <Text style={[Type.dateline, { color: palette.textFaint }]}>
-                    {formatLedgerDate(row.visited_at)}
-                </Text>
-                {row.table_night_id ? (
-                    <Text style={[Type.metadata, { color: palette.textMuted }]}>supper</Text>
-                ) : null}
-            </View>
-            <Text style={[Type.rating, { color: palette.amberBright }]}>
-                {row.rating == null ? '—' : row.rating.toFixed(1)}
-            </Text>
-            {row.note?.trim() ? (
-                <Text style={[Type.editorialBody, styles.note, { color: palette.textSoft }]}>
-                    {`— ${row.note.trim()}`}
-                </Text>
-            ) : null}
-            {row.companions.length > 0 ? (
-                <Text style={[Type.metadata, { color: palette.textMuted }]}>
-                    {`with ${row.companions.join(' & ')}`}
-                </Text>
-            ) : null}
-            {row.photos.length > 0 ? (
-                <View style={styles.photoStrip}>
-                    {row.photos.slice(0, 4).map((photo) => (
-                        <Image
-                            key={photo.id}
-                            source={{ uri: photo.url }}
-                            style={styles.photo}
-                            contentFit="cover"
-                            transition={200}
-                        />
-                    ))}
-                </View>
-            ) : null}
-        </View>
-    );
-    if (!onPress) return card;
-    return (
-        <Pressable
-            onPress={onPress}
-            accessibilityRole="button"
-            accessibilityLabel={`visit on ${formatLedgerDate(row.visited_at)}`}
-            style={({ pressed }) => pressed && styles.pressed}
-        >
-            {card}
-        </Pressable>
-    );
-}
+import {
+    RestaurantHistoryMasthead,
+    RestaurantHistoryRow,
+} from '@/components/restaurants';
 
 export default function RestaurantHistoryScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -192,25 +126,24 @@ export default function RestaurantHistoryScreen() {
                     <>
                         {!selfLogUnavailable ? (
                             <>
-                                <View style={styles.masthead}>
-                                    <Text style={[Type.ratingLarge, { color: palette.amberBright }]}>
-                                        {stats.average == null ? '—' : stats.average.toFixed(1)}
-                                    </Text>
-                                    {rows.length > 0 ? (
-                                        <Text style={[Type.metadata, styles.meta, { color: palette.textMuted }]}>
-                                            {formatLedgerMeta(rows)}
-                                        </Text>
-                                    ) : null}
-                                </View>
+                                <RestaurantHistoryMasthead
+                                    average={stats.average}
+                                    count={stats.count}
+                                    first={stats.first}
+                                    last={stats.last}
+                                    palette={palette}
+                                />
 
                                 {rows.length > 0 ? (
-                                    <View style={styles.cards}>
-                                        {stats.rows.map((row) => {
+                                    <View>
+                                        {stats.rows.map((row, index) => {
                                             const target = selfLogTarget(row);
                                             return (
-                                                <LedgerCard
+                                                <RestaurantHistoryRow
                                                     key={row.id}
                                                     row={row}
+                                                    tintSeed={restaurantId}
+                                                    showDivider={index < stats.rows.length - 1}
                                                     onPress={target ? () => router.push(target as any) : undefined}
                                                     palette={palette}
                                                 />
@@ -292,31 +225,6 @@ const styles = StyleSheet.create({
     headerSpacer: { width: Spacing.restaurant.quietActionHeight },
     loading: { paddingTop: Spacing.restaurant.ledgerEmptyTop, alignItems: 'center' },
     errorBody: { flex: 1, justifyContent: 'center' },
-    masthead: {
-        paddingHorizontal: Spacing.restaurant.pageGutter,
-        paddingTop: Spacing.lg,
-        alignItems: 'center',
-    },
-    meta: { marginTop: Spacing.xs, textAlign: 'center' },
-    cards: {
-        paddingHorizontal: Spacing.restaurant.pageGutter,
-        paddingTop: Spacing.lg,
-        gap: Spacing.restaurant.ledgerGap,
-    },
-    card: { borderRadius: Radius.lg, padding: Spacing.md },
-    cardTop: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: Spacing.sm,
-    },
-    note: { marginTop: Spacing.sm, marginBottom: Spacing.sm },
-    photoStrip: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
-    photo: {
-        width: Spacing.restaurant.ledgerPhotoSize,
-        height: Spacing.restaurant.ledgerPhotoSize,
-        borderRadius: Spacing.sm,
-    },
     empty: {
         paddingTop: Spacing.restaurant.ledgerEmptyTop,
         paddingHorizontal: Spacing.restaurant.ledgerEmptyGutter,

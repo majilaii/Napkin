@@ -14,6 +14,8 @@ jest.mock('@/lib/supabase', () => {
 });
 
 const ENTRY_ID = 'entry-1';
+const RESTAURANT_ID = 'restaurant-1';
+const USER_ID = 'user-1';
 const PRIYA = { user_id: 'priya-id', display_name: 'Priya' };
 const ORIGINAL = { user_id: 'old-id', display_name: 'Old companion' };
 const DROPPED = { user_id: 'dropped-id', display_name: 'Dropped stranger' };
@@ -108,7 +110,10 @@ describe('useUpdateEntry writer routing', () => {
             user_id: 'user-1',
             photo_url: 'https://cdn.test/approved.jpg',
         });
-        const { result, client } = renderHookWithClient(() => useUpdateEntry(ENTRY_ID));
+        const { result, client } = renderHookWithClient(() =>
+            useUpdateEntry(ENTRY_ID, RESTAURANT_ID, USER_ID),
+        );
+        const invalidate = jest.spyOn(client, 'invalidateQueries');
         client.setQueryData(queryKeys.entries.detail(ENTRY_ID), {
             id: ENTRY_ID,
             photo_url: 'https://cdn.test/old.jpg',
@@ -127,6 +132,12 @@ describe('useUpdateEntry writer routing', () => {
         expect(mockSupabase.from).not.toHaveBeenCalledWith('entries');
         expect(client.getQueryData(queryKeys.entries.detail(ENTRY_ID))).toMatchObject({
             photo_url: 'https://cdn.test/approved.jpg',
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.page(RESTAURANT_ID),
+        });
+        expect(invalidate).not.toHaveBeenCalledWith({
+            queryKey: queryKeys.users.taste(USER_ID),
         });
     });
 });

@@ -471,7 +471,11 @@ function EntryDetailScreen() {
 
     // ── Own-entry edit hooks ───────────────────────────────────────────────────
     const isOwnEntry = !!(viewer && entry && viewer.id === entry.user_id);
-    const updateEntry = useUpdateEntry(entry?.id ?? '');
+    const updateEntry = useUpdateEntry(
+        entry?.id ?? '',
+        entry?.restaurant_id ?? null,
+        viewer?.id ?? null,
+    );
     const deleteEntry = useDeleteEntry();
 
     // ── Viewer safety actions (TICKET-090, guideline 1.2) ─────────────────────
