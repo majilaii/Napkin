@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { placesScreenState } from '@/hooks/search/placesScreenState';
-import PlacesScreen from '../places';
+import PlacesScreen from '@/app/(tabs)/places';
 
 const mockSetParams = jest.fn();
 const mockPush = jest.fn();
