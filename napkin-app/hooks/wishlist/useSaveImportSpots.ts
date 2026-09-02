@@ -239,6 +239,10 @@ export function useSaveImportSpots(userId: string | null | undefined) {
 
         onSuccess: (_result, input: SaveImportSpotsInput) => {
             if (!userId) return;
+            queryClient.invalidateQueries({
+                queryKey: queryKeys.importJobs.all(userId),
+                exact: true,
+            });
             // Narrow invalidation: personal wishlist.
             queryClient.invalidateQueries({
                 queryKey: queryKeys.wishlist.personal(userId),

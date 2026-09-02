@@ -16,7 +16,14 @@ import {
     View,
     useWindowDimensions,
 } from 'react-native';
-import Animated from 'react-native-reanimated';
+import Animated, {
+    cancelAnimation,
+    Easing,
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withTiming,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -40,8 +47,8 @@ import {
     visibleHeight,
 } from '@/components/sheets/snapSheetMath';
 import {
+    ClipTray,
     FilterTabsSheet,
-    ImportLinkSheet,
     WishlistMapView,
     type FilterOption,
     type WishlistMapItem,
@@ -96,6 +103,7 @@ import { useMyLists, type MyList } from '@/hooks/lists/useMyLists';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useAuth } from '@/providers/AuthProvider';
+import { useClipTray } from '@/hooks/imports/useClipTray';
 
 const SEARCH_DEBOUNCE_MS = 250;
 const NAV_CLEARANCE = 92;
@@ -109,6 +117,29 @@ type FrozenProjection = {
 
 function emptyProjection(): FrozenProjection {
     return { pins: [], rows: [], scopeKey: 'places:frozen-empty' };
+}
+
+function ClipPillRing({ color }: { color: string }) {
+    const rotation = useSharedValue(0);
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [{ rotate: `${rotation.value}deg` }],
+    }));
+
+    useEffect(() => {
+        rotation.value = withRepeat(
+            withTiming(360, { duration: 1800, easing: Easing.linear }),
+            -1,
+            false,
+        );
+        return () => cancelAnimation(rotation);
+    }, [rotation]);
+
+    return (
+        <Animated.View
+            pointerEvents="none"
+            style={[styles.clipPillRing, { borderTopColor: color }, animatedStyle]}
+        />
+    );
 }
 
 function routeMode(mode: string | undefined): SearchMode | null {
@@ -224,6 +255,7 @@ export default function PlacesScreen() {
     const { height } = useWindowDimensions();
     const router = useRouter();
     const { user } = useAuth();
+    const clipTray = useClipTray(user?.id);
     const { q: incomingQ, mode: incomingMode } = useLocalSearchParams<{
         q?: string;
         mode?: string;
@@ -603,7 +635,7 @@ export default function PlacesScreen() {
     }, [permissionStatus, requestLocation, setAutoLocality]);
 
     const [filterOpen, setFilterOpen] = useState(false);
-    const [importOpen, setImportOpen] = useState(false);
+    const [trayOpen, setTrayOpen] = useState(false);
     const cuisineOptions = useMemo<FilterOption[]>(() => [
         { value: null, label: 'All cuisines' },
         ...cuisineFacets(sourceRows).map((facet) => ({
@@ -751,7 +783,7 @@ export default function PlacesScreen() {
                     </View>
                     {!searchMode ? (
                         <Pressable
-                            onPress={() => setImportOpen(true)}
+                            onPress={() => setTrayOpen(true)}
                             style={({ pressed }) => [
                                 styles.iconButton,
                                 Shadow.ambient,
@@ -760,7 +792,20 @@ export default function PlacesScreen() {
                             accessibilityRole="button"
                             accessibilityLabel="import places"
                         >
+                            {clipTray.pill.kind === 'clipping' ? (
+                                <ClipPillRing color={palette.primary} />
+                            ) : null}
                             <Ionicons name="download-outline" size={20} color={palette.textSecondary} />
+                            {clipTray.pill.kind === 'needsLook' ? (
+                                <View
+                                    pointerEvents="none"
+                                    style={[styles.clipCountDot, { backgroundColor: palette.primary }]}
+                                >
+                                    <Text style={[styles.clipCountText, { color: palette.textInverse }]}>
+                                        {clipTray.pill.count}
+                                    </Text>
+                                </View>
+                            ) : null}
                         </Pressable>
                     ) : null}
                 </View>
@@ -1041,7 +1086,14 @@ export default function PlacesScreen() {
                 area={{ options: areaOptions, selected: cityFilter, onSelect: setCityFilter }}
                 sort={{ options: [{ value: null, label: 'Map order' }], selected: null, onSelect: () => {} }}
             />
-            <ImportLinkSheet visible={importOpen} onDismiss={() => setImportOpen(false)} />
+            <ClipTray
+                visible={trayOpen}
+                onDismiss={() => setTrayOpen(false)}
+                palette={palette}
+                rows={clipTray.rows}
+                hasOlder={clipTray.hasOlder}
+                isEmpty={clipTray.isEmpty}
+            />
         </View>
     );
 }
@@ -1087,6 +1139,35 @@ const styles = StyleSheet.create({
         borderRadius: 24,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    clipPillRing: {
+        position: 'absolute',
+        top: -2.5,
+        left: -2.5,
+        width: 53,
+        height: 53,
+        borderRadius: Radius.full,
+        borderWidth: 2.5,
+        borderColor: 'transparent',
+    },
+    clipCountDot: {
+        position: 'absolute',
+        top: -3,
+        right: -3,
+        minWidth: 20,
+        height: 20,
+        borderRadius: Radius.full,
+        paddingHorizontal: 3,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    clipCountText: {
+        ...Type.labelSmall,
+        fontFamily: 'Manrope_700Bold',
+        fontVariant: ['tabular-nums'],
+        letterSpacing: 0,
+        lineHeight: 15,
+        textTransform: 'none',
     },
     chipLine: {
         flexDirection: 'row',

@@ -176,6 +176,17 @@ jest.mock('@/components/sheets/SnapSheet', () => {
         ),
     };
 });
+// TICKET-230: the clip doorway's live hooks (App-Group polling, list_imports,
+// completeness) are out of scope for the paid-call gate — pin a resting tray.
+jest.mock('@/hooks/imports/useClipTray', () => ({
+    useClipTray: () => ({
+        pill: { kind: 'resting' },
+        rows: [],
+        hasOlder: false,
+        isEmpty: true,
+    }),
+}));
+
 jest.mock('@/components/wishlist', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ReactNative = require('react-native') as typeof import('react-native');
@@ -183,6 +194,7 @@ jest.mock('@/components/wishlist', () => {
         WishlistMapView: () => <ReactNative.View />,
         FilterTabsSheet: () => <ReactNative.View />,
         ImportLinkSheet: () => <ReactNative.View />,
+        ClipTray: () => <ReactNative.View />,
     };
 });
 
