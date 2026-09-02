@@ -23,9 +23,10 @@ export type EntryVisibilityOptions = {
 };
 
 /**
- * Resolves every restaurant-page entry candidate through one server-side gate.
+ * Resolves entry candidates through the canonical server-side visibility gate.
  * Self rows do not need an RPC round trip; all non-self rows are deduplicated
- * into the service-role-only fn_visible_entry_ids batch helper.
+ * into the service-role-only fn_visible_entry_ids batch helper. The helper does
+ * not chunk: callers with more than 500 non-self ids must batch before calling.
  */
 export async function loadVisibleEntryIds(
     supabase: EntryVisibilityRpcClient,

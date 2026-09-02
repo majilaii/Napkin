@@ -126,6 +126,11 @@ export const queryKeys = {
         followListAll: () => ['users', 'followList'] as const,
         followList: (userId: string, kind: 'followers' | 'following') =>
             ['users', 'followList', userId, kind] as const,
+        ledgerAll: (viewerId: string) => ['users', 'ledger', viewerId] as const,
+        ledger: (viewerId: string, month: string, tz: string, tableId?: string) =>
+            tableId
+                ? ['users', 'ledger', viewerId, month, tz, tableId] as const
+                : ['users', 'ledger', viewerId, month, tz] as const,
         /** TICKET-043: Tables ordered by user's most-recent post (Smart-three ordering source). */
         recentlyPostedTables: (userId: string) => ['users', 'recentlyPostedTables', userId] as const,
     },

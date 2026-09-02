@@ -12,6 +12,7 @@
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "check:typography": "node ../scripts/check-typography.mjs",
     "postinstall": "patch-package"
   },
   "dependencies": {

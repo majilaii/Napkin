@@ -201,6 +201,8 @@ const CHECKS: Check[] = [
                     visits?: unknown[];
                     self_log?: unknown[];
                     table_notes?: unknown[];
+                    regular?: unknown;
+                    regular_detail?: unknown;
                 };
             }).data;
             if (!data) return 'missing data envelope';
@@ -208,6 +210,12 @@ const CHECKS: Check[] = [
             if (!('visits' in data)) return 'missing data.visits';
             if (!Array.isArray(data.self_log)) return 'data.self_log is not an array';
             if (!Array.isArray(data.table_notes)) return 'data.table_notes is not an array';
+            if (data.regular !== null && typeof data.regular !== 'string') {
+                return 'data.regular is neither string nor null';
+            }
+            if (data.regular_detail !== null && typeof data.regular_detail !== 'object') {
+                return 'data.regular_detail is neither object nor null';
+            }
             return null;
         },
     },
@@ -353,6 +361,29 @@ const CHECKS: Check[] = [
             if (!data) return 'missing data envelope';
             if (!data.profile) return 'missing data.profile';
             if (data.is_self !== true) return 'expected is_self=true for own profile';
+            return null;
+        },
+    },
+    {
+        name: 'user-profile?action=ledger (TICKET-221 monthly friends ledger)',
+        method: 'POST',
+        fn: 'user-profile',
+        body: {
+            action: 'ledger',
+            month: new Date().toISOString().slice(0, 7),
+            tz: 'UTC',
+        },
+        shape: (json) => {
+            const data = (json as {
+                data?: { rows?: unknown[]; scope?: { kind?: string } };
+            }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (data.scope?.kind !== 'friends') return 'expected data.scope.kind=friends';
+            const viewer = data.rows.find((row) =>
+                (row as { is_viewer?: boolean }).is_viewer === true
+            );
+            if (!viewer) return 'missing viewer ledger row';
             return null;
         },
     },
@@ -982,6 +1013,31 @@ try {
     }
     CHECKS.push(
         {
+            name: 'user-profile?action=ledger table scope (TICKET-231)',
+            method: 'POST',
+            fn: 'user-profile',
+            body: {
+                action: 'ledger',
+                month: new Date().toISOString().slice(0, 7),
+                tz: 'UTC',
+                table_id: tableId,
+            },
+            shape: (json) => {
+                const data = (json as {
+                    data?: {
+                        rows?: unknown[];
+                        scope?: { kind?: string; table_id?: string; table_name?: unknown };
+                    };
+                }).data;
+                if (!data) return 'missing data envelope';
+                if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+                if (data.scope?.kind !== 'table') return 'expected data.scope.kind=table';
+                if (data.scope.table_id !== tableId) return 'data.scope.table_id mismatch';
+                if (typeof data.scope.table_name !== 'string') return 'data.scope.table_name is not a string';
+                return null;
+            },
+        },
+        {
             name: 'table-activity POST page 1 (TICKET-121 coverage)',
             method: 'POST',
             fn: 'table-activity',
@@ -1126,6 +1182,60 @@ for (const check of CHECKS) {
 
     passed++;
     console.log(`✓ ${check.name}`);
+}
+
+// TICKET-221: the authorization-derived ledger stays comfortably interactive
+// under production data. Warm the freshly deployed function once, then measure
+// five POSTs. For n=5, p95 is the slowest observed run. The deploy log is the
+// durable measurement record; latency over budget warns but cannot auto-revert.
+{
+    const name = 'user-profile?action=ledger five-run p95 ≤ 1500ms (TICKET-221)';
+    const samples: number[] = [];
+    const requestLedger = () => fetch(`${SUPABASE_URL}/functions/v1/user-profile`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${JWT}`,
+            apikey: ANON_KEY!,
+        },
+        body: JSON.stringify({
+            action: 'ledger',
+            month: new Date().toISOString().slice(0, 7),
+            tz: 'UTC',
+        }),
+    });
+    try {
+        const warmup = await requestLedger();
+        const warmupText = await warmup.text();
+        if (warmup.status !== 200) {
+            throw new Error(`warm-up HTTP ${warmup.status}: ${warmupText.slice(0, 200)}`);
+        }
+
+        for (let run = 0; run < 5; run += 1) {
+            const started = performance.now();
+            const res = await requestLedger();
+            const text = await res.text();
+            samples.push(performance.now() - started);
+            if (res.status !== 200) {
+                throw new Error(`run ${run + 1} HTTP ${res.status}: ${text.slice(0, 200)}`);
+            }
+        }
+        const sorted = [...samples].sort((a, b) => a - b);
+        const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
+        const rendered = samples.map((sample) => Math.round(sample)).join(', ');
+        if (p95 > 1500) {
+            console.warn(
+                `⚠ ${name} over budget (samples [${rendered}]ms; p95 ${Math.round(p95)}ms)`,
+            );
+        }
+        passed++;
+        console.log(`✓ ${name} (samples [${rendered}]ms; p95 ${Math.round(p95)}ms)`);
+    } catch (err) {
+        const detail = samples.length > 0
+            ? `${(err as Error).message}; observed [${samples.map((sample) => Math.round(sample)).join(', ')}]ms`
+            : (err as Error).message;
+        recordFailure(name, detail);
+    }
 }
 
 // ── TICKET-099: diary + reviews keyset pagination guards ────────────────────

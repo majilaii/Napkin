@@ -283,6 +283,7 @@ export function useFollow() {
             // patches above stand (no blanket invalidation).
             if (viewerId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.feed.friends(viewerId) });
+                queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(viewerId) });
             }
         },
     });
@@ -373,6 +374,9 @@ export function useUnfollow() {
             queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
+            if (viewerId) {
+                queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(viewerId) });
+            }
         },
     });
 }

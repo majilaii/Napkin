@@ -6,6 +6,9 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useBlockUser } from '../useBlocking';
 
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
+jest.mock('@/providers/AuthProvider', () => ({
+    useAuth: () => ({ user: { id: 'viewer-id' } }),
+}));
 
 const TARGET_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 

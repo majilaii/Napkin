@@ -32,6 +32,14 @@ import { reportError } from '../_shared/report.ts';
 import { computeCalibrations, type Calibration } from '../_shared/calibration.ts';
 import { buildPage, decodeCursor, type Page } from '../_shared/pagination.ts';
 import { projectRound } from '../_shared/round_projection.ts';
+import {
+    createSupabaseLedgerReader,
+    ledgerErrorResponse,
+    LedgerAuthorizationError,
+    loadFriendsLedger,
+    loadTableLedger,
+    validateLedgerInput,
+} from '../_shared/ledger.ts';
 import { projectListSummary, type ListSummary } from './listSummary.ts';
 import { hydrateProfileTakes, type QuickTake } from './profileTakes.ts';
 
@@ -1125,6 +1133,50 @@ serve(async (req) => {
 
         const body = await req.json();
         const { action } = body;
+
+        // ── ledger (read) ─────────────────────────────────────────────────
+        // Canonical POST body: { action: 'ledger', month: 'YYYY-MM', tz }.
+        // Input is validated before any ledger query; authorization-derived
+        // responses deliberately carry no edge response cache.
+        if (action === 'ledger') {
+            const bounds = validateLedgerInput(body.month, body.tz);
+            if (bounds.ok === false) {
+                return ledgerErrorResponse(
+                    bounds.code,
+                    bounds.message,
+                    bounds.status,
+                    corsHeaders,
+                );
+            }
+            if (
+                body.table_id !== undefined
+                && (typeof body.table_id !== 'string' || !UUID_REGEX.test(body.table_id))
+            ) {
+                return ledgerErrorResponse(
+                    'INVALID_TABLE_ID',
+                    'table_id must be a uuid',
+                    400,
+                    corsHeaders,
+                );
+            }
+            try {
+                const reader = createSupabaseLedgerReader(supabase);
+                const snapshot = body.table_id
+                    ? await loadTableLedger(reader, user.id, body.table_id, bounds)
+                    : await loadFriendsLedger(reader, user.id, bounds);
+                return json({ data: snapshot.data });
+            } catch (error) {
+                if (error instanceof LedgerAuthorizationError) {
+                    return ledgerErrorResponse(
+                        error.code,
+                        error.message,
+                        error.status,
+                        corsHeaders,
+                    );
+                }
+                throw error;
+            }
+        }
 
         // ── profile (read) ────────────────────────────────────────────────
         if (action === 'profile') {

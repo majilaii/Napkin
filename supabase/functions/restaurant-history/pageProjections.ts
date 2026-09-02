@@ -1,5 +1,5 @@
 import { projectRound } from '../_shared/round_projection.ts';
-import { loadVisibleEntryIds } from './entryVisibility.ts';
+import { loadVisibleEntryIds } from '../_shared/entryVisibility.ts';
 
 export type SelfLogPhoto = {
     id: string;

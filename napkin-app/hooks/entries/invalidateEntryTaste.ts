@@ -7,4 +7,5 @@ export function invalidateEntryTasteCaches(queryClient: QueryClient, userId: str
     queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(userId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.spots(userId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.taste(userId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(userId) });
 }

@@ -2,7 +2,7 @@ import { assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/asser
 import {
     loadVisibleEntryIds,
     type EntryVisibilityRpcClient,
-} from './entryVisibility.ts';
+} from '../_shared/entryVisibility.ts';
 
 const VIEWER = 'viewer-id';
 

@@ -51,6 +51,7 @@ import {
     RestaurantActions,
     RestaurantDetails,
     RestaurantNumbersBand,
+    RestaurantRegularRow,
     RestaurantTop,
     SavedFromTikTokPanel,
     TableNotesSection,
@@ -436,7 +437,6 @@ export default function RestaurantScreen() {
                             <YourHistoryDoorway
                                 restaurantName={restaurant.name}
                                 visitCount={visitCount}
-                                regular={page.data?.regular ?? null}
                                 onPress={() => router.push({
                                     pathname: '/restaurant-history',
                                     params: {
@@ -448,6 +448,11 @@ export default function RestaurantScreen() {
                                 palette={palette}
                             />
                         ) : null}
+
+                        <RestaurantRegularRow
+                            detail={page.data?.regular_detail}
+                            palette={palette}
+                        />
 
                         <FriendsNotesSection
                             cohort={numberTiers.friendsCohort}

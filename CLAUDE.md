@@ -81,7 +81,7 @@ Napkin is **individual + friends by default**; a Table **emerges naturally** whe
 
 Rules:
 - **Do NOT frame solo as a deficient table.** Solo must be a complete, self-respecting product. Most users never form a table — fine.
-- **Do NOT gamify the arc.** No XP, no levels, no Duolingo HUD. Progression reads as life happening.
+- **No XP/levels/streak-pressure HUD. Friend-scoped play (the regular, napkins, the ledger) is allowed; never stranger-visible.**
 - **Emergence card is rare and dismissible.** One trigger, soft copy, single primary CTA + "Maybe later." Never show twice for the same set in a short window.
 - **Design continuity across the arc.** Same components, same grammar. Table feed = solo feed + shared authorship + masthead.
 - **The hero is the arc itself**, not any single surface. Round is a niche side mode, NOT the hero. If this file still hints otherwise, treat as stale.

@@ -129,6 +129,15 @@ export type TableNoteRow = {
     visited_at: string;
 };
 
+export type RegularDetail = {
+    user_id: string;
+    display_name: string;
+    avatar_url: string | null;
+    visits: number;
+    is_viewer: boolean;
+    runner_up: { display_name: string; gap: number } | null;
+};
+
 export type PhotoItem = {
     url: string;
     author_display_name: string;
@@ -183,8 +192,10 @@ export type RestaurantPageData = {
     public_reviews_total: number;
     self_log?: SelfLogRow[];
     table_notes?: TableNoteRow[];
-    /** Reserved for TICKET-221; absent today, so the regular row stays hidden. */
-    regular?: string | null;
+    /** Compatibility display string for installed clients. */
+    regular: string | null;
+    /** Structured rolling-90-day friends crown. */
+    regular_detail: RegularDetail | null;
     // v3 additions
     distributions: {
         you: number[];          // [1★ count, 2★, 3★, 4★, 5★] — LEGACY, frozen
@@ -273,6 +284,8 @@ export async function fetchRestaurantPage(
     }
     if (data.tables_count_with_logs == null) data.tables_count_with_logs = 0;
     if (data.first_logged_at_by_your_table == null) data.first_logged_at_by_your_table = null;
+    if (data.regular === undefined) data.regular = null;
+    if (data.regular_detail === undefined) data.regular_detail = null;
     // TICKET-026: graceful degradation for older edge function responses
     if (!data.professional_critics) data.professional_critics = [];
 

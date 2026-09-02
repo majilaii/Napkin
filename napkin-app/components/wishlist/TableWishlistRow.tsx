@@ -6,15 +6,13 @@
  * (cuisine · city). NO photo thumbnail, NO description block — restaurants carry
  * no reliable photo/description source.
  *
- * The Table-specific signal is the *overlap count* — "N of you" — which is the
- * whole point of the Table wishlist (emergent ranking by how many members saved
- * it). It takes the right column, where the personal row puts its rating numeral,
- * because it IS the ranking signal here.
+ * The Table-specific signal is the saver cluster: faces instead of a numeric pill.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 
-import { Colors } from '@/constants/theme';
+import { Avatar } from '@/components/feed/Avatar';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import type { TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
 
 interface Props {
@@ -31,6 +29,15 @@ export function TableWishlistRow({ index, item, palette, onPress }: Props) {
 
     const meta = [r.cuisine, r.city].filter(Boolean).join(' · ');
     const count = item.count;
+    const visibleMembers = item.members.slice(0, 3);
+    const namedMembers = item.members
+        .map((member) => member.display_name)
+        .filter((name): name is string => !!name);
+    const accessibilityLabel = count > 3
+        ? `saved by ${namedMembers.slice(0, 2).join(', ')} & ${count - 2} more`
+        : `saved by ${namedMembers.length > 1
+            ? `${namedMembers.slice(0, -1).join(', ')} & ${namedMembers.at(-1)}`
+            : namedMembers[0] ?? 'a tablemate'}`;
 
     return (
         <Pressable
@@ -39,7 +46,7 @@ export function TableWishlistRow({ index, item, palette, onPress }: Props) {
                 styles.row,
                 { borderBottomColor: palette.dividerSoft, opacity: pressed ? 0.7 : 1 },
             ]}
-            accessibilityLabel={`Open ${r.name} — ${count} of you saved this`}
+            accessibilityLabel={`Open ${r.name} — ${accessibilityLabel}`}
         >
             <Text style={[styles.num, { color: palette.textMuted }]}>{index}</Text>
 
@@ -55,11 +62,32 @@ export function TableWishlistRow({ index, item, palette, onPress }: Props) {
             </View>
 
             <View style={styles.rightCol}>
-                <View style={[styles.overlapChip, { backgroundColor: palette.tertiaryFixed }]}>
-                    <Text style={[styles.overlapCount, { color: palette.tertiary }]}>{count}</Text>
-                    <Text style={[styles.overlapLabel, { color: palette.tertiary }]}>
-                        {count === 1 ? 'saved' : 'of you'}
-                    </Text>
+                <View style={styles.savers}>
+                    {visibleMembers.map((member, memberIndex) => (
+                        <View
+                            key={member.user_id}
+                            testID="table-wishlist-saver"
+                            style={[
+                                styles.avatarRing,
+                                { backgroundColor: palette.background, borderColor: palette.background },
+                                memberIndex > 0 && styles.overlapAvatar,
+                            ]}
+                        >
+                            <Avatar
+                                name={member.display_name ?? 'member'}
+                                url={member.avatar_url}
+                                size={Spacing.saverAvatar.size}
+                                palette={palette}
+                            />
+                        </View>
+                    ))}
+                    {count > 3 ? (
+                        <Text
+                            style={[Type.labelSmall, styles.overflowCount, { color: palette.textMuted }]}
+                        >
+                            {`+${count - 3}`}
+                        </Text>
+                    ) : null}
                 </View>
             </View>
         </Pressable>
@@ -100,21 +128,18 @@ const styles = StyleSheet.create({
         alignItems: 'flex-end',
         flexShrink: 0,
     },
-    overlapChip: {
+    savers: {
         flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 4,
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 999,
+        alignItems: 'center',
     },
-    overlapCount: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
-        lineHeight: 20,
+    avatarRing: {
+        borderWidth: Spacing.saverAvatar.ring,
+        borderRadius: Spacing.saverAvatar.size / 2 + Spacing.saverAvatar.ring,
     },
-    overlapLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 11,
+    overlapAvatar: { marginLeft: -Spacing.saverAvatar.overlap },
+    overflowCount: {
+        marginLeft: Spacing.xs,
+        letterSpacing: 0,
+        textTransform: 'none',
     },
 });
