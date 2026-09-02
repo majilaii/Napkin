@@ -22,10 +22,21 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ListsSearchPane, PeopleSearchPane, SearchLocalityBar, SearchModeTabs } from '@/components/search';
+import {
+    ListsSearchPane,
+    PeopleSearchPane,
+    RecentSearchesList,
+    SearchLocalityBar,
+    SearchModeTabs,
+} from '@/components/search';
 import type { SearchMode } from '@/components/search';
+import { ErrorState, InlineErrorState } from '@/components/ErrorState';
 import { SnapSheet, type SnapSheetHandle } from '@/components/sheets/SnapSheet';
-import { FULL, visibleHeight } from '@/components/sheets/snapSheetMath';
+import {
+    FULL,
+    PLACES_SNAP_METRICS,
+    visibleHeight,
+} from '@/components/sheets/snapSheetMath';
 import {
     FilterTabsSheet,
     ImportLinkSheet,
@@ -45,6 +56,7 @@ import {
     deriveDistanceOrigin,
     presentPlacesRating,
     projectPlacesPins,
+    resolvePlacesFailurePresentation,
     resolvePlacesProjection,
     restaurantRouteForRow,
     searchRowsToDisplayRows,
@@ -57,13 +69,18 @@ import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
+    queryForPlacesRouteArrival,
     transitionPlacesSegment,
     usePlacesScreenState,
 } from '@/hooks/search/placesScreenState';
 import { searchCache } from '@/hooks/search/searchCache';
 import { searchLocalityLabel } from '@/hooks/search/searchLocalityStore';
 import { useSearchLocality } from '@/hooks/search/useSearchLocality';
-import { mergeUnified, useRestaurantSearch } from '@/hooks/search/useRestaurantSearch';
+import {
+    mergeUnified,
+    useRecentSearches,
+    useRestaurantSearch,
+} from '@/hooks/search/useRestaurantSearch';
 import { useUserProfile } from '@/hooks/users';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
@@ -217,8 +234,13 @@ export default function PlacesScreen() {
         ? routeRequestedSegment
         : storedSegment;
     const routeQuery = incomingQ?.trim() ?? '';
-    const [immediateQuery, setImmediateQuery] = useState(routeQuery || screenState.query);
-    const [debouncedQuery, setDebouncedQuery] = useState(routeQuery || screenState.query);
+    const initialQuery = queryForPlacesRouteArrival(
+        screenState.query,
+        incomingQ,
+        requestedMode,
+    );
+    const [immediateQuery, setImmediateQuery] = useState(initialQuery);
+    const [debouncedQuery, setDebouncedQuery] = useState(initialQuery);
     const [segmentHeaderRevealed, setSegmentHeaderRevealed] = useState(
         Boolean(routeQuery || requestedMode === 'lists' || requestedMode === 'people'
             || screenState.query || screenState.activeSegment !== 'places'),
@@ -231,7 +253,9 @@ export default function PlacesScreen() {
     const sheetH = Math.max(1, (height - insets.top) * 0.76);
     const firstSnap = activeSegment === 'people' ? FULL : screenState.sheetSnap;
     const sheetRef = useRef<SnapSheetHandle>(null);
-    const [bottomInset, setBottomInset] = useState(() => visibleHeight(sheetH, firstSnap));
+    const [bottomInset, setBottomInset] = useState(() => (
+        visibleHeight(sheetH, firstSnap, PLACES_SNAP_METRICS)
+    ));
     const placesListRef = useRef<FlatList<DecoratedPlacesRow>>(null);
     const restoredScrollRef = useRef(false);
 
@@ -241,7 +265,11 @@ export default function PlacesScreen() {
         renderedUserRef.current = nextUserId;
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = null;
-        const nextQuery = routeQuery || screenState.query;
+        const nextQuery = queryForPlacesRouteArrival(
+            screenState.query,
+            incomingQ,
+            requestedMode,
+        );
         setImmediateQuery(nextQuery);
         setDebouncedQuery(nextQuery);
         setSegmentHeaderRevealed(Boolean(
@@ -249,7 +277,7 @@ export default function PlacesScreen() {
         ));
         restoredScrollRef.current = false;
         sheetRef.current?.snapTo(screenState.sheetSnap);
-    }, [requestedMode, routeQuery, screenState.query, screenState.sheetSnap, user?.id]);
+    }, [incomingQ, requestedMode, screenState.query, screenState.sheetSnap, user?.id]);
 
     useEffect(() => {
         const hasRouteRequest = incomingQ !== undefined || incomingMode !== undefined;
@@ -268,10 +296,17 @@ export default function PlacesScreen() {
                 FRIEND_TEST.hidePeopleSearch,
             );
         }
-        if (routeQuery) {
-            nextState = { ...nextState, query: routeQuery };
-            setImmediateQuery(routeQuery);
-            setDebouncedQuery(routeQuery);
+        const nextRouteQuery = queryForPlacesRouteArrival(
+            nextState.query,
+            incomingQ,
+            requestedMode,
+        );
+        if (incomingQ !== undefined || requestedMode === 'lists' || requestedMode === 'people') {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            debounceRef.current = null;
+            nextState = { ...nextState, query: nextRouteQuery };
+            setImmediateQuery(nextRouteQuery);
+            setDebouncedQuery(nextRouteQuery);
             setSegmentHeaderRevealed(true);
         }
         patchScreenState(nextState);
@@ -289,7 +324,6 @@ export default function PlacesScreen() {
         incomingQ,
         patchScreenState,
         requestedMode,
-        routeQuery,
         router,
         screenState,
     ]);
@@ -302,6 +336,9 @@ export default function PlacesScreen() {
         results,
         isLoading,
         isPlacesError,
+        isPersistedError,
+        refetchPlaces,
+        refetchPersisted,
         coords: deviceCoords,
         permissionStatus,
         locationStatus,
@@ -322,8 +359,11 @@ export default function PlacesScreen() {
     );
     const distanceOrigin = deriveDistanceOrigin(locality, deviceCoords);
 
-    const { data: wishlistData } = useMyWishlist(user?.id);
-    const { data: spotsData } = useUserSpots(user?.id);
+    const wishlistQuery = useMyWishlist(user?.id);
+    const spotsQuery = useUserSpots(user?.id);
+    const wishlistData = wishlistQuery.data;
+    const spotsData = spotsQuery.data;
+    const recentQueries = useRecentSearches();
     const pinnedRows = useMemo(
         () => wishlistRowsToDisplayRows(
             wishlistData?.pages.flatMap((page) => page.data ?? []) ?? [],
@@ -340,6 +380,18 @@ export default function PlacesScreen() {
     );
     const queryActive = immediateQuery.trim().length >= 2;
     const sourceRows = queryActive ? mergedSearchRows : layerRows;
+    const layerLoading = activeLayer === 'pinned'
+        ? wishlistQuery.isLoading
+        : spotsQuery.isLoading;
+    const failurePresentation = resolvePlacesFailurePresentation({
+        queryActive,
+        activeLayer,
+        hasCachedRows: sourceRows.length > 0,
+        placesFailed: isPlacesError,
+        persistedFailed: isPersistedError,
+        wishlistFailed: wishlistQuery.isError,
+        spotsFailed: spotsQuery.isError,
+    });
     const [cuisineFilter, setCuisineFilter] = useState<string | null>(null);
     const [priceFilter, setPriceFilter] = useState<string | null>(null);
     const [cityFilter, setCityFilter] = useState<string | null>(null);
@@ -415,6 +467,21 @@ export default function PlacesScreen() {
         patchScreenState({ query: '', scrollOffset: 0 });
     }, [patchScreenState]);
 
+    const handleRetryFailure = useCallback(() => {
+        for (const source of failurePresentation.sources) {
+            if (source === 'places') refetchPlaces();
+            if (source === 'persisted') refetchPersisted();
+            if (source === 'wishlist') void wishlistQuery.refetch();
+            if (source === 'spots') void spotsQuery.refetch();
+        }
+    }, [
+        failurePresentation.sources,
+        refetchPersisted,
+        refetchPlaces,
+        spotsQuery,
+        wishlistQuery,
+    ]);
+
     const handleSegmentChange = useCallback((next: SearchMode) => {
         Keyboard.dismiss();
         setSegmentHeaderRevealed(true);
@@ -431,11 +498,6 @@ export default function PlacesScreen() {
         const route = restaurantRouteForRow(row);
         if (route) router.push(route as never);
     }, [router]);
-
-    const handleOpenMapItem = useCallback((item: WishlistMapItem) => {
-        const row = renderedProjection.rows.find((candidate) => candidate.id === item.id);
-        if (row) openRestaurant(row);
-    }, [openRestaurant, renderedProjection.rows]);
 
     const handleCurrentLocation = useCallback(() => {
         setAutoLocality();
@@ -527,7 +589,6 @@ export default function PlacesScreen() {
                 selectedId={screenState.selectedPinId}
                 onSelectedChange={(selectedPinId) => patchScreenState({ selectedPinId })}
                 bottomInset={bottomInset}
-                onOpenItem={handleOpenMapItem}
                 preserveItemOrder={!distanceOrigin}
                 collectionScopeKey={renderedProjection.scopeKey}
                 palette={palette}
@@ -666,6 +727,8 @@ export default function PlacesScreen() {
                 initialSnap={firstSnap}
                 sheetRef={sheetRef}
                 backgroundColor={palette.surfaceNote}
+                handleColor={palette.ruleWarmNib}
+                metrics={PLACES_SNAP_METRICS}
                 onPanStart={Keyboard.dismiss}
                 onSettle={(sheetSnap, settledHeight) => {
                     setBottomInset(settledHeight);
@@ -678,6 +741,8 @@ export default function PlacesScreen() {
                             <ListsSearchPane
                                 query={immediateQuery}
                                 debouncedQuery={debouncedQuery}
+                                scrollEnabled={scrollEnabled}
+                                onScroll={onScroll}
                             />
                         );
                     }
@@ -686,11 +751,24 @@ export default function PlacesScreen() {
                             <PeopleSearchPane
                                 query={immediateQuery}
                                 debouncedQuery={debouncedQuery}
+                                scrollEnabled={scrollEnabled}
+                                onScroll={onScroll}
                             />
                         );
                     }
                     if (isLoading && decoratedRows.length === 0 && queryActive) {
                         return <ActivityIndicator style={styles.loader} color={palette.primary} />;
+                    }
+                    if (layerLoading && sourceRows.length === 0 && !queryActive) {
+                        return <ActivityIndicator style={styles.loader} color={palette.primary} />;
+                    }
+                    if (failurePresentation.kind === 'broken') {
+                        return (
+                            <ErrorState
+                                onRetry={handleRetryFailure}
+                                message="couldn't load places"
+                            />
+                        );
                     }
                     return (
                         <Animated.FlatList
@@ -713,12 +791,27 @@ export default function PlacesScreen() {
                                 styles.resultsContent,
                                 { paddingBottom: insets.bottom + NAV_CLEARANCE },
                             ]}
+                            ListHeaderComponent={(
+                                <>
+                                    {failurePresentation.kind === 'inline' ? (
+                                        <InlineErrorState
+                                            onRetry={handleRetryFailure}
+                                            message="couldn't refresh places"
+                                        />
+                                    ) : null}
+                                    {!queryActive && recentQueries.length > 0 ? (
+                                        <RecentSearchesList
+                                            queries={recentQueries}
+                                            onSelect={handleQueryChange}
+                                            onClear={searchCache.clearRecents}
+                                        />
+                                    ) : null}
+                                </>
+                            )}
                             ListEmptyComponent={
                                 <View style={styles.emptyResults}>
                                     <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
-                                        {isPlacesError && queryActive
-                                            ? 'places are quiet right now'
-                                            : immediateQuery.trim().length === 1
+                                        {immediateQuery.trim().length === 1
                                               ? 'type one more letter'
                                               : queryActive
                                                 ? 'no places found'
@@ -778,11 +871,11 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     searchInput: {
+        ...Type.body,
         flex: 1,
         height: 48,
         paddingVertical: 0,
         fontFamily: 'Manrope_500Medium',
-        fontSize: 15,
     },
     iconButton: {
         width: 48,
@@ -805,8 +898,8 @@ const styles = StyleSheet.create({
         gap: 5,
     },
     headerChipLabel: {
+        ...Type.metadata,
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
     },
     filterButton: {
         width: 34,
@@ -839,8 +932,7 @@ const styles = StyleSheet.create({
         letterSpacing: 1.8,
     },
     placeCount: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        ...Type.metadata,
     },
     resultsContent: {
         flexGrow: 1,

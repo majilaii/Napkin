@@ -81,6 +81,7 @@ export function ListDetailSheet({
             onSettle={(snap) => onSnapSettle(snap)}
             onPanStart={onPanStart}
             backgroundColor={palette.background}
+            handleColor={palette.ruleWarmNib}
             renderHeader={() => <ListDetailHeader {...headerProps} />}
             renderContent={({ onScroll, scrollEnabled }) => editing ? (
                 reorder ? (

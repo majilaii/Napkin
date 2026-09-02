@@ -41,6 +41,7 @@ import {
 import {
     useLazyBackfillRestaurant,
     useLookupByPlaceId,
+    shouldLookupPlaceDetails,
 } from '@/hooks/search/useLookupByPlaceId';
 import {
     FeaturedListsSection,
@@ -161,9 +162,11 @@ export default function RestaurantScreen() {
         ?? (isGhost ? undefined : restaurantId ?? undefined);
     const tiktokSource = useMyTikTokSourceForRestaurant(earlyPersistedId, user?.id);
 
-    const payloadIsThin = !!parsedPlacePayload
-        && (parsedPlacePayload.latitude == null || parsedPlacePayload.googleRating === undefined);
-    const needsPlaceLookup = isGhost && !!placeId && (!parsedPlacePayload || payloadIsThin);
+    const needsPlaceLookup = shouldLookupPlaceDetails({
+        isGhost,
+        placeId,
+        placePayload: parsedPlacePayload,
+    });
     const placeLookup = useLookupByPlaceId(placeId ?? null, { enabled: needsPlaceLookup });
     const ghostSource = useMemo(() => {
         if (!isGhost || (!parsedPlacePayload && !placeLookup.data)) return null;

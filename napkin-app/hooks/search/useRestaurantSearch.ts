@@ -165,7 +165,12 @@ export function useRestaurantSearch(
     results: SearchResults;
     isLoading: boolean;
     isPlacesError: boolean;
+    isPersistedError: boolean;
+    placesError: Error | null;
+    persistedError: Error | null;
     refetch: () => void;
+    refetchPlaces: () => void;
+    refetchPersisted: () => void;
     coords: SearchCoordinates | null;
     permissionStatus: NearbyPermissionStatus | null;
     locationStatus: NearbyLocationStatus;
@@ -281,21 +286,44 @@ export function useRestaurantSearch(
         !cachedResult &&
         enabled &&
         (!locationResolved || placesQuery.isLoading || persistedQuery.isLoading);
-    const isPlacesError = !cachedResult && placesQuery.isError;
+    const placesError = placesQuery.error instanceof Error ? placesQuery.error : null;
+    const persistedError = persistedQuery.error instanceof Error ? persistedQuery.error : null;
+    const isPlacesError = placesQuery.isError;
+    const isPersistedError = persistedQuery.isError;
+
+    const clearCombinedCache = () => {
+        searchCache.remove(cacheUserId, trimmed, localityBucket);
+    };
+    const refetchPlaces = () => {
+        if (!enabled) return;
+        clearCombinedCache();
+        void placesQuery.refetch();
+    };
+    const refetchPersisted = () => {
+        if (!enabled) return;
+        clearCombinedCache();
+        void persistedQuery.refetch();
+    };
 
     return {
         results,
         isLoading,
         isPlacesError,
+        isPersistedError,
+        placesError,
+        persistedError,
         coords: locationAvailable ? nearbyCoords : null,
         permissionStatus: locationAvailable ? nearbyPermissionStatus : null,
         locationStatus: nearbyLocationStatus,
         locationSettled,
         requestLocation,
+        refetchPlaces,
+        refetchPersisted,
         refetch: () => {
             if (!enabled) return;
-            placesQuery.refetch();
-            persistedQuery.refetch();
+            clearCombinedCache();
+            void placesQuery.refetch();
+            void persistedQuery.refetch();
         },
     };
 }

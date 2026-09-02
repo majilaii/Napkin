@@ -69,3 +69,22 @@ describe('transitionPlacesSegment', () => {
         expect(transitionPlacesSegment(base, 'people', true)).toBe(base);
     });
 });
+
+describe('queryForPlacesRouteArrival', () => {
+    it('clears a stale saved query when mode=lists arrives without q', () => {
+        jest.resetModules();
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { queryForPlacesRouteArrival } = require('../placesScreenState');
+
+        expect(queryForPlacesRouteArrival('old dinner', undefined, 'lists')).toBe('');
+    });
+
+    it('keeps an explicit q and retains state for an ordinary tab arrival', () => {
+        jest.resetModules();
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { queryForPlacesRouteArrival } = require('../placesScreenState');
+
+        expect(queryForPlacesRouteArrival('old dinner', '  paris  ', 'people')).toBe('paris');
+        expect(queryForPlacesRouteArrival('old dinner', undefined, null)).toBe('old dinner');
+    });
+});

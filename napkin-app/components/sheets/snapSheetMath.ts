@@ -6,26 +6,54 @@ export const HALF: Snap = 1;
 export const FULL: Snap = 2;
 export const PEEK_FLOOR = 176;
 
-const PEEK_RATIO = 0.16;
-const HALF_RATIO = 0.56;
-const FULL_RATIO = 0.92;
+export type SnapMetrics = Readonly<{
+    peekRatio: number;
+    peekFloor: number;
+    halfRatio: number;
+    fullRatio: number;
+}>;
+
+export const DEFAULT_SNAP_METRICS: SnapMetrics = Object.freeze({
+    peekRatio: 0.16,
+    peekFloor: PEEK_FLOOR,
+    halfRatio: 0.56,
+    fullRatio: 0.92,
+});
+
+/** Founder-approved Places artboard: sheet top rests about 250pt above the nav. */
+export const PLACES_SNAP_METRICS: SnapMetrics = Object.freeze({
+    ...DEFAULT_SNAP_METRICS,
+    peekRatio: 0,
+    peekFloor: 250,
+});
+
 const PROJECTION_SECONDS = 0.2;
 
-export function sheetHeight(H: number): number {
-    return H * FULL_RATIO;
+export function sheetHeight(H: number, metrics: SnapMetrics = DEFAULT_SNAP_METRICS): number {
+    return H * metrics.fullRatio;
 }
 
-export function visibleHeight(H: number, snap: Snap): number {
-    if (snap === FULL) return H * FULL_RATIO;
-    if (snap === HALF) return H * HALF_RATIO;
-    return Math.max(H * PEEK_RATIO, PEEK_FLOOR);
+export function visibleHeight(
+    H: number,
+    snap: Snap,
+    metrics: SnapMetrics = DEFAULT_SNAP_METRICS,
+): number {
+    if (snap === FULL) return H * metrics.fullRatio;
+    if (snap === HALF) return H * metrics.halfRatio;
+    return Math.min(
+        H * metrics.fullRatio,
+        Math.max(H * metrics.peekRatio, metrics.peekFloor),
+    );
 }
 
-export function offsetsFor(H: number): [number, number, number] {
-    const full = H * FULL_RATIO;
+export function offsetsFor(
+    H: number,
+    metrics: SnapMetrics = DEFAULT_SNAP_METRICS,
+): [number, number, number] {
+    const full = H * metrics.fullRatio;
     return [
-        full - Math.max(H * PEEK_RATIO, PEEK_FLOOR),
-        full - H * HALF_RATIO,
+        full - visibleHeight(H, PEEK, metrics),
+        full - H * metrics.halfRatio,
         0,
     ];
 }

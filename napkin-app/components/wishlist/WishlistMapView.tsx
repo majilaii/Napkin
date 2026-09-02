@@ -142,8 +142,6 @@ interface Props {
     onSelectedChange?: (id: string | null) => void;
     /** Settled sheet height only; feeds native map padding and bottom chrome. */
     bottomInset?: number;
-    /** Takes precedence over onOpenRestaurant (including synthetic place: ids). */
-    onOpenItem?: (item: WishlistMapItem) => void;
     /**
      * TICKET-124: open a followee's review (entry-detail). Provided by the
      * network layer only; when a selected pin carries `entryId` AND this is set,
@@ -583,7 +581,6 @@ export function WishlistMapView({
     selectedId: controlledSelectedId,
     onSelectedChange,
     bottomInset,
-    onOpenItem,
     onOpenReview,
     onSwitchToList,
     listChip,
@@ -612,10 +609,12 @@ export function WishlistMapView({
     const selectedId = isSelectionControlled
         ? controlledSelectedId ?? null
         : internalSelectedId;
+    const onSelectedChangeRef = useRef(onSelectedChange);
+    onSelectedChangeRef.current = onSelectedChange;
     const setSelectedId = useCallback((next: string | null) => {
         setInternalSelectedId(next);
-        onSelectedChange?.(next);
-    }, [onSelectedChange]);
+        onSelectedChangeRef.current?.(next);
+    }, []);
     useEffect(() => {
         if (isSelectionControlled) setInternalSelectedId(controlledSelectedId ?? null);
     }, [controlledSelectedId, isSelectionControlled]);
@@ -932,13 +931,8 @@ export function WishlistMapView({
     }, [setSelectedId]);
 
     const handleOpenRestaurant = useCallback((restaurantId: string) => {
-        const item = items.find((candidate) => candidate.id === restaurantId);
-        if (item && onOpenItem) {
-            onOpenItem(item);
-            return;
-        }
         onOpenRestaurant(restaurantId);
-    }, [items, onOpenItem, onOpenRestaurant]);
+    }, [onOpenRestaurant]);
 
     const bottomChromeInset = bottomInset ?? insets.bottom + NAV_CLEARANCE;
 

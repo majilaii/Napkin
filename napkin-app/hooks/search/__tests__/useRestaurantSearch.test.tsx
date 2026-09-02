@@ -3,7 +3,6 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { callEdgeFn } from '@/lib/edgeInvoke';
-import { selectNearbyPinned } from '@/components/search/emptyStateUtils';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { searchCache } from '../searchCache';
 import { toCoordsBucket, useRestaurantSearch } from '../useRestaurantSearch';
@@ -74,6 +73,69 @@ describe('useRestaurantSearch cache and location lifecycle', () => {
         });
         await waitFor(() => expect(mockCallEdgeFn).toHaveBeenCalledTimes(2));
     });
+
+    it('propagates a persisted-source error and its dedicated retry', async () => {
+        mockCallEdgeFn.mockImplementation(async (name) => {
+            if (name === 'restaurant-history') throw new Error('persisted unavailable');
+            return [];
+        });
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const { result } = renderHook(
+            () => useRestaurantSearch('Parisik', 'user-1'),
+            { wrapper: wrapper(queryClient) },
+        );
+
+        await waitFor(
+            () => expect(result.current.isPersistedError).toBe(true),
+            { timeout: 3500 },
+        );
+        expect(result.current.persistedError?.message).toBe('persisted unavailable');
+
+        const beforeRetry = mockCallEdgeFn.mock.calls.filter(
+            ([name]) => name === 'restaurant-history',
+        ).length;
+        act(() => result.current.refetchPersisted());
+        await waitFor(() => expect(
+            mockCallEdgeFn.mock.calls.filter(([name]) => name === 'restaurant-history').length,
+        ).toBeGreaterThan(beforeRetry));
+    });
+
+    it('keeps warm rows visible when a source refetch fails', async () => {
+        const place = {
+            id: 'ChIJwarm',
+            name: 'Warm row',
+            city: 'London',
+            cuisine: 'Bistro',
+            photoReference: null,
+            photoAttributionHtml: null,
+            formattedAddress: 'London',
+            latitude: 51.5,
+            longitude: -0.1,
+            googleRating: 4.2,
+        };
+        mockCallEdgeFn.mockImplementation(async (name) => (
+            name === 'places-search' ? [place] : EMPTY_PERSISTED
+        ));
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const { result } = renderHook(
+            () => useRestaurantSearch('Warm', 'user-1'),
+            { wrapper: wrapper(queryClient) },
+        );
+        await waitFor(() => expect(result.current.results.morePlaces).toHaveLength(1));
+
+        mockCallEdgeFn.mockImplementation(async (name) => {
+            if (name === 'places-search') throw new Error('places unavailable');
+            return EMPTY_PERSISTED;
+        });
+        act(() => result.current.refetchPlaces());
+
+        await waitFor(
+            () => expect(result.current.isPlacesError).toBe(true),
+            { timeout: 3500 },
+        );
+        expect(result.current.results.morePlaces.map((row) => row.name)).toEqual(['Warm row']);
+    });
+
     it('waits through granted-with-coordinates-pending and sends one biased Places query', async () => {
         let resolvePosition!: (value: {
             coords: { latitude: number; longitude: number };
@@ -150,44 +212,21 @@ describe('useRestaurantSearch cache and location lifecycle', () => {
         await waitFor(() => expect(mockCallEdgeFn).toHaveBeenCalledTimes(4));
     });
 
-    it('grant updates coords, nearby pins, request bucket, and fallback opt-in without remount', async () => {
+    it('grant updates coords, request bucket, and fallback opt-in without remount', async () => {
         const queryClient = new QueryClient({
             defaultOptions: { queries: { retry: false } },
         });
-        const wishlistItem = {
-            id: 'wish-1',
-            note: null,
-            created_at: '2026-09-01T00:00:00Z',
-            source: null,
-            extraction_status: 'resolved' as const,
-            restaurant: {
-                id: 'restaurant-1',
-                name: 'Near pin',
-                address: '1 Test Street',
-                city: 'London',
-                country: 'United Kingdom',
-                photo_url: null,
-                cuisine: null,
-                google_rating: null,
-                price_level: null,
-                external_id: 'place-near',
-                lat: 51.51,
-                lng: -0.11,
-            },
-        };
         const { result } = renderHook(() => {
             const search = useRestaurantSearch('Parisik', 'user-1', {
                 grantedLocationBias: true,
             });
             return {
                 search,
-                nearby: selectNearbyPinned([wishlistItem], search.coords),
                 bucket: toCoordsBucket(search.coords),
             };
         }, { wrapper: wrapper(queryClient) });
 
         await waitFor(() => expect(result.current.search.permissionStatus).toBe('undetermined'));
-        expect(result.current.nearby).toEqual([]);
         expect(result.current.bucket).toBeNull();
 
         await act(async () => {
@@ -196,7 +235,6 @@ describe('useRestaurantSearch cache and location lifecycle', () => {
 
         await waitFor(() => expect(result.current.bucket).toBe('51.5,-0.1'));
         expect(result.current.search.permissionStatus).toBe('granted');
-        expect(result.current.nearby).toHaveLength(1);
         await waitFor(() => {
             const placesCalls = mockCallEdgeFn.mock.calls.filter(([name]) => name === 'places-search');
             expect(placesCalls).toHaveLength(2);

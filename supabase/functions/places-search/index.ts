@@ -144,6 +144,10 @@ function textCandidateToPlace(candidate: SearchCandidate) {
         name: candidate.name,
         formattedAddress: candidate.formattedAddress,
         city: candidate.city,
+        // Text Search deliberately uses the frozen Pro mask, not the full
+        // Details mask. The detail screen may therefore enrich this true ghost
+        // once, while complete payloads continue to bypass Place Details.
+        deferred: true,
         ...(candidate.fartherAfield === true ? { fartherAfield: true } : {}),
     };
 }

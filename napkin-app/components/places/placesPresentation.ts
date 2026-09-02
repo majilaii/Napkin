@@ -34,6 +34,38 @@ export interface PlacesRatingPresentation {
     tone: 'amber' | 'muted' | 'faint';
 }
 
+export type PlacesSource = 'places' | 'persisted' | 'wishlist' | 'spots';
+export type PlacesFailurePresentation = {
+    kind: 'none' | 'broken' | 'inline';
+    sources: PlacesSource[];
+};
+
+/**
+ * Intended-empty is allowed only after every active source succeeds. A failed
+ * cold source gets the full retry treatment; warm rows stay visible with the
+ * one-line refresh affordance.
+ */
+export function resolvePlacesFailurePresentation(args: {
+    queryActive: boolean;
+    activeLayer: 'pinned' | 'been';
+    hasCachedRows: boolean;
+    placesFailed: boolean;
+    persistedFailed: boolean;
+    wishlistFailed: boolean;
+    spotsFailed: boolean;
+}): PlacesFailurePresentation {
+    const sources: PlacesSource[] = args.queryActive
+        ? [
+            ...(args.placesFailed ? ['places' as const] : []),
+            ...(args.persistedFailed ? ['persisted' as const] : []),
+        ]
+        : args.activeLayer === 'pinned'
+            ? (args.wishlistFailed ? ['wishlist'] : [])
+            : (args.spotsFailed ? ['spots'] : []);
+    if (sources.length === 0) return { kind: 'none', sources };
+    return { kind: args.hasCachedRows ? 'inline' : 'broken', sources };
+}
+
 export function resolvePlacesProjection<T>(
     activeSegment: SearchMode,
     current: T,

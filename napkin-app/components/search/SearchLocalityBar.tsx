@@ -229,8 +229,8 @@ const styles = StyleSheet.create({
     compactLabel: {
         flex: 0,
         maxWidth: 102,
+        ...Type.metadata,
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
     },
     modalRoot: {
         flex: 1,

@@ -17,7 +17,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
 import {
     FULL,
     HALF,
@@ -27,6 +27,7 @@ import {
     sheetHeight,
     visibleHeight,
     type Snap,
+    type SnapMetrics,
 } from './snapSheetMath';
 
 export interface SnapSheetHandle {
@@ -51,6 +52,8 @@ interface SnapSheetProps {
     renderHeader?: () => React.ReactNode;
     renderContent: (context: SnapSheetContentContext) => React.ReactNode;
     backgroundColor?: string;
+    handleColor?: string;
+    metrics?: SnapMetrics;
     style?: StyleProp<ViewStyle>;
 }
 
@@ -70,11 +73,13 @@ export function SnapSheet({
     renderHeader,
     renderContent,
     backgroundColor = Colors.light.surfaceNote,
+    handleColor = Colors.light.ruleWarmNib,
+    metrics,
     style,
 }: SnapSheetProps) {
-    const offsets = useMemo(() => offsetsFor(H), [H]);
+    const offsets = useMemo(() => offsetsFor(H, metrics), [H, metrics]);
     const firstSnap = locked ? lockedSnap : initialSnap;
-    const translateY = useSharedValue(offsetsFor(H)[firstSnap]);
+    const translateY = useSharedValue(offsetsFor(H, metrics)[firstSnap]);
     const snapIndex = useSharedValue<Snap>(firstSnap);
 
     // Disjoint gesture state. Ownership is captured onBegin, never onStart.
@@ -93,7 +98,7 @@ export function SnapSheet({
     const disableScroll = () => setScrollEnabled(false);
     const commitSettle = (snap: Snap) => {
         setScrollEnabled(snap === FULL);
-        onSettle(snap, visibleHeight(H, snap));
+        onSettle(snap, visibleHeight(H, snap, metrics));
     };
     const settle = (snap: Snap) => {
         'worklet';
@@ -108,13 +113,13 @@ export function SnapSheet({
         return Math.min(Math.max(value, 0), offsets[0]);
     };
 
-    // Initial metric/rotation alignment. Settled height is emitted only at rest.
+    // Initial metric/rotation alignment. Emit synchronously so callers receive
+    // the mount detent even when the timing callback is interrupted.
     useEffect(() => {
         if (H <= 0) return;
         const snap = snapIndex.value;
-        translateY.value = withTiming(offsets[snap], { duration: 220 }, (finished) => {
-            if (finished) runOnJS(commitSettle)(snap);
-        });
+        translateY.value = withTiming(offsets[snap], { duration: 220 });
+        commitSettle(snap);
         // shared values and the render-local worklet are intentionally omitted.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [H, offsets]);
@@ -187,7 +192,7 @@ export function SnapSheet({
         <Animated.View
             style={[
                 styles.sheet,
-                { height: sheetHeight(H), backgroundColor },
+                { height: sheetHeight(H, metrics), backgroundColor },
                 style,
                 animatedStyle,
             ]}
@@ -195,7 +200,7 @@ export function SnapSheet({
             <GestureDetector gesture={headerPan}>
                 <View collapsable={false}>
                     <View style={styles.handleZone}>
-                        <View style={styles.handle} />
+                        <View style={[styles.handle, { backgroundColor: handleColor }]} />
                     </View>
                     {renderHeader?.()}
                 </View>
@@ -215,25 +220,20 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
+        borderTopLeftRadius: Radius.xl,
+        borderTopRightRadius: Radius.xl,
         overflow: 'hidden',
-        shadowColor: '#1c1c19',
-        shadowOffset: { width: 0, height: -6 },
-        shadowOpacity: 0.08,
-        shadowRadius: 24,
-        elevation: 12,
+        ...Shadow.nav,
     },
     handleZone: {
         alignItems: 'center',
-        paddingTop: 8,
-        paddingBottom: 6,
+        paddingTop: Spacing.sheet.handleTop,
+        paddingBottom: Spacing.sheet.handleBottom,
     },
     handle: {
-        width: 36,
-        height: 4,
-        borderRadius: 2,
-        backgroundColor: 'rgba(28,28,25,0.12)',
+        width: Spacing.sheet.handleWidth,
+        height: Spacing.sheet.handleHeight,
+        borderRadius: Radius.full,
     },
     content: {
         flex: 1,

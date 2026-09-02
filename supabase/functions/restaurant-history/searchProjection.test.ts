@@ -1,5 +1,6 @@
 import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
+    enrichSearchRows,
     projectSearchRows,
     resolveVisibleFolloweeEntryIds,
     type SearchRatingEntry,
@@ -105,4 +106,63 @@ Deno.test('followee candidates call fn_visible_entry_ids with require_content=tr
             p_require_content: true,
         },
     }]);
+});
+
+Deno.test('a soft-deleted wishlist item does not set is_pinned', async () => {
+    class QueryBuilder {
+        constructor(private rows: Array<Record<string, unknown>>) {}
+
+        eq(column: string, value: unknown) {
+            this.rows = this.rows.filter((row) => row[column] === value);
+            return this;
+        }
+
+        is(column: string, value: unknown) {
+            this.rows = this.rows.filter((row) => (
+                value === null ? row[column] == null : row[column] === value
+            ));
+            return this;
+        }
+
+        in(column: string, values: unknown[]) {
+            this.rows = this.rows.filter((row) => values.includes(row[column]));
+            return this;
+        }
+
+        not(column: string, operator: string, value: unknown) {
+            if (operator === 'is' && value === null) {
+                this.rows = this.rows.filter((row) => row[column] != null);
+            }
+            return this;
+        }
+
+        then<TResult1 = { data: Array<Record<string, unknown>>; error: null }>(
+            onfulfilled?: ((value: { data: Array<Record<string, unknown>>; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+        ) {
+            return Promise.resolve({ data: this.rows, error: null }).then(onfulfilled);
+        }
+    }
+
+    const rowsByTable: Record<string, Array<Record<string, unknown>>> = {
+        wishlist_items: [{
+            user_id: VIEWER,
+            restaurant_id: 'restaurant-deleted',
+            deleted_at: '2026-09-02T09:00:00Z',
+        }],
+        follows: [],
+        entries: [],
+    };
+    const client = {
+        from: (table: string) => ({
+            select: (_columns: string) => new QueryBuilder(rowsByTable[table] ?? []),
+        }),
+        rpc: () => Promise.resolve({ data: [], error: null }),
+    } as unknown as Parameters<typeof enrichSearchRows>[0];
+
+    const [row] = await enrichSearchRows(client, VIEWER, [{
+        id: 'restaurant-deleted',
+        google_rating: null,
+    }]);
+
+    assertEquals(row.is_pinned, false);
 });

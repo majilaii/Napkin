@@ -52,6 +52,8 @@ export interface PlacesResult {
     phone?: string | null;
     google_maps_uri?: string | null;
     hours?: { weekdayDescriptions: string[] } | null;
+    /** Text Search rows still need a one-time Details enrichment on detail open. */
+    deferred?: boolean;
     /** True only for rows returned by the opt-in global fallback pass. */
     fartherAfield?: boolean;
     /**
@@ -249,6 +251,10 @@ export const searchCache = {
         // Re-insert to update position (Map preserves insertion order)
         cache.delete(key);
         cache.set(key, result);
+    },
+
+    remove(userId: string, query: string, localityBucket?: string | null): void {
+        cache.delete(resultKey(userId, query, localityBucket));
     },
 
     addRecent(query: string): void {

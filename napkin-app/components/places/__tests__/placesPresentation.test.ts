@@ -4,7 +4,7 @@ import {
     deriveDistanceOrigin,
     presentPlacesRating,
     projectPlacesPins,
-    restaurantRouteForRow,
+    resolvePlacesFailurePresentation,
     resolvePlacesProjection,
     searchRowsToDisplayRows,
 } from '../placesPresentation';
@@ -74,21 +74,6 @@ describe('Places projection', () => {
         expect(pin.searchRow?.place).toEqual(ghost.place);
     });
 
-    it('row and pin navigation carry a payload that suppresses Place Details lookup', () => {
-        const [row] = searchRowsToDisplayRows([ghost]);
-        const routeFromRow = restaurantRouteForRow(row)!;
-        const routeFromPin = restaurantRouteForRow({ ...row, searchRow: projectPlacesPins([row])[0].searchRow })!;
-        for (const route of [routeFromRow, routeFromPin]) {
-            const payload = JSON.parse(route.params.placePayload);
-            // Mirrors the existing restaurant-page lookup gate without touching
-            // that in-flight screen: full payloads have coords + a defined
-            // googleRating, so useLookupByPlaceId stays disabled.
-            const payloadIsThin = payload.latitude == null || payload.googleRating === undefined;
-            const lookupEnabled = !!route.params.placeId && payloadIsThin;
-            expect(lookupEnabled).toBe(false);
-        }
-    });
-
     it('suppresses distance and preserves server order outside auto locality', () => {
         const london = { latitude: 51.5, longitude: -0.1 };
         expect(deriveDistanceOrigin({ city: 'Paris' }, london)).toBeNull();
@@ -107,5 +92,36 @@ describe('Places projection', () => {
     it('composes only present metadata tokens', () => {
         const [row] = searchRowsToDisplayRows([{ ...ghost, friendsBeenCount: 2, isPinned: true }]);
         expect(composeRowMeta(row, '0.3 mi')).toBe('bistro · 0.3 mi · 2 friends been · pinned');
+    });
+
+    it('treats an uncached wishlist failure as broken-empty and a warm failure inline', () => {
+        const base = {
+            queryActive: false,
+            activeLayer: 'pinned' as const,
+            placesFailed: false,
+            persistedFailed: false,
+            wishlistFailed: true,
+            spotsFailed: false,
+        };
+        expect(resolvePlacesFailurePresentation({ ...base, hasCachedRows: false })).toEqual({
+            kind: 'broken',
+            sources: ['wishlist'],
+        });
+        expect(resolvePlacesFailurePresentation({ ...base, hasCachedRows: true })).toEqual({
+            kind: 'inline',
+            sources: ['wishlist'],
+        });
+    });
+
+    it('never presents a persisted-source failure as successful empty metadata', () => {
+        expect(resolvePlacesFailurePresentation({
+            queryActive: true,
+            activeLayer: 'pinned',
+            hasCachedRows: false,
+            placesFailed: false,
+            persistedFailed: true,
+            wishlistFailed: false,
+            spotsFailed: false,
+        })).toEqual({ kind: 'broken', sources: ['persisted'] });
     });
 });

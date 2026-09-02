@@ -51,6 +51,21 @@ export function transitionPlacesSegment(
     return { ...current, activeSegment: next };
 }
 
+/**
+ * A routed Lists/People arrival is a fresh search intent. With no explicit `q`
+ * it must open on that pane's guidance state instead of inheriting the last
+ * query saved by the Places screen. Other arrivals retain the per-user query.
+ */
+export function queryForPlacesRouteArrival(
+    persistedQuery: string,
+    incomingQuery: string | undefined,
+    requestedMode: SearchMode | null,
+): string {
+    if (incomingQuery !== undefined) return incomingQuery.trim();
+    if (requestedMode === 'lists' || requestedMode === 'people') return '';
+    return persistedQuery;
+}
+
 function cleanUserId(userId: string | null | undefined): string | null {
     return userId?.trim() || null;
 }

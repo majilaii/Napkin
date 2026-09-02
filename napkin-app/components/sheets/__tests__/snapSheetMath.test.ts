@@ -1,18 +1,45 @@
-import * as legacy from '@/components/lists/listSheetMath';
-import * as shared from '../snapSheetMath';
+import {
+    DEFAULT_SNAP_METRICS,
+    FULL,
+    HALF,
+    PEEK,
+    PLACES_SNAP_METRICS,
+    listPanOwnsSheet,
+    offsetsFor,
+    resolveSnap,
+    sheetHeight,
+    visibleHeight,
+} from '../snapSheetMath';
 
-describe('snapSheetMath extraction parity', () => {
-    it.each([521, 700, 844])('keeps geometry byte-identical at H=%s', (H) => {
-        expect(shared.sheetHeight(H)).toBe(legacy.sheetHeight(H));
-        expect(shared.offsetsFor(H)).toEqual(legacy.offsetsFor(H));
-        for (const snap of [shared.PEEK, shared.HALF, shared.FULL] as const) {
-            expect(shared.visibleHeight(H, snap)).toBe(legacy.visibleHeight(H, snap));
-        }
+describe('snapSheetMath behavior', () => {
+    it('keeps the proven ListDetail defaults', () => {
+        const H = 800;
+        expect(DEFAULT_SNAP_METRICS).toEqual({
+            peekRatio: 0.16,
+            peekFloor: 176,
+            halfRatio: 0.56,
+            fullRatio: 0.92,
+        });
+        expect(sheetHeight(H)).toBeCloseTo(736);
+        expect(visibleHeight(H, PEEK)).toBe(176);
+        expect(visibleHeight(H, HALF)).toBeCloseTo(448);
+        expect(visibleHeight(H, FULL)).toBeCloseTo(736);
+        expect(offsetsFor(H)[0]).toBeCloseTo(560);
+        expect(offsetsFor(H)[1]).toBeCloseTo(288);
+        expect(offsetsFor(H)[2]).toBe(0);
+    });
+
+    it('gives Places a 250pt peek without changing the other detents', () => {
+        const H = 605;
+        expect(visibleHeight(H, PEEK, PLACES_SNAP_METRICS)).toBe(250);
+        expect(visibleHeight(H, HALF, PLACES_SNAP_METRICS)).toBeCloseTo(H * 0.56);
+        expect(visibleHeight(H, FULL, PLACES_SNAP_METRICS)).toBeCloseTo(H * 0.92);
+        expect(offsetsFor(H, PLACES_SNAP_METRICS)[PEEK]).toBeCloseTo(H * 0.92 - 250);
     });
 
     it('keeps ownership and projected settle decisions', () => {
-        expect(shared.listPanOwnsSheet(true, true, 1)).toBe(true);
-        expect(shared.listPanOwnsSheet(true, false, 40)).toBe(false);
-        expect(shared.resolveSnap(300, -900, shared.offsetsFor(700))).toBe(shared.FULL);
+        expect(listPanOwnsSheet(true, true, 1)).toBe(true);
+        expect(listPanOwnsSheet(true, false, 40)).toBe(false);
+        expect(resolveSnap(300, -900, offsetsFor(700))).toBe(FULL);
     });
 });

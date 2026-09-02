@@ -10,12 +10,12 @@ import React, { useCallback } from 'react';
 import {
     View,
     Text,
-    FlatList,
     Pressable,
     StyleSheet,
     ActivityIndicator,
     Keyboard,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -25,6 +25,7 @@ import {
     flattenPublicLists,
     type PublicListResult,
 } from '@/hooks/lists/useSearchPublicLists';
+import type { SnapSheetContentContext } from '@/components/sheets/SnapSheet';
 
 type Palette = typeof Colors.light;
 
@@ -33,6 +34,9 @@ interface Props {
     query: string;
     /** Debounced query — drives the actual search. */
     debouncedQuery: string;
+    /** Optional sheet adapter; legacy callers stay independently scrollable. */
+    scrollEnabled?: boolean;
+    onScroll?: SnapSheetContentContext['onScroll'];
 }
 
 function ResultRow({
@@ -66,7 +70,12 @@ function ResultRow({
     );
 }
 
-export function ListsSearchPane({ query, debouncedQuery }: Props) {
+export function ListsSearchPane({
+    query,
+    debouncedQuery,
+    scrollEnabled = true,
+    onScroll,
+}: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
     const router = useRouter();
@@ -109,11 +118,15 @@ export function ListsSearchPane({ query, debouncedQuery }: Props) {
     }
 
     return (
-        <FlatList
+        <Animated.FlatList
+            testID="lists-search-results"
             data={results}
             keyExtractor={(item) => item.id}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
+            scrollEnabled={scrollEnabled}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
             renderItem={({ item }) => (
                 <ResultRow list={item} palette={palette} onPress={handlePress} />
             )}
@@ -164,8 +177,7 @@ const styles = StyleSheet.create({
         lineHeight: 22,
     },
     meta: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 12,
+        ...Type.caption,
         marginTop: 2,
     },
     centered: {

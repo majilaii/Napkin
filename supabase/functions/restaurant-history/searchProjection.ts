@@ -37,6 +37,7 @@ type SearchProjectionQueryResult = {
 
 type SearchProjectionQueryBuilder = PromiseLike<SearchProjectionQueryResult> & {
     eq: (column: string, value: unknown) => SearchProjectionQueryBuilder;
+    is: (column: string, value: unknown) => SearchProjectionQueryBuilder;
     in: (column: string, values: unknown[]) => SearchProjectionQueryBuilder;
     not: (column: string, operator: string, value: unknown) => SearchProjectionQueryBuilder;
 };
@@ -149,6 +150,7 @@ export async function enrichSearchRows<T extends SearchRestaurantRow>(
             .from('wishlist_items')
             .select('restaurant_id')
             .eq('user_id', viewerId)
+            .is('deleted_at', null)
             .in('restaurant_id', restaurantIds),
         supabase
             .from('follows')
