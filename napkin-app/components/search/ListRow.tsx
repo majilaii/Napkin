@@ -8,7 +8,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, IconSize, Spacing, Type } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MyList } from '@/hooks/lists/useMyLists';
 
@@ -38,9 +38,9 @@ export function ListRow({ list, meta: metaOverride, onPress }: Props) {
             accessibilityRole="button"
             accessibilityLabel={list.title}
         >
-            {list.emoji ? <Text style={styles.emoji}>{list.emoji}</Text> : null}
             <View style={styles.textBlock}>
                 <View style={styles.titleRow}>
+                    {list.emoji ? <Text style={styles.emoji}>{list.emoji}</Text> : null}
                     <Text
                         style={[styles.title, { color: palette.text }]}
                         numberOfLines={1}
@@ -77,8 +77,7 @@ const styles = StyleSheet.create({
         gap: 2,
     },
     emoji: {
-        fontSize: IconSize.md,
-        marginRight: Spacing.sm,
+        ...Type.feedNoteRestaurant,
     },
     titleRow: {
         flexDirection: 'row',
