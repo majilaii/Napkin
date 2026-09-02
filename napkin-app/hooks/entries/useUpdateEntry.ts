@@ -42,7 +42,11 @@ export interface UpdateEntryInput {
     optimisticCompanions?: { user_id: string; display_name: string }[];
 }
 
-export function useUpdateEntry(entryId: string) {
+export function useUpdateEntry(
+    entryId: string,
+    restaurantId?: string | null,
+    userId?: string | null,
+) {
     const qc = useQueryClient();
 
     return useMutation({
@@ -165,6 +169,20 @@ export function useUpdateEntry(entryId: string) {
                 optimisticCompanions: _ignoredPreviews,
                 ...scalarPatch
             } = input;
+
+            // Entry detail knows the owner and restaurant even when a writer
+            // response is intentionally narrow (companions / hero photo).
+            const resultRow = data as {
+                user_id?: string;
+                restaurant_id?: string | null;
+            } | null;
+            const ownerId = resultRow?.user_id ?? userId;
+            if (ownerId) {
+                invalidateEntryTasteCaches(qc, ownerId, {
+                    restaurantId: resultRow?.restaurant_id ?? restaurantId ?? null,
+                });
+            }
+
             if (Object.keys(scalarPatch).length === 0) return;
 
             const patchEntry = (e: any) => (e?.id === entryId ? { ...e, ...scalarPatch } : e);
@@ -196,16 +214,6 @@ export function useUpdateEntry(entryId: string) {
                 );
             } catch (reconcileErr: any) {
                 console.warn('[useUpdateEntry] list-cache reconcile skipped:', reconcileErr?.message);
-            }
-
-            // TICKET-165: profile stats (rating histogram, dimension means,
-            // averages, counts) are server-derived from entries — refetch when a
-            // scalar edit lands. The scalar PATCH returns the row, so user_id is
-            // in hand; a companions-only edit never reaches here (early return
-            // above) and doesn't touch stats anyway.
-            const ownerId = (data as { user_id?: string } | null)?.user_id;
-            if (ownerId) {
-                invalidateEntryTasteCaches(qc, ownerId);
             }
 
             // mySolo cache still isn't reconciled here (uses the entry's user_id

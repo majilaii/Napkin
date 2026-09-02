@@ -21,12 +21,14 @@ const mockCallEdgeFn = callEdgeFn as jest.MockedFunction<typeof callEdgeFn>;
 
 const VIEWER_USER_ID = 'viewer-user-id';
 const SUPPER_ID = 'supper-1';
+const RESTAURANT_ID = 'restaurant-1';
 
 describe('useAddSupperTake', () => {
     it('forwards the complete approved photo list through the add-take action', async () => {
         mockEdgeFnResolves({
             id: 'entry-1',
             user_id: VIEWER_USER_ID,
+            restaurant_id: RESTAURANT_ID,
             supper_id: SUPPER_ID,
             rating: 4.5,
         });
@@ -78,6 +80,7 @@ describe('useAddSupperTake', () => {
         mockEdgeFnResolves({
             id: 'entry-1',
             user_id: VIEWER_USER_ID,
+            restaurant_id: RESTAURANT_ID,
             supper_id: SUPPER_ID,
             rating: 4.5,
         });
@@ -97,6 +100,9 @@ describe('useAddSupperTake', () => {
         });
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.taste(VIEWER_USER_ID),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.page(RESTAURANT_ID),
         });
     });
 

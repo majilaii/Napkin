@@ -290,7 +290,7 @@ export function useCreateEntryWithMerge() {
 
             // Profile stats, Spots, and Taste all include B's new entry,
             // regardless of whether the merge itself succeeds.
-            invalidateEntryTasteCaches(qc, user.id);
+            invalidateEntryTasteCaches(qc, user.id, { restaurantId: context.restaurant_id });
 
             const { nonce, entry_a_id, table_id, restaurant_id } = context;
             const { merge_outcome } = result;

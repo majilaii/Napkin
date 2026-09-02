@@ -103,11 +103,7 @@ export function useDeleteEntry() {
             // patch above only covers feed/activity/mySolo): the Diary scroll-back,
             // own-profile recents, and this user's restaurant history.
             qc.invalidateQueries({ queryKey: queryKeys.users.diary(userId) });
-            invalidateEntryTasteCaches(qc, userId);
-            if (restaurantId) {
-                qc.invalidateQueries({ queryKey: queryKeys.restaurants.page(restaurantId) });
-                qc.invalidateQueries({ queryKey: queryKeys.restaurants.userHistory(restaurantId, userId) });
-            }
+            invalidateEntryTasteCaches(qc, userId, { restaurantId });
             if (supperId) {
                 qc.invalidateQueries({ queryKey: queryKeys.suppers.detail(supperId) });
             }

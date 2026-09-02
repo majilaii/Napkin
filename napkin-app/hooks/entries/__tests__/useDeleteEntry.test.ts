@@ -12,6 +12,7 @@ jest.mock('@/lib/supabase', () => {
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
 
 const USER_ID = 'test-user-id';
+const RESTAURANT_ID = 'restaurant-1';
 const mockCallEdgeFn = callEdgeFn as jest.MockedFunction<typeof callEdgeFn>;
 
 describe('useDeleteEntry', () => {
@@ -24,12 +25,25 @@ describe('useDeleteEntry', () => {
         const { result, client } = renderHookWithClient(() => useDeleteEntry());
         const invalidate = jest.spyOn(client, 'invalidateQueries');
 
-        act(() => result.current.mutate({ entryId: 'entry-1', userId: USER_ID }));
+        act(() => result.current.mutate({
+            entryId: 'entry-1',
+            userId: USER_ID,
+            restaurantId: RESTAURANT_ID,
+        }));
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
         expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.users.profile(USER_ID) });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.users.spots(USER_ID) });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.users.taste(USER_ID) });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.page(RESTAURANT_ID),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.userHistory(RESTAURANT_ID, USER_ID),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.reviews(RESTAURANT_ID),
+        });
     });
 
     it('deletes through the entry lifecycle writer', async () => {
