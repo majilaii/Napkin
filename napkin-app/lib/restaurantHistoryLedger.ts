@@ -29,12 +29,6 @@ export function deriveLedgerStats(rows: SelfLogRow[]) {
     };
 }
 
-export function formatLedgerMeta(rows: SelfLogRow[]): string {
-    const stats = deriveLedgerStats(rows);
-    if (stats.count === 0 || !stats.first || !stats.last) return '';
-    return `${stats.count} visit${stats.count === 1 ? '' : 's'} · first ${stats.first} · last ${stats.last}`;
-}
-
 export type ElsewherePart =
     | { kind: 'text'; label: string; prefix: string }
     | { kind: 'list'; label: string; id: string; prefix: string };

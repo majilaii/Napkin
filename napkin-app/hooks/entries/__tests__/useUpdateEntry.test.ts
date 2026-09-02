@@ -114,5 +114,8 @@ describe('useUpdateEntry writer routing', () => {
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.restaurants.page(RESTAURANT_ID),
         });
+        expect(invalidate).not.toHaveBeenCalledWith({
+            queryKey: queryKeys.users.taste(USER_ID),
+        });
     });
 });

@@ -18,7 +18,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-import { invalidateEntryTasteCaches } from './invalidateEntryTaste';
+import {
+    invalidateEntryTasteCaches,
+    invalidateRestaurantEntryCaches,
+} from './invalidateEntryTaste';
 
 export interface UpdateEntryInput {
     rating?: number | null;
@@ -169,6 +172,7 @@ export function useUpdateEntry(
                 optimisticCompanions: _ignoredPreviews,
                 ...scalarPatch
             } = input;
+            const { photo_url: _ignoredPhoto, ...tasteScalarPatch } = scalarPatch;
 
             // Entry detail knows the owner and restaurant even when a writer
             // response is intentionally narrow (companions / hero photo).
@@ -177,13 +181,14 @@ export function useUpdateEntry(
                 restaurant_id?: string | null;
             } | null;
             const ownerId = resultRow?.user_id ?? userId;
-            if (ownerId) {
-                invalidateEntryTasteCaches(qc, ownerId, {
-                    restaurantId: resultRow?.restaurant_id ?? restaurantId ?? null,
-                });
-            }
+            const resolvedRestaurantId = resultRow?.restaurant_id ?? restaurantId ?? null;
 
-            if (Object.keys(scalarPatch).length === 0) return;
+            if (Object.keys(scalarPatch).length === 0) {
+                if (ownerId) {
+                    invalidateRestaurantEntryCaches(qc, ownerId, resolvedRestaurantId);
+                }
+                return;
+            }
 
             const patchEntry = (e: any) => (e?.id === entryId ? { ...e, ...scalarPatch } : e);
 
@@ -214,6 +219,19 @@ export function useUpdateEntry(
                 );
             } catch (reconcileErr: any) {
                 console.warn('[useUpdateEntry] list-cache reconcile skipped:', reconcileErr?.message);
+            }
+
+            if (Object.keys(tasteScalarPatch).length === 0) {
+                if (ownerId) {
+                    invalidateRestaurantEntryCaches(qc, ownerId, resolvedRestaurantId);
+                }
+                return;
+            }
+
+            if (ownerId) {
+                invalidateEntryTasteCaches(qc, ownerId, {
+                    restaurantId: resolvedRestaurantId,
+                });
             }
 
             // mySolo cache still isn't reconciled here (uses the entry's user_id

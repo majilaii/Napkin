@@ -126,7 +126,7 @@ describe('MemoriesStrip', () => {
         act(() => legacy.unmount());
     });
 
-    it('routes entry-backed photos and leaves photos without an entry inert', () => {
+    it('routes own and public entry photos with the correct scope and leaves unbacked photos inert', () => {
         const renderer = renderStrip({
             self_log: [selfRow({
                 entry_id: 'entry-tappable',
@@ -136,13 +136,16 @@ describe('MemoriesStrip', () => {
                 from_your_table: [],
                 from_others: [{ url: 'https://photos.test/inert.jpg' }],
             },
-            public_reviews: [],
+            public_reviews: [{
+                entry_id: 'entry-public',
+                photo_url: 'https://photos.test/public.jpg',
+            }],
         });
         const labelled = renderer.root
             .findAllByProps({ accessibilityLabel: 'photo from a visit' })
             .filter((node: any) => typeof node.type === 'string');
 
-        expect(labelled).toHaveLength(2);
+        expect(labelled).toHaveLength(3);
         expect(labelled[0].props.accessibilityRole).toBe('imagebutton');
         act(() => labelled[0].props.onPress());
         expect(mockPush).toHaveBeenCalledWith({
@@ -151,6 +154,12 @@ describe('MemoriesStrip', () => {
         });
         expect(labelled[1].props.accessibilityRole).toBeUndefined();
         expect(labelled[1].props.onPress).toBeUndefined();
+        expect(labelled[2].props.accessibilityRole).toBe('imagebutton');
+        act(() => labelled[2].props.onPress());
+        expect(mockPush).toHaveBeenLastCalledWith({
+            pathname: '/entry-detail',
+            params: { entryId: 'entry-public', viewAs: 'public' },
+        });
 
         act(() => renderer.unmount());
     });

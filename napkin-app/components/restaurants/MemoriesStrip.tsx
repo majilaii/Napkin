@@ -22,6 +22,7 @@ type MemoriesPayload = {
 export type MemoryTile = {
     url: string;
     entryId: string | null;
+    viewAs: 'public' | null;
 };
 
 export function buildMemoryTiles(payload: MemoriesPayload): MemoryTile[] {
@@ -29,11 +30,15 @@ export function buildMemoryTiles(payload: MemoriesPayload): MemoryTile[] {
 
     const tiles: MemoryTile[] = [];
     const seen = new Set<string>();
-    const add = (url: string | null | undefined, entryId?: string | null) => {
+    const add = (
+        url: string | null | undefined,
+        entryId?: string | null,
+        viewAs: MemoryTile['viewAs'] = null,
+    ) => {
         const normalizedUrl = url?.trim();
         if (!normalizedUrl || seen.has(normalizedUrl) || tiles.length >= 12) return;
         seen.add(normalizedUrl);
-        tiles.push({ url: normalizedUrl, entryId: entryId ?? null });
+        tiles.push({ url: normalizedUrl, entryId: entryId ?? null, viewAs });
     };
 
     const selfLog = [...(payload.self_log ?? [])].sort((a, b) => {
@@ -44,8 +49,12 @@ export function buildMemoryTiles(payload: MemoriesPayload): MemoryTile[] {
         for (const photo of row.photos) add(photo.url, row.entry_id);
     }
     for (const photo of payload.photos.from_your_table ?? []) add(photo.url, photo.entry_id);
-    for (const photo of payload.photos.from_others ?? []) add(photo.url, photo.entry_id);
-    for (const review of payload.public_reviews ?? []) add(review.photo_url, review.entry_id);
+    for (const photo of payload.photos.from_others ?? []) {
+        add(photo.url, photo.entry_id, 'public');
+    }
+    for (const review of payload.public_reviews ?? []) {
+        add(review.photo_url, review.entry_id, 'public');
+    }
 
     return tiles;
 }
@@ -119,7 +128,10 @@ export function MemoriesStrip({
                         key={tile.url}
                         onPress={() => router.push({
                             pathname: '/entry-detail',
-                            params: { entryId: tile.entryId! },
+                            params: {
+                                entryId: tile.entryId!,
+                                ...(tile.viewAs ? { viewAs: tile.viewAs } : {}),
+                            },
                         })}
                         accessibilityLabel="photo from a visit"
                         accessibilityRole="imagebutton"
