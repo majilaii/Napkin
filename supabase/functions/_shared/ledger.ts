@@ -3,6 +3,7 @@ import {
     type EntryVisibilityCandidate,
     type EntryVisibilityRpcClient,
 } from './entryVisibility.ts';
+import { reportError } from './report.ts';
 
 export const LEDGER_COHORT_CHUNK_SIZE = 100;
 export const LEDGER_RESTAURANT_CHUNK_SIZE = 100;
@@ -656,6 +657,7 @@ export async function loadRestaurantRegularNonFatal(
         return await loadRestaurantRegular(reader, viewerId, restaurantId, now);
     } catch (err) {
         console.error('[restaurant-history] regular unavailable (non-fatal):', err);
+        reportError(err, { fn: 'restaurant-history', action: 'page.regular' });
         return {
             data: { regular: null, regular_detail: null },
             metrics: emptyMetrics(),

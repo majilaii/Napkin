@@ -221,7 +221,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     monthLabel: {
-        minWidth: Spacing.hitTarget * 4,
+        minWidth: 160,
         textAlign: 'center',
         fontVariant: ['tabular-nums'],
     },
