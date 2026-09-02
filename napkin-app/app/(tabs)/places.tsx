@@ -10,6 +10,7 @@ import {
     FlatList,
     Keyboard,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -40,7 +41,12 @@ import {
 } from '@/components/search';
 import type { SearchMode } from '@/components/search';
 import { ErrorState, InlineErrorState } from '@/components/ErrorState';
-import { SnapSheet, type SnapSheetHandle } from '@/components/sheets/SnapSheet';
+import { PlacesListsPane } from '@/components/places/PlacesListsPane';
+import {
+    SnapSheet,
+    type SnapSheetContentContext,
+    type SnapSheetHandle,
+} from '@/components/sheets/SnapSheet';
 import {
     FULL,
     PLACES_SNAP_METRICS,
@@ -49,6 +55,8 @@ import {
 import {
     ClipTray,
     FilterTabsSheet,
+    HandoffSheet,
+    UnmappedSpotsSheet,
     WishlistMapView,
     type FilterOption,
     type WishlistMapItem,
@@ -60,25 +68,32 @@ import {
     priceFacets,
 } from '@/components/wishlist/mapFacets';
 import {
+    composeFriendCaptionMeta,
     composeRowMeta,
     composePlacesContentKey,
     decorateAndSortRows,
     deriveDistanceOrigin,
     filterPlacesLayerRows,
+    networkRowsToDisplayRows,
+    placesCountLabel,
+    placesListsContentBranch,
     placesSearchBranch,
+    placesViewToggle,
     presentPlacesRating,
     projectPlacesPins,
     resolvePlacesFailurePresentation,
+    resolvePlacesListsBranch,
     resolvePlacesProjection,
     restaurantRouteForRow,
     searchRowsToDisplayRows,
     selectNearbyPlaces,
+    shouldFetchNextPlacesPage,
     spotRowsToDisplayRows,
     wishlistRowsToDisplayRows,
     type DecoratedPlacesRow,
     type PlacesDisplayRow,
 } from '@/components/places/placesPresentation';
-import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
+import { Colors, IconSize, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
@@ -98,8 +113,10 @@ import {
     useRestaurantSearch,
 } from '@/hooks/search/useRestaurantSearch';
 import { useUserProfile } from '@/hooks/users';
+import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
-import { useMyLists, type MyList } from '@/hooks/lists/useMyLists';
+import { useMyLists } from '@/hooks/lists/useMyLists';
+import { useSavedLists } from '@/hooks/lists/useSavedLists';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useAuth } from '@/providers/AuthProvider';
@@ -168,6 +185,29 @@ function RatingLabel({ row, palette }: { row: PlacesDisplayRow; palette: Palette
     );
 }
 
+function SheetStatePane({
+    children,
+    scrollEnabled,
+    onScroll,
+}: {
+    children: React.ReactNode;
+    scrollEnabled: boolean;
+    onScroll: SnapSheetContentContext['onScroll'];
+}) {
+    return (
+        <Animated.FlatList
+            data={[] as string[]}
+            keyExtractor={(item) => item}
+            renderItem={() => null}
+            scrollEnabled={scrollEnabled}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            contentContainerStyle={styles.statePane}
+            ListEmptyComponent={<View style={styles.statePaneBody}>{children}</View>}
+        />
+    );
+}
+
 function ResultRow({
     item,
     palette,
@@ -190,7 +230,13 @@ function ResultRow({
                     <Text style={[styles.resultName, { color: palette.text }]} numberOfLines={1}>
                         {item.row.name}
                     </Text>
-                    <RatingLabel row={item.row} palette={palette} />
+                    {item.row.network ? (
+                        <Text style={[styles.friendCell, { color: palette.textMuted }]} numberOfLines={1}>
+                            {item.row.network.author.name}
+                        </Text>
+                    ) : (
+                        <RatingLabel row={item.row} palette={palette} />
+                    )}
                 </View>
                 {meta ? (
                     <Text style={[styles.resultMeta, { color: palette.textMuted }]} numberOfLines={1}>
@@ -277,7 +323,6 @@ export default function PlacesScreen() {
         ? routeRequestedSegment
         : storedSegment;
     const searchMode = routeWantsSearch || screenState.previousNonSearchSnap !== null;
-    const routeQuery = incomingQ?.trim() ?? '';
     const initialQuery = queryForPlacesRouteArrival(
         screenState.query,
         incomingQ,
@@ -285,10 +330,6 @@ export default function PlacesScreen() {
     );
     const [immediateQuery, setImmediateQuery] = useState(initialQuery);
     const [debouncedQuery, setDebouncedQuery] = useState(initialQuery);
-    const [segmentHeaderRevealed, setSegmentHeaderRevealed] = useState(
-        Boolean(routeQuery || requestedMode === 'lists' || requestedMode === 'people'
-            || screenState.query || screenState.activeSegment !== 'places'),
-    );
     const inputRef = useRef<TextInput>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const routeEffectHandledRef = useRef(false);
@@ -300,6 +341,7 @@ export default function PlacesScreen() {
     const [bottomInset, setBottomInset] = useState(() => (
         visibleHeight(sheetH, firstSnap, PLACES_SNAP_METRICS)
     ));
+    const [settledSnap, setSettledSnap] = useState(firstSnap);
     const placesListRef = useRef<FlatList<DecoratedPlacesRow>>(null);
     const restoredScrollRef = useRef(false);
 
@@ -316,9 +358,6 @@ export default function PlacesScreen() {
         );
         setImmediateQuery(nextQuery);
         setDebouncedQuery(nextQuery);
-        setSegmentHeaderRevealed(Boolean(
-            nextQuery || requestedMode === 'lists' || requestedMode === 'people',
-        ));
         restoredScrollRef.current = false;
         sheetRef.current?.snapTo(searchMode ? FULL : screenState.sheetSnap);
     }, [incomingQ, requestedMode, screenState.query, screenState.sheetSnap, searchMode, user?.id]);
@@ -335,7 +374,6 @@ export default function PlacesScreen() {
             ? enterPlacesSearch(screenState)
             : screenState;
         if (requestedMode) {
-            setSegmentHeaderRevealed(true);
             nextState = transitionPlacesSegment(
                 nextState,
                 requestedMode,
@@ -353,7 +391,6 @@ export default function PlacesScreen() {
             nextState = { ...nextState, query: nextRouteQuery };
             setImmediateQuery(nextRouteQuery);
             setDebouncedQuery(nextRouteQuery);
-            setSegmentHeaderRevealed(true);
         }
         patchScreenState(nextState);
         if (nextState.sheetSnap !== screenState.sheetSnap) {
@@ -408,28 +445,46 @@ export default function PlacesScreen() {
 
     const wishlistQuery = useMyWishlist(user?.id);
     const spotsQuery = useUserSpots(user?.id);
+    const networkQuery = useNetworkMapPins(user?.id, {
+        enabled: screenState.layerFilter === 'friends',
+    });
+    const listsShelfVisible = activeSegment === 'lists'
+        && immediateQuery.trim().length === 0;
     const myListsQuery = useMyLists(
-        searchMode && activeSegment === 'places' && immediateQuery.trim().length === 0
+        listsShelfVisible
+            || (searchMode && activeSegment === 'places' && immediateQuery.trim().length === 0)
             ? user?.id
             : null,
     );
+    const savedListsQuery = useSavedLists(user?.id, { enabled: listsShelfVisible });
     const wishlistData = wishlistQuery.data;
     const spotsData = spotsQuery.data;
     const recentQueries = useRecentSearches();
-    const pinnedRows = useMemo(
-        () => wishlistRowsToDisplayRows(
-            wishlistData?.pages.flatMap((page) => page.data ?? []) ?? [],
-        ),
+    const loadedWishlistItems = useMemo(
+        () => wishlistData?.pages.flatMap((page) => page.data ?? []) ?? [],
         [wishlistData],
     );
+    const pinnedRows = useMemo(
+        () => wishlistRowsToDisplayRows(loadedWishlistItems),
+        [loadedWishlistItems],
+    );
     const beenRows = useMemo(() => spotRowsToDisplayRows(spotsData ?? []), [spotsData]);
+    const friendsRows = useMemo(
+        () => networkRowsToDisplayRows(networkQuery.data ?? []),
+        [networkQuery.data],
+    );
     const allLayerRows = useMemo(
-        () => filterPlacesLayerRows('all', pinnedRows, beenRows),
-        [beenRows, pinnedRows],
+        () => filterPlacesLayerRows('all', pinnedRows, beenRows, friendsRows),
+        [beenRows, friendsRows, pinnedRows],
     );
     const layerRows = useMemo(
-        () => filterPlacesLayerRows(screenState.layerFilter, pinnedRows, beenRows),
-        [beenRows, pinnedRows, screenState.layerFilter],
+        () => filterPlacesLayerRows(
+            screenState.layerFilter,
+            pinnedRows,
+            beenRows,
+            friendsRows,
+        ),
+        [beenRows, friendsRows, pinnedRows, screenState.layerFilter],
     );
 
     const mergedSearchRows = useMemo(
@@ -442,7 +497,9 @@ export default function PlacesScreen() {
         ? wishlistQuery.isLoading || spotsQuery.isLoading
         : screenState.layerFilter === 'pinned'
           ? wishlistQuery.isLoading
-          : spotsQuery.isLoading;
+          : screenState.layerFilter === 'been'
+            ? spotsQuery.isLoading
+            : networkQuery.isLoading;
     const failurePresentation = resolvePlacesFailurePresentation({
         queryActive,
         layerFilter: screenState.layerFilter,
@@ -451,6 +508,7 @@ export default function PlacesScreen() {
         persistedFailed: isPersistedError,
         wishlistFailed: wishlistQuery.isError,
         spotsFailed: spotsQuery.isError,
+        networkFailed: networkQuery.isError,
     });
     const [cuisineFilter, setCuisineFilter] = useState<string | null>(null);
     const [priceFilter, setPriceFilter] = useState<string | null>(null);
@@ -463,6 +521,18 @@ export default function PlacesScreen() {
         })),
         [cityFilter, cuisineFilter, priceFilter, sourceRows],
     );
+    const unmappedItems = useMemo(
+        () => loadedWishlistItems.filter((item) => {
+            const [row] = wishlistRowsToDisplayRows([item]);
+            return row && (row.lat == null || row.lng == null);
+        }),
+        [loadedWishlistItems],
+    );
+    const unmappableCount = !searchMode
+        && immediateQuery.trim().length === 0
+        && (screenState.layerFilter === 'all' || screenState.layerFilter === 'pinned')
+        ? unmappedItems.length
+        : 0;
     const decoratedRows = useMemo(
         () => decorateAndSortRows(filteredRows, distanceOrigin),
         [distanceOrigin, filteredRows],
@@ -471,6 +541,14 @@ export default function PlacesScreen() {
         () => selectNearbyPlaces(allLayerRows, distanceOrigin),
         [allLayerRows, distanceOrigin],
     );
+    const listsShelfBranch = resolvePlacesListsBranch({
+        myCount: myListsQuery.data?.length ?? 0,
+        savedCount: savedListsQuery.data?.length ?? 0,
+        myLoading: myListsQuery.isLoading,
+        savedLoading: savedListsQuery.isLoading,
+        myError: myListsQuery.isError,
+        savedError: savedListsQuery.isError,
+    });
     const searchGuidanceBranch = placesSearchBranch(immediateQuery);
     // Unfreeze on the DEBOUNCED branch: flipping lock/scrim/projection on the
     // immediate keystroke stalls the JS thread mid-burst and drops characters.
@@ -490,7 +568,7 @@ export default function PlacesScreen() {
     // scroll surface, so it must join the key or a stale offset survives A→B.
     const contentQueryKey = debouncedQuery.trim().toLowerCase();
     const segmentContentBranch = activeSegment === 'lists'
-        ? immediateQuery.trim().length < 2 ? 'guidance' : 'results'
+        ? placesListsContentBranch(immediateQuery, listsShelfBranch)
         : activeSegment === 'people'
           ? immediateQuery.trim().length === 0 ? 'guidance' : 'results'
           : searchMode
@@ -502,6 +580,11 @@ export default function PlacesScreen() {
         branch: segmentContentBranch,
         query: contentQueryKey,
     });
+    const paginatedBrowse = !searchMode
+        && activeSegment === 'places'
+        && (screenState.layerFilter === 'all' || screenState.layerFilter === 'pinned');
+    const placesHaveMore = paginatedBrowse && !!wishlistQuery.hasNextPage;
+    const viewToggle = placesViewToggle(settledSnap);
     const currentPins = useMemo(() => projectPlacesPins(filteredRows), [filteredRows]);
     const currentScopeKey = queryActive
         ? `search:${locality === 'auto' ? 'auto' : locality.city.trim().toLowerCase()}:${debouncedQuery.trim().toLowerCase()}`
@@ -540,6 +623,7 @@ export default function PlacesScreen() {
     const selectedDistance = selectedRow
         ? decorateAndSortRows([selectedRow], distanceOrigin)[0]?.distanceLabel ?? null
         : null;
+    const selectedCaptionVisible = !searchMode && activeSegment === 'places' && !!selectedRow;
 
     useEffect(() => {
         const trimmed = debouncedQuery.trim();
@@ -547,7 +631,6 @@ export default function PlacesScreen() {
     }, [activeSegment, debouncedQuery]);
 
     const handleEnterSearch = useCallback(() => {
-        setSegmentHeaderRevealed(true);
         const focused = enterPlacesSearch(screenState);
         patchScreenState(focused);
         sheetRef.current?.snapTo(FULL);
@@ -559,7 +642,6 @@ export default function PlacesScreen() {
         debounceRef.current = null;
         setImmediateQuery('');
         setDebouncedQuery('');
-        setSegmentHeaderRevealed(false);
         const restored = leavePlacesSearch(screenState);
         patchScreenState(restored);
     }, [patchScreenState, screenState]);
@@ -567,7 +649,6 @@ export default function PlacesScreen() {
     const handleQueryChange = useCallback((text: string) => {
         setImmediateQuery(text);
         patchScreenState({ query: text });
-        if (text.trim()) setSegmentHeaderRevealed(true);
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
             debounceRef.current = null;
@@ -589,18 +670,19 @@ export default function PlacesScreen() {
             if (source === 'persisted') refetchPersisted();
             if (source === 'wishlist') void wishlistQuery.refetch();
             if (source === 'spots') void spotsQuery.refetch();
+            if (source === 'network') void networkQuery.refetch();
         }
     }, [
         failurePresentation.sources,
         refetchPersisted,
         refetchPlaces,
+        networkQuery,
         spotsQuery,
         wishlistQuery,
     ]);
 
     const handleSegmentChange = useCallback((next: SearchMode) => {
         Keyboard.dismiss();
-        setSegmentHeaderRevealed(true);
         const transitioned = transitionPlacesSegment(
             screenState,
             next,
@@ -615,11 +697,11 @@ export default function PlacesScreen() {
         if (route) router.push(route as never);
     }, [router]);
 
-    const openList = useCallback((list: MyList) => {
+    const openList = useCallback((list: { id: string }) => {
         router.push({ pathname: '/list/[id]', params: { id: list.id } });
     }, [router]);
 
-    const handleLayerPress = useCallback((requested: 'pinned' | 'been') => {
+    const handleLayerPress = useCallback((requested: 'pinned' | 'been' | 'friends') => {
         patchScreenState({
             layerFilter: togglePlacesLayerFilter(screenState.layerFilter, requested),
             selectedPinId: null,
@@ -634,8 +716,22 @@ export default function PlacesScreen() {
         }
     }, [permissionStatus, requestLocation, setAutoLocality]);
 
+    const handlePlacesEndReached = useCallback(() => {
+        if (shouldFetchNextPlacesPage({
+            searchMode,
+            activeSegment,
+            layerFilter: screenState.layerFilter,
+            hasNextPage: !!wishlistQuery.hasNextPage,
+            isFetchingNextPage: wishlistQuery.isFetchingNextPage,
+        })) {
+            void wishlistQuery.fetchNextPage();
+        }
+    }, [activeSegment, screenState.layerFilter, searchMode, wishlistQuery]);
+
     const [filterOpen, setFilterOpen] = useState(false);
     const [trayOpen, setTrayOpen] = useState(false);
+    const [unmappedSheetOpen, setUnmappedSheetOpen] = useState(false);
+    const [handoffOpen, setHandoffOpen] = useState(false);
     const cuisineOptions = useMemo<FilterOption[]>(() => [
         { value: null, label: 'All cuisines' },
         ...cuisineFacets(sourceRows).map((facet) => ({
@@ -661,24 +757,42 @@ export default function PlacesScreen() {
         })),
     ], [sourceRows]);
     const filtersActive = Boolean(cuisineFilter || priceFilter || cityFilter);
+    const sharePinnedVisible = !searchMode
+        && activeSegment === 'places'
+        && screenState.layerFilter === 'pinned'
+        && pinnedRows.length > 0;
 
     const renderSheetHeader = useCallback(() => (
         <View style={styles.sheetHeader}>
-            {searchMode || segmentHeaderRevealed ? (
-                <SearchModeTabs
-                    mode={activeSegment}
-                    onModeChange={handleSegmentChange}
-                    hidePeople={FRIEND_TEST.hidePeopleSearch}
-                />
-            ) : null}
+            <SearchModeTabs
+                mode={activeSegment}
+                onModeChange={handleSegmentChange}
+                hidePeople={FRIEND_TEST.hidePeopleSearch}
+            />
             {activeSegment === 'places' && (!searchMode || queryActive) ? (
                 <View style={styles.sheetLedgerHeader}>
                     <Text style={[styles.kicker, { color: palette.primary }]}>
                         {queryActive ? 'RESULTS' : 'NEARBY'}
                     </Text>
-                    <Text style={[styles.placeCount, { color: palette.textMuted }]}>
-                        {`${decoratedRows.length} ${decoratedRows.length === 1 ? 'place' : 'places'}`}
-                    </Text>
+                    <View style={styles.countActions}>
+                        <Text style={[styles.placeCount, { color: palette.textMuted }]}>
+                            {placesCountLabel(decoratedRows.length, placesHaveMore)}
+                        </Text>
+                        {sharePinnedVisible ? (
+                            <Pressable
+                                onPress={() => setHandoffOpen(true)}
+                                style={styles.shareAction}
+                                accessibilityRole="button"
+                                accessibilityLabel="share pinned places"
+                            >
+                                <Ionicons
+                                    name="share-outline"
+                                    size={IconSize.md - 1}
+                                    color={palette.textMuted}
+                                />
+                            </Pressable>
+                        ) : null}
+                    </View>
                 </View>
             ) : null}
         </View>
@@ -688,9 +802,10 @@ export default function PlacesScreen() {
         handleSegmentChange,
         palette.primary,
         palette.textMuted,
+        placesHaveMore,
         queryActive,
         searchMode,
-        segmentHeaderRevealed,
+        sharePinnedVisible,
     ]);
 
     const restoreScroll = useCallback(() => {
@@ -706,7 +821,10 @@ export default function PlacesScreen() {
         <View style={[styles.screen, { backgroundColor: palette.background }]}>
             <WishlistMapView
                 items={renderedProjection.pins}
-                unmappableCount={0}
+                unmappableCount={unmappableCount}
+                onUnmappablePress={unmappableCount > 0
+                    ? () => setUnmappedSheetOpen(true)
+                    : undefined}
                 userCoords={deviceCoords}
                 locationStatus={locationStatus}
                 onRequestLocation={() => { void requestLocation(); }}
@@ -731,6 +849,29 @@ export default function PlacesScreen() {
                     accessibilityRole="button"
                     accessibilityLabel="return to places map"
                 />
+            ) : null}
+
+            {!searchMode && !selectedCaptionVisible ? (
+                <Pressable
+                    testID="places-view-toggle"
+                    onPress={() => sheetRef.current?.snapTo(viewToggle.target)}
+                    style={({ pressed }) => [
+                        styles.viewToggle,
+                        Shadow.ambient,
+                        {
+                            bottom: bottomInset + Spacing.sm + Spacing.xs,
+                            backgroundColor: palette.scrimFrost,
+                            opacity: pressed ? 0.72 : 1,
+                        },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${viewToggle.label} places`}
+                >
+                    <Ionicons name={viewToggle.icon} size={IconSize.sm - 1} color={palette.primary} />
+                    <Text style={[styles.viewToggleLabel, { color: palette.primary }]}>
+                        {viewToggle.label}
+                    </Text>
+                </Pressable>
             ) : null}
 
             <LinearGradient
@@ -809,7 +950,12 @@ export default function PlacesScreen() {
                         </Pressable>
                     ) : null}
                 </View>
-                <View style={styles.chipLine}>
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.chipScroller}
+                    contentContainerStyle={styles.chipLine}
+                >
                     <SearchLocalityBar
                         compact
                         label={localityLabel}
@@ -832,6 +978,13 @@ export default function PlacesScreen() {
                                 active={screenState.layerFilter === 'been'}
                                 palette={palette}
                                 onPress={() => handleLayerPress('been')}
+                            />
+                            <LayerChip
+                                label="friends"
+                                icon="people-outline"
+                                active={screenState.layerFilter === 'friends'}
+                                palette={palette}
+                                onPress={() => handleLayerPress('friends')}
                             />
                             <Pressable
                                 onPress={() => setFilterOpen(true)}
@@ -857,10 +1010,10 @@ export default function PlacesScreen() {
                             </Pressable>
                         </>
                     ) : null}
-                </View>
+                </ScrollView>
             </LinearGradient>
 
-            {!searchMode && activeSegment === 'places' && selectedRow ? (
+            {selectedCaptionVisible && selectedRow ? (
                 <Pressable
                     onPress={() => openRestaurant(selectedRow)}
                     style={[
@@ -879,13 +1032,17 @@ export default function PlacesScreen() {
                             <Text style={[styles.captionName, { color: palette.text }]} numberOfLines={1}>
                                 {selectedRow.name}
                             </Text>
-                            <RatingLabel row={selectedRow} palette={palette} />
+                            {!selectedRow.network ? (
+                                <RatingLabel row={selectedRow} palette={palette} />
+                            ) : null}
                         </View>
                         <Text style={[styles.resultMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                            {composeRowMeta(
-                                { ...selectedRow, friendsBeenCount: 0, isPinned: false },
-                                selectedDistance,
-                            )}
+                            {selectedRow.network
+                                ? composeFriendCaptionMeta(selectedRow)
+                                : composeRowMeta(
+                                    { ...selectedRow, friendsBeenCount: 0, isPinned: false },
+                                    selectedDistance,
+                                )}
                         </Text>
                     </View>
                     <Ionicons name="chevron-forward-outline" size={17} color={palette.textFaint} />
@@ -906,11 +1063,41 @@ export default function PlacesScreen() {
                 onPanStart={Keyboard.dismiss}
                 onSettle={(sheetSnap, settledHeight) => {
                     setBottomInset(settledHeight);
+                    setSettledSnap(sheetSnap);
                     patchScreenState({ sheetSnap });
                 }}
                 renderHeader={renderSheetHeader}
                 renderContent={({ scrollEnabled, onScroll }) => {
                     if (activeSegment === 'lists') {
+                        if (immediateQuery.trim().length === 0) {
+                            return (
+                                <PlacesListsPane
+                                    branch={listsShelfBranch}
+                                    myLists={myListsQuery.data ?? []}
+                                    savedLists={savedListsQuery.data ?? []}
+                                    myError={myListsQuery.isError}
+                                    savedError={savedListsQuery.isError}
+                                    scrollEnabled={scrollEnabled}
+                                    onScroll={onScroll}
+                                    onOpenList={(id) => openList({ id })}
+                                    onNewList={() => router.push('/list/new')}
+                                    onRetryMyLists={() => { void myListsQuery.refetch(); }}
+                                    onRetrySavedLists={() => { void savedListsQuery.refetch(); }}
+                                    bottomPadding={insets.bottom + NAV_CLEARANCE}
+                                />
+                            );
+                        }
+                        if (immediateQuery.trim().length === 1) {
+                            return (
+                                <SheetStatePane scrollEnabled={scrollEnabled} onScroll={onScroll}>
+                                    <View style={styles.emptyResults}>
+                                        <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
+                                            type one more letter
+                                        </Text>
+                                    </View>
+                                </SheetStatePane>
+                            );
+                        }
                         return (
                             <ListsSearchPane
                                 query={immediateQuery}
@@ -1003,29 +1190,42 @@ export default function PlacesScreen() {
                     }
                     if (searchMode && searchGuidanceBranch === 'minimum') {
                         return (
-                            <View style={styles.emptyResults}>
-                                <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
-                                    type one more letter
-                                </Text>
-                            </View>
+                            <SheetStatePane scrollEnabled={scrollEnabled} onScroll={onScroll}>
+                                <View style={styles.emptyResults}>
+                                    <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
+                                        type one more letter
+                                    </Text>
+                                </View>
+                            </SheetStatePane>
                         );
                     }
                     if (isLoading && decoratedRows.length === 0 && queryActive) {
-                        return <ActivityIndicator style={styles.loader} color={palette.primary} />;
+                        return (
+                            <SheetStatePane scrollEnabled={scrollEnabled} onScroll={onScroll}>
+                                <ActivityIndicator style={styles.loader} color={palette.primary} />
+                            </SheetStatePane>
+                        );
                     }
                     if (layerLoading && sourceRows.length === 0 && !queryActive) {
-                        return <ActivityIndicator style={styles.loader} color={palette.primary} />;
+                        return (
+                            <SheetStatePane scrollEnabled={scrollEnabled} onScroll={onScroll}>
+                                <ActivityIndicator style={styles.loader} color={palette.primary} />
+                            </SheetStatePane>
+                        );
                     }
                     if (failurePresentation.kind === 'broken') {
                         return (
-                            <ErrorState
-                                onRetry={handleRetryFailure}
-                                message="couldn't load places"
-                            />
+                            <SheetStatePane scrollEnabled={scrollEnabled} onScroll={onScroll}>
+                                <ErrorState
+                                    onRetry={handleRetryFailure}
+                                    message="couldn't load places"
+                                />
+                            </SheetStatePane>
                         );
                     }
                     return (
                         <Animated.FlatList
+                            testID="places-results"
                             ref={placesListRef}
                             data={decoratedRows}
                             keyExtractor={({ row }) => row.id}
@@ -1041,6 +1241,8 @@ export default function PlacesScreen() {
                             })}
                             keyboardShouldPersistTaps="handled"
                             keyboardDismissMode="on-drag"
+                            onEndReached={handlePlacesEndReached}
+                            onEndReachedThreshold={0.4}
                             contentContainerStyle={[
                                 styles.resultsContent,
                                 { paddingBottom: insets.bottom + NAV_CLEARANCE },
@@ -1057,7 +1259,9 @@ export default function PlacesScreen() {
                             )}
                             ListEmptyComponent={
                                 <View style={styles.emptyResults}>
-                                    <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
+                                    <Text
+                                        style={[styles.emptyCopy, { color: palette.textMuted }]}
+                                    >
                                         {immediateQuery.trim().length === 1
                                               ? 'type one more letter'
                                               : queryActive
@@ -1066,10 +1270,20 @@ export default function PlacesScreen() {
                                                   ? 'no pinned places yet'
                                                   : screenState.layerFilter === 'been'
                                                     ? 'no logged places yet'
-                                                    : 'no places yet'}
+                                                    : screenState.layerFilter === 'friends'
+                                                      ? 'nothing from friends yet'
+                                                      : 'no places yet'}
                                     </Text>
                                 </View>
                             }
+                            ListFooterComponent={paginatedBrowse && wishlistQuery.isFetchingNextPage
+                                ? (
+                                    <ActivityIndicator
+                                        color={palette.primary}
+                                        style={styles.pageLoader}
+                                    />
+                                )
+                                : null}
                         />
                     );
                 }}
@@ -1093,6 +1307,18 @@ export default function PlacesScreen() {
                 rows={clipTray.rows}
                 hasOlder={clipTray.hasOlder}
                 isEmpty={clipTray.isEmpty}
+            />
+            <HandoffSheet
+                visible={handoffOpen}
+                onDismiss={() => setHandoffOpen(false)}
+                pinnedCount={pinnedRows.length}
+            />
+            <UnmappedSpotsSheet
+                visible={unmappedSheetOpen}
+                onClose={() => setUnmappedSheetOpen(false)}
+                items={unmappedItems}
+                userId={user?.id}
+                palette={palette}
             />
         </View>
     );
@@ -1169,10 +1395,14 @@ const styles = StyleSheet.create({
         lineHeight: 15,
         textTransform: 'none',
     },
+    chipScroller: {
+        flexGrow: 0,
+    },
     chipLine: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,
+        paddingRight: Spacing.md,
     },
     headerChip: {
         minHeight: 34,
@@ -1212,12 +1442,43 @@ const styles = StyleSheet.create({
         alignItems: 'baseline',
         justifyContent: 'space-between',
     },
+    countActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    shareAction: {
+        width: Spacing.xl + Spacing.sm,
+        height: Spacing.xl + Spacing.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     kicker: {
         ...Type.sectionKicker,
         letterSpacing: 1.8,
     },
     placeCount: {
         ...Type.metadata,
+    },
+    viewToggle: {
+        position: 'absolute',
+        left: Spacing.md,
+        minHeight: Spacing.xl + Spacing.sm,
+        borderRadius: Radius.full,
+        paddingHorizontal: Spacing.md,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    viewToggleLabel: {
+        ...Type.metadata,
+        fontFamily: 'Manrope_600SemiBold',
+    },
+    statePane: {
+        flexGrow: 1,
+    },
+    statePaneBody: {
+        flex: 1,
     },
     resultsContent: {
         flexGrow: 1,
@@ -1249,6 +1510,10 @@ const styles = StyleSheet.create({
         fontFamily: 'Newsreader_500Medium',
         fontSize: 16,
         lineHeight: 21,
+    },
+    friendCell: {
+        ...Type.metadata,
+        maxWidth: '40%',
     },
     ratingValue: {
         ...Type.feedLedgerRating,
@@ -1292,6 +1557,9 @@ const styles = StyleSheet.create({
     },
     loader: {
         marginTop: Spacing.xl,
+    },
+    pageLoader: {
+        marginVertical: Spacing.md,
     },
     emptyResults: {
         flex: 1,

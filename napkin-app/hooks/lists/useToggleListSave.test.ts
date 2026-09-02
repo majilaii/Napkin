@@ -155,4 +155,16 @@ describe('useSavedLists', () => {
         expect(result.current.fetchStatus).toBe('idle');
         expect(callEdgeFn).not.toHaveBeenCalled();
     });
+
+    it('honours an explicit disabled gate while preserving the default-on caller contract', async () => {
+        const disabled = renderHookWithClient(() => useSavedLists(USER_ID, { enabled: false }));
+        expect(disabled.result.current.fetchStatus).toBe('idle');
+        expect(callEdgeFn).not.toHaveBeenCalled();
+        disabled.unmount();
+
+        mockEdgeFnResolves([]);
+        const enabled = renderHookWithClient(() => useSavedLists(USER_ID));
+        await waitFor(() => expect(enabled.result.current.isSuccess).toBe(true));
+        expect(callEdgeFn).toHaveBeenCalledWith('lists', { action: 'saved_mine' });
+    });
 });

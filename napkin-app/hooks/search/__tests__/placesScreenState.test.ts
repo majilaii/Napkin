@@ -11,8 +11,8 @@ describe('placesScreenState auth isolation', () => {
             sheetSnap: FULL,
             selectedPinId: 'place:abc',
             scrollOffset: 88,
-            activeSegment: 'people',
-            layerFilter: 'been',
+            activeSegment: 'lists',
+            layerFilter: 'friends',
             previousNonPeopleSnap: HALF,
             previousNonSearchSnap: PEEK,
         });
@@ -88,6 +88,9 @@ describe('places layer filters', () => {
         expect(togglePlacesLayerFilter('pinned', 'pinned')).toBe('all');
         expect(togglePlacesLayerFilter('pinned', 'been')).toBe('been');
         expect(togglePlacesLayerFilter('been', 'been')).toBe('all');
+        expect(togglePlacesLayerFilter('all', 'friends')).toBe('friends');
+        expect(togglePlacesLayerFilter('friends', 'friends')).toBe('all');
+        expect(togglePlacesLayerFilter('friends', 'pinned')).toBe('pinned');
     });
 });
 

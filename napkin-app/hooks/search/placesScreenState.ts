@@ -13,7 +13,7 @@ export interface PlacesScreenSnapshot {
     previousNonSearchSnap: Snap | null;
 }
 
-export type PlacesLayerFilter = 'all' | 'pinned' | 'been';
+export type PlacesLayerFilter = 'all' | 'pinned' | 'been' | 'friends';
 
 const INITIAL_STATE: PlacesScreenSnapshot = Object.freeze({
     query: '',

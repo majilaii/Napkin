@@ -1,10 +1,11 @@
 import React from 'react';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { placesScreenState } from '@/hooks/search/placesScreenState';
 import { searchCache } from '@/hooks/search/searchCache';
+import { queryKeys } from '@/lib/queryKeys';
 import PlacesScreen from '@/app/(tabs)/places';
 
 const mockSetParams = jest.fn();
@@ -12,6 +13,7 @@ const mockPush = jest.fn();
 const mockRequestIfGranted = jest.fn().mockResolvedValue(undefined);
 let mockRouteParams: { mode?: string; q?: string } = { mode: 'people' };
 const mockWishlistRefetch = jest.fn();
+const mockFetchNextPage = jest.fn();
 const mockUseMyLists = jest.fn();
 let mockCoords: { latitude: number; longitude: number } | null = null;
 let mockSpots: unknown[] = [];
@@ -20,6 +22,9 @@ let mockWishlistState = {
     isLoading: false,
     isError: false,
     refetch: mockWishlistRefetch,
+    fetchNextPage: mockFetchNextPage,
+    hasNextPage: false,
+    isFetchingNextPage: false,
 };
 
 jest.mock('react-native', () => {
@@ -33,6 +38,7 @@ jest.mock('react-native', () => {
         Keyboard: { dismiss: jest.fn() },
         Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios },
         Pressable: host('Pressable'),
+        ScrollView: host('ScrollView'),
         StyleSheet: {
             absoluteFill: { position: 'absolute', inset: 0 },
             create: (styles: unknown) => styles,
@@ -49,6 +55,7 @@ jest.mock('react-native-reanimated', () => {
     const ReactModule = require('react') as typeof React;
     const MockFlatList = ReactModule.forwardRef((props: Record<string, unknown>, ref) => {
         ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: jest.fn() }));
+        const data = (props.data as unknown[] | undefined) ?? [];
         return ReactModule.createElement(
             'AnimatedFlatList',
             props,
@@ -56,6 +63,8 @@ jest.mock('react-native-reanimated', () => {
                 ReactModule.Fragment,
                 null,
                 props.ListHeaderComponent as React.ReactNode,
+                data.length === 0 ? props.ListEmptyComponent as React.ReactNode : null,
+                props.ListFooterComponent as React.ReactNode,
                 props.children as React.ReactNode,
             ),
         );
@@ -148,16 +157,78 @@ jest.mock('@/components/search', () => {
             </ReactNative.Text>
         ),
         PeopleSearchPane: Stub,
-        ListRow: ({ list }: { list: { title: string } }) => (
-            <ReactNative.Text>{list.title}</ReactNative.Text>
+        ListRow: ({ list, meta }: { list: { title: string }; meta?: string }) => (
+            <ReactNative.View>
+                <ReactNative.Text>{list.title}</ReactNative.Text>
+                {meta ? <ReactNative.Text>{meta}</ReactNative.Text> : null}
+            </ReactNative.View>
         ),
         RecentSearchesList: ({ queries }: { queries: readonly string[] }) => (
             <ReactNative.Text>{`RECENT ${queries.join(', ')}`}</ReactNative.Text>
         ),
         SearchLocalityBar: Stub,
-        SearchModeTabs: Stub,
+        SearchModeTabs: ({ mode, onModeChange }: {
+            mode: string;
+            onModeChange: (mode: 'places' | 'lists' | 'people') => void;
+        }) => (
+            <ReactNative.View>
+                <ReactNative.Text>{`tabs:${mode}`}</ReactNative.Text>
+                {(['places', 'lists', 'people'] as const).map((segment) => (
+                    <ReactNative.Pressable
+                        key={segment}
+                        accessibilityLabel={`segment ${segment}`}
+                        onPress={() => onModeChange(segment)}
+                    />
+                ))}
+            </ReactNative.View>
+        ),
         TierHeader: ({ label }: { label: string }) => (
             <ReactNative.Text>{label.toUpperCase()}</ReactNative.Text>
+        ),
+    };
+});
+jest.mock('@/components/places/PlacesListsPane', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ReactNative = require('react-native') as typeof import('react-native');
+    return {
+        PlacesListsPane: ({
+            branch,
+            myLists,
+            savedLists,
+            scrollEnabled,
+            onScroll,
+            onOpenList,
+            onNewList,
+        }: {
+            branch: string;
+            myLists: { id: string; title: string }[];
+            savedLists: { title: string }[];
+            scrollEnabled: boolean;
+            onScroll: unknown;
+            onOpenList: (id: string) => void;
+            onNewList: () => void;
+        }) => (
+            <ReactNative.View {...({
+                testID: 'places-lists-pane',
+                branch,
+                scrollEnabled,
+                onScroll,
+            } as React.ComponentProps<typeof ReactNative.View>)}>
+                <ReactNative.Text>Your lists</ReactNative.Text>
+                {myLists.map((list) => (
+                    <ReactNative.Pressable
+                        key={list.title}
+                        accessibilityLabel={`open list ${list.title}`}
+                        onPress={() => onOpenList(list.id)}
+                    >
+                        <ReactNative.Text>{list.title}</ReactNative.Text>
+                    </ReactNative.Pressable>
+                ))}
+                <ReactNative.Pressable accessibilityLabel="new list" onPress={onNewList}>
+                    <ReactNative.Text>new list</ReactNative.Text>
+                </ReactNative.Pressable>
+                {savedLists.length > 0 ? <ReactNative.Text>Saved lists</ReactNative.Text> : null}
+            </ReactNative.View>
         ),
     };
 });
@@ -191,8 +262,18 @@ jest.mock('@/components/wishlist', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ReactNative = require('react-native') as typeof import('react-native');
     return {
-        WishlistMapView: () => <ReactNative.View />,
-        FilterTabsSheet: () => <ReactNative.View />,
+        WishlistMapView: (props: Record<string, unknown>) => (
+            <ReactNative.View testID="wishlist-map" {...props} />
+        ),
+        FilterTabsSheet: (props: Record<string, unknown>) => (
+            <ReactNative.View testID="filter-sheet" {...props} />
+        ),
+        HandoffSheet: (props: Record<string, unknown>) => (
+            <ReactNative.View testID="handoff-sheet" {...props} />
+        ),
+        UnmappedSpotsSheet: (props: Record<string, unknown>) => (
+            <ReactNative.View testID="unmapped-sheet" {...props} />
+        ),
         ImportLinkSheet: () => <ReactNative.View />,
         ClipTray: () => <ReactNative.View />,
     };
@@ -212,6 +293,9 @@ describe('Places People-segment paid-call gate', () => {
             isLoading: false,
             isError: false,
             refetch: mockWishlistRefetch,
+            fetchNextPage: mockFetchNextPage,
+            hasNextPage: false,
+            isFetchingNextPage: false,
         };
         placesScreenState.setActiveUser('reset-user');
         placesScreenState.setActiveUser('viewer');
@@ -248,9 +332,10 @@ describe('Places People-segment paid-call gate', () => {
         expect(mockUseMyLists).toHaveBeenLastCalledWith(null);
     });
 
-    it('opens mode=lists without q on guidance instead of stale saved results', () => {
+    it('opens mode=lists without q on the your/saved shelf instead of stale results', () => {
         mockRouteParams = { mode: 'lists' };
         placesScreenState.patch('viewer', { query: 'old dinner' });
+        mockCallEdgeFn.mockResolvedValue([]);
         const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
         const screen = render(
             <QueryClientProvider client={client}>
@@ -258,9 +343,18 @@ describe('Places People-segment paid-call gate', () => {
             </QueryClientProvider>,
         );
 
-        expect(screen.getByTestId('lists-pane-state')).toHaveTextContent('guidance');
+        expect(screen.getByTestId('places-lists-pane').props.branch).toBe('rows');
+        expect(screen.getByText('Your lists')).toBeTruthy();
+        expect(screen.getByText('Late suppers')).toBeTruthy();
+        expect(screen.getByText('new list')).toBeTruthy();
         expect(screen.getByLabelText('find a place, list, or person').props.value).toBe('');
         expect(placesScreenState.get('viewer').query).toBe('');
+        expect(mockUseMyLists).toHaveBeenLastCalledWith('viewer');
+        fireEvent.press(screen.getByLabelText('open list Late suppers'));
+        expect(mockPush).toHaveBeenCalledWith({
+            pathname: '/list/[id]',
+            params: { id: 'list-1' },
+        });
     });
 
     it('renders retryable broken-empty when the uncached wishlist source fails', () => {
@@ -270,6 +364,9 @@ describe('Places People-segment paid-call gate', () => {
             isLoading: false,
             isError: true,
             refetch: mockWishlistRefetch,
+            fetchNextPage: mockFetchNextPage,
+            hasNextPage: false,
+            isFetchingNextPage: false,
         };
         const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
         const screen = render(
@@ -284,7 +381,34 @@ describe('Places People-segment paid-call gate', () => {
         expect(mockWishlistRefetch).toHaveBeenCalledTimes(1);
     });
 
-    it('renders the default union count and lets each layer filter release or switch', () => {
+    it('keeps the browse detent and frozen map when opening the lists shelf', () => {
+        mockRouteParams = {};
+        mockCallEdgeFn.mockResolvedValue([]);
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+        const frozenItems = screen.getByTestId('wishlist-map').props.items;
+        expect(screen.getByTestId('places-snap-sheet').props.unlockedSnap).toBe(0);
+        expect(screen.getByTestId('places-view-toggle')).toHaveTextContent('list');
+
+        fireEvent.press(screen.getByLabelText('segment lists'));
+
+        expect(placesScreenState.get('viewer')).toMatchObject({
+            activeSegment: 'lists',
+            sheetSnap: 0,
+        });
+        expect(screen.getByTestId('places-snap-sheet').props.unlockedSnap).toBe(0);
+        expect(screen.getByTestId('wishlist-map').props.items).toBe(frozenItems);
+        expect(screen.getByTestId('places-lists-pane').props).toMatchObject({
+            branch: 'rows',
+            scrollEnabled: true,
+        });
+    });
+
+    it('renders the default union and requests network pins only for friends', async () => {
         mockRouteParams = {};
         mockWishlistState = {
             data: {
@@ -306,6 +430,9 @@ describe('Places People-segment paid-call gate', () => {
             isLoading: false,
             isError: false,
             refetch: mockWishlistRefetch,
+            fetchNextPage: mockFetchNextPage,
+            hasNextPage: false,
+            isFetchingNextPage: false,
         };
         mockSpots = ['shared', 'been-only'].map((id) => ({
             restaurant_id: id,
@@ -325,8 +452,16 @@ describe('Places People-segment paid-call gate', () => {
         );
 
         expect(screen.getByText('3 places')).toBeTruthy();
+        expect(screen.getByText('tabs:places')).toBeTruthy();
         expect(screen.getByLabelText('pinned').props.accessibilityState.selected).toBe(false);
         expect(screen.getByLabelText('been').props.accessibilityState.selected).toBe(false);
+        expect(screen.getByLabelText('friends').props.accessibilityState.selected).toBe(false);
+        expect(mockCallEdgeFn.mock.calls.filter(([, options]) => (
+            options?.action === 'saved_mine'
+        ))).toHaveLength(0);
+        expect(mockCallEdgeFn.mock.calls.filter(([, options]) => (
+            options?.action === 'network_map_pins'
+        ))).toHaveLength(0);
 
         fireEvent.press(screen.getByLabelText('pinned'));
         expect(screen.getByText('2 places')).toBeTruthy();
@@ -339,6 +474,263 @@ describe('Places People-segment paid-call gate', () => {
         fireEvent.press(screen.getByLabelText('been'));
         expect(screen.getByText('2 places')).toBeTruthy();
         expect(placesScreenState.get('viewer').layerFilter).toBe('been');
+        expect(mockCallEdgeFn.mock.calls.filter(([, options]) => (
+            options?.action === 'network_map_pins'
+        ))).toHaveLength(0);
+
+        mockCallEdgeFn.mockResolvedValueOnce({
+            pins: [{
+                restaurant_id: 'friend-only',
+                name: 'Koya',
+                city: 'London',
+                cuisine: 'Japanese',
+                lat: 51.52,
+                lng: -0.12,
+                author: { id: 'clara-id', name: 'clara', avatar: null },
+                entry_id: 'entry-1',
+                rating: 4.7,
+                note: 'The udon worth crossing town for.',
+                has_review: true,
+                others_count: 2,
+            }],
+        });
+        fireEvent.press(screen.getByLabelText('friends'));
+        await waitFor(() => expect(screen.getByText('1 place')).toBeTruthy());
+        expect(mockCallEdgeFn.mock.calls.filter(([, options]) => (
+            options?.action === 'network_map_pins'
+        ))).toHaveLength(1);
+        expect(screen.getByTestId('wishlist-map').props.items[0]).toMatchObject({
+            id: 'friend-only',
+            author: { id: 'clara-id', name: 'clara', avatar: null },
+            entryId: 'entry-1',
+            hasReview: true,
+            rating: 4.7,
+            note: 'The udon worth crossing town for.',
+        });
+        act(() => screen.getByTestId('wishlist-map').props.onSelectedChange('friend-only'));
+        expect(screen.getByText('clara · 3 friends been')).toBeTruthy();
+        expect(screen.queryByText('4.7')).toBeNull();
+        expect(screen.queryByText(/google/)).toBeNull();
+        expect(screen.queryByTestId('places-view-toggle')).toBeNull();
+        fireEvent.press(screen.getByLabelText('open Koya'));
+        expect(mockPush).toHaveBeenCalledWith({
+            pathname: '/restaurant/[id]',
+            params: { id: 'friend-only' },
+        });
+        fireEvent.press(screen.getByLabelText('friends'));
+        expect(screen.getByText('3 places')).toBeTruthy();
+        expect(placesScreenState.get('viewer').layerFilter).toBe('all');
+    });
+
+    it('paginates the full browse ledger with an honest plus count until exhaustion', () => {
+        mockRouteParams = {};
+        const firstPage = Array.from({ length: 40 }, (_, index) => ({
+            restaurant: {
+                id: `pinned-${index}`,
+                name: `Pinned ${index}`,
+                city: 'London',
+                cuisine: 'British',
+                lat: 51.5 + index * 0.001,
+                lng: -0.1,
+                price_level: 2,
+                google_rating: 4.2,
+            },
+        }));
+        mockWishlistState = {
+            data: { pages: [{ data: firstPage }] },
+            isLoading: false,
+            isError: false,
+            refetch: mockWishlistRefetch,
+            fetchNextPage: mockFetchNextPage,
+            hasNextPage: true,
+            isFetchingNextPage: false,
+        };
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const renderApp = () => (
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>
+        );
+        const screen = render(renderApp());
+
+        expect(screen.getByText('40+ places')).toBeTruthy();
+        act(() => screen.getByTestId('places-results').props.onEndReached());
+        expect(mockFetchNextPage).toHaveBeenCalledTimes(1);
+
+        fireEvent.press(screen.getByLabelText('pinned'));
+        act(() => screen.getByTestId('places-results').props.onEndReached());
+        expect(mockFetchNextPage).toHaveBeenCalledTimes(2);
+
+        mockWishlistState = {
+            ...mockWishlistState,
+            data: {
+                pages: [
+                    { data: firstPage },
+                    { data: [{
+                        restaurant: {
+                            id: 'pinned-40',
+                            name: 'Pinned 40',
+                            city: 'London',
+                            cuisine: 'British',
+                            lat: 51.54,
+                            lng: -0.1,
+                            price_level: 2,
+                            google_rating: 4.2,
+                        },
+                    }] },
+                ],
+            },
+            hasNextPage: false,
+        };
+        screen.rerender(renderApp());
+        expect(screen.getByText('41 places')).toBeTruthy();
+        act(() => screen.getByTestId('places-results').props.onEndReached());
+        expect(mockFetchNextPage).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps unmappable honesty layer-scoped and opens the repair sheet', async () => {
+        mockRouteParams = {};
+        mockWishlistState = {
+            data: { pages: [{ data: [{
+                id: 'save-1',
+                restaurant: {
+                    id: 'unmapped-1',
+                    name: 'Lost pin',
+                    city: 'London',
+                    cuisine: 'British',
+                    lat: null,
+                    lng: null,
+                    price_level: 2,
+                    google_rating: null,
+                },
+            }] }] },
+            isLoading: false,
+            isError: false,
+            refetch: mockWishlistRefetch,
+            fetchNextPage: mockFetchNextPage,
+            hasNextPage: false,
+            isFetchingNextPage: false,
+        };
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+
+        expect(screen.getByTestId('wishlist-map').props.unmappableCount).toBe(1);
+        act(() => screen.getByTestId('wishlist-map').props.onUnmappablePress());
+        expect(screen.getByTestId('unmapped-sheet').props.visible).toBe(true);
+        expect(screen.getByTestId('unmapped-sheet').props.items).toHaveLength(1);
+        expect(screen.getByTestId('unmapped-sheet').props.items[0].id).toBe('save-1');
+        fireEvent.press(screen.getByLabelText('pinned'));
+        expect(screen.getByTestId('wishlist-map').props.unmappableCount).toBe(1);
+        fireEvent.press(screen.getByLabelText('been'));
+        expect(screen.getByTestId('wishlist-map').props.unmappableCount).toBe(0);
+        mockCallEdgeFn.mockResolvedValueOnce({ pins: [] });
+        fireEvent.press(screen.getByLabelText('friends'));
+        await waitFor(() => expect(screen.getByText('nothing from friends yet')).toBeTruthy());
+        expect(screen.getByTestId('wishlist-map').props.unmappableCount).toBe(0);
+        fireEvent(screen.getByLabelText('find a place, list, or person'), 'focus');
+        expect(screen.getByTestId('wishlist-map').props.unmappableCount).toBe(0);
+    });
+
+    it('shares the unfiltered loaded pinned total after a facet narrows the ledger', () => {
+        mockRouteParams = {};
+        mockWishlistState = {
+            data: { pages: [{ data: ['British', 'Japanese'].map((cuisine, index) => ({
+                restaurant: {
+                    id: `pinned-${index}`,
+                    name: `Pinned ${index}`,
+                    city: 'London',
+                    cuisine,
+                    lat: 51.5,
+                    lng: -0.1,
+                    price_level: 2,
+                    google_rating: 4.2,
+                },
+            })) }] },
+            isLoading: false,
+            isError: false,
+            refetch: mockWishlistRefetch,
+            fetchNextPage: mockFetchNextPage,
+            hasNextPage: false,
+            isFetchingNextPage: false,
+        };
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+        expect(screen.queryByLabelText('share pinned places')).toBeNull();
+        fireEvent.press(screen.getByLabelText('pinned'));
+        act(() => screen.getByTestId('filter-sheet').props.cuisine.onSelect('Japanese'));
+        expect(screen.getByText('1 place')).toBeTruthy();
+
+        fireEvent.press(screen.getByLabelText('share pinned places'));
+        expect(screen.getByTestId('handoff-sheet').props).toMatchObject({
+            visible: true,
+            pinnedCount: 2,
+        });
+    });
+
+    it('renders network cold and warm failures with network-only retries', async () => {
+        mockRouteParams = {};
+        mockCallEdgeFn.mockRejectedValueOnce(new Error('network unavailable'));
+        const coldClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const cold = render(
+            <QueryClientProvider client={coldClient}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+        fireEvent.press(cold.getByLabelText('friends'));
+        await waitFor(() => expect(cold.getByText("couldn't load places")).toBeTruthy());
+        mockCallEdgeFn.mockResolvedValueOnce({ pins: [] });
+        fireEvent.press(cold.getByText('try again'));
+        await waitFor(() => expect(mockCallEdgeFn.mock.calls.filter(([, options]) => (
+            options?.action === 'network_map_pins'
+        ))).toHaveLength(2));
+        cold.unmount();
+
+        placesScreenState.setActiveUser('reset-warm-user');
+        placesScreenState.setActiveUser('viewer');
+        mockCallEdgeFn.mockResolvedValueOnce({
+            pins: [{
+                restaurant_id: 'friend-cached',
+                name: 'Brawn',
+                city: 'London',
+                cuisine: 'British',
+                lat: 51.53,
+                lng: -0.07,
+                author: { id: 'clara-id', name: 'clara', avatar: null },
+                entry_id: 'entry-cached',
+                rating: 4.2,
+                note: null,
+                has_review: false,
+                others_count: 0,
+            }],
+        });
+        const warmClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const warm = render(
+            <QueryClientProvider client={warmClient}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+        fireEvent.press(warm.getByLabelText('friends'));
+        await waitFor(() => expect(warm.getByText('1 place')).toBeTruthy());
+        mockCallEdgeFn.mockRejectedValueOnce(new Error('refresh unavailable'));
+        await act(async () => {
+            await warmClient.refetchQueries({
+                queryKey: queryKeys.users.networkMapPins('viewer'),
+            });
+        });
+        await waitFor(() => expect(warm.getByText("couldn't refresh places")).toBeTruthy());
+        mockCallEdgeFn.mockResolvedValueOnce({ pins: [] });
+        fireEvent.press(warm.getByLabelText("couldn't refresh places, try again"));
+        await waitFor(() => expect(mockCallEdgeFn.mock.calls.filter(([, options]) => (
+            options?.action === 'network_map_pins'
+        ))).toHaveLength(5));
     });
 
     it('focuses into full search sections, swaps to results, clears, and restores peek', () => {
@@ -364,6 +756,9 @@ describe('Places People-segment paid-call gate', () => {
             isLoading: false,
             isError: false,
             refetch: mockWishlistRefetch,
+            fetchNextPage: mockFetchNextPage,
+            hasNextPage: false,
+            isFetchingNextPage: false,
         };
         searchCache.addRecent('ramen');
         const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
