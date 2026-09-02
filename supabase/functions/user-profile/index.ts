@@ -34,6 +34,7 @@ import { buildPage, decodeCursor, type Page } from '../_shared/pagination.ts';
 import { projectRound } from '../_shared/round_projection.ts';
 import { projectListSummary, type ListSummary } from './listSummary.ts';
 import { hydrateProfileTakes, type QuickTake } from './profileTakes.ts';
+import { fetchRecentCompanions } from './recentCompanions.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -2143,6 +2144,16 @@ serve(async (req) => {
                 .maybeSingle();
 
             return json({ data: { is_following: followRow !== null } });
+        }
+
+        // ── recent_companions ─────────────────────────────────────────────
+        // Top five users the caller has tagged most often, re-authorized
+        // against the current mutual-follow and either-direction block state.
+        // Historical entry_companions rows are intentionally left untouched.
+        // Request: { action: 'recent_companions' }
+        // Response: { data: { user_id, display_name, avatar_url }[] }
+        if (action === 'recent_companions') {
+            return json({ data: await fetchRecentCompanions(supabase, user.id) });
         }
 
         // ── co_diners ─────────────────────────────────────────────────────

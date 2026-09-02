@@ -78,7 +78,11 @@ export function CompanionPickerSheet({
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const { data: recentCompanions, isLoading: loadingRecent } = useRecentCompanions(currentUserId);
-    const { data: searchResults, isLoading: loadingSearch } = useUserSearch(debouncedQuery, visible);
+    const { data: searchResults, isLoading: loadingSearch } = useUserSearch(
+        debouncedQuery,
+        visible,
+        { mutualOnly: true },
+    );
 
     useEffect(() => {
         onCloseRef.current = onClose;
@@ -181,7 +185,9 @@ export function CompanionPickerSheet({
 
     // ── Decide what to show in the list ───────────────────────────────────
     const showSearch = debouncedQuery.length > 0;
-    const displayResults = showSearch ? (searchResults ?? []) : [];
+    const displayResults = showSearch
+        ? (searchResults ?? []).filter((user) => user.is_mutual === true)
+        : [];
 
     // Recent companions filtered by not-already-excluded (e.g. self excluded server-side)
     const recent = (recentCompanions ?? []).filter((u) => u.user_id !== currentUserId);
@@ -251,7 +257,7 @@ export function CompanionPickerSheet({
                     <Ionicons name="search-outline" size={16} color={palette.textMuted} />
                     <TextInput
                         style={[styles.searchInput, { color: palette.text }]}
-                        placeholder="Search anyone on Napkin"
+                        placeholder="Search friends"
                         placeholderTextColor={palette.textMuted}
                         value={query}
                         onChangeText={handleQueryChange}
@@ -317,7 +323,7 @@ export function CompanionPickerSheet({
                             </>
                         ) : (
                             <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                                No results for &ldquo;{debouncedQuery}&rdquo;
+                                no mutual follows match
                             </Text>
                         )
                     ) : null}
@@ -325,7 +331,7 @@ export function CompanionPickerSheet({
                     {/* Empty recent — guide the user */}
                     {!showSearch && recent.length === 0 && !loadingRecent ? (
                         <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                            Search above to tag anyone on Napkin
+                            Search friends
                         </Text>
                     ) : null}
                 </ScrollView>

@@ -6,6 +6,7 @@ import { upsertRestaurant } from '../_shared/restaurant.ts';
 import { errorResponse, mapPgError } from '../_shared/errors.ts';
 import { emitFriendLogged } from '../_shared/notify.ts';
 import { coerceClientNonce } from '../_shared/uuid.ts';
+import { filterMutualCompanionIds } from '../_shared/companions.ts';
 import { normalizeMergeImagePayload } from './mergeImagePayload.ts';
 
 /**
@@ -656,7 +657,18 @@ serve(async (req) => {
 
                 // Sanitize companion ids: array, exclude self, dedupe
                 const rawIds: string[] = Array.isArray(companion_ids) ? companion_ids : [];
-                const sanitized = [...new Set(rawIds.filter((id: string) => id && id !== user.id))];
+                const preGateIds = [...new Set(
+                    rawIds.filter((id: string) => id && id !== user.id),
+                )];
+                const sanitized = await filterMutualCompanionIds(
+                    supabase,
+                    user.id,
+                    preGateIds,
+                );
+                const droppedCount = rawIds.length - sanitized.length;
+                if (droppedCount > 0) {
+                    console.warn(`[entry] companions_dropped=${droppedCount}`);
+                }
 
                 // Replace: delete old rows then insert new ones (atomic enough for this use case)
                 const { error: deleteErr } = await supabase
@@ -1891,9 +1903,24 @@ serve(async (req) => {
                     // 4. Write entry_companions on the host entry so the "with X · Y" line
                     //    renders. Union of validated participants + any client companion_ids.
                     const clientCompanionIds: string[] = Array.isArray(companion_ids) ? companion_ids : [];
-                    const supperCompanionIds = [...new Set(
+                    const preGateSupperCompanionIds = [...new Set(
                         [...validSupperParticipantIds, ...clientCompanionIds].filter((id: string) => id && id !== user.id)
                     )];
+                    let supperCompanionIds: string[];
+                    try {
+                        supperCompanionIds = await filterMutualCompanionIds(
+                            supabase,
+                            user.id,
+                            preGateSupperCompanionIds,
+                        );
+                    } catch (err) {
+                        supperCompanionIds = [];
+                        console.error('[entry] companion gate unavailable (supper, non-fatal):', err);
+                    }
+                    const supperDroppedCount = preGateSupperCompanionIds.length - supperCompanionIds.length;
+                    if (supperDroppedCount > 0) {
+                        console.warn(`[entry] companions_dropped=${supperDroppedCount}`);
+                    }
                     if (supperCompanionIds.length > 0) {
                         const { error: supperCompErr } = await supabase
                             .from('entry_companions')
@@ -1942,7 +1969,7 @@ serve(async (req) => {
             // entry_participants were inserted atomically in fn_create_entry_with_tables RPC.
 
             // ── Insert entry_companions (non-fatal, outside atomic RPC — finding 16) ──
-            // companion_ids: arbitrary Napkin users; no Table-membership gate (Instagram-style)
+            // companion_ids: mutual follows only, with either-direction blocks denied.
             // TICKET-037 (P1-11): explicitly exclude allParticipantIds so a user can't appear
             // in both the "6 ratings" strip and the "with X" companions list.
             // TICKET-082: for a Supper the companion rows were already written above
@@ -1951,19 +1978,31 @@ serve(async (req) => {
             const rawCompanionIds: string[] = isSupper
                 ? []
                 : (Array.isArray(companion_ids) ? companion_ids : []);
-            const sanitizedCompanionIds = [...new Set(
+            const preGateCompanionIds = [...new Set(
                 rawCompanionIds.filter((id: string) => id && id !== user.id && !allParticipantIds.includes(id))
             )];
-
-            if (sanitizedCompanionIds.length !== rawCompanionIds.length) {
-                console.warn(
-                    'entry: dropped',
-                    rawCompanionIds.length - sanitizedCompanionIds.length,
-                    'duplicate companion ids (overlapped with self or participant_ids)'
+            const warnings: Array<{ type: string; failed_ids?: string[]; reason?: string }> = [];
+            let sanitizedCompanionIds: string[];
+            try {
+                sanitizedCompanionIds = await filterMutualCompanionIds(
+                    supabase,
+                    user.id,
+                    preGateCompanionIds,
                 );
+            } catch (err) {
+                sanitizedCompanionIds = [];
+                warnings.push({
+                    type: 'companion_tag_failed',
+                    failed_ids: preGateCompanionIds,
+                    reason: 'gate_unavailable',
+                });
+                console.error('[entry] companion gate unavailable (solo, non-fatal):', err);
             }
 
-            const warnings: Array<{ type: string; failed_ids?: string[]; reason?: string }> = [];
+            const companionDroppedCount = rawCompanionIds.length - sanitizedCompanionIds.length;
+            if (companionDroppedCount > 0) {
+                console.warn(`[entry] companions_dropped=${companionDroppedCount}`);
+            }
 
             // TICKET-082: if the Supper failed to open (rolled back above), the entry
             // still succeeded as a plain log — tell the client so it can message it.
