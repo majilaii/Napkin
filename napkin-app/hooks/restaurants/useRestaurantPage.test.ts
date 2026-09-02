@@ -99,6 +99,18 @@ describe('useRestaurantPage cache + transport', () => {
         });
     });
 
+    it('preserves omitted additive projections from a legacy server', async () => {
+        const legacyData = pageData();
+        delete legacyData.self_log;
+        delete legacyData.table_notes;
+        (callEdgeFn as jest.Mock).mockResolvedValue(legacyData);
+
+        const data = await fetchRestaurantPage('restaurant-a');
+
+        expect(data.self_log).toBeUndefined();
+        expect(data.table_notes).toBeUndefined();
+    });
+
     it('cold-loads a parameterless deep link', async () => {
         let resolvePage: ((value: RestaurantPageData) => void) | undefined;
         (callEdgeFn as jest.Mock).mockReturnValue(new Promise((resolve) => {

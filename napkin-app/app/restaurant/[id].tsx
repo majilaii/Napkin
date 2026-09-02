@@ -338,7 +338,7 @@ export default function RestaurantScreen() {
         ? resolveDirectionsUrl(restaurant.google_maps_uri, restaurant.name, restaurant.city)
         : '';
     const gatherVisible = !FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId;
-    const personalVisitCount = page.data?.personal.visit_count ?? 0;
+    const visitCount = page.data?.self_log?.length ?? page.data?.personal.visit_count ?? 0;
     const reserveUrl = persistedRow?.reserve_url
         ?? reserveLink.data?.reserve_url
         ?? findBookingUrl(restaurant?.website);
@@ -429,10 +429,10 @@ export default function RestaurantScreen() {
                             />
                         ) : null}
 
-                        {shouldShowHistoryDoorway(personalVisitCount, persistedRestaurantId) ? (
+                        {shouldShowHistoryDoorway(visitCount, persistedRestaurantId) ? (
                             <YourHistoryDoorway
                                 restaurantName={restaurant.name}
-                                visitCount={personalVisitCount}
+                                visitCount={visitCount}
                                 regular={page.data?.regular ?? null}
                                 onPress={() => router.push({
                                     pathname: '/restaurant-history',
@@ -550,7 +550,15 @@ export default function RestaurantScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     loading: { alignItems: 'center' },
-    errorBack: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    errorBack: {
+        width: Spacing.restaurant.quietActionHeight,
+        height: Spacing.restaurant.quietActionHeight,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     errorBody: { flex: 1, justifyContent: 'center' },
-    passenger: { paddingHorizontal: 20, marginTop: Spacing.lg + 2 },
+    passenger: {
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        marginTop: Spacing.restaurant.sectionGap,
+    },
 });

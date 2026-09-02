@@ -305,7 +305,7 @@ export function FriendsNotesSection({
                     accessibilityLabel={action.replace('›', '').trim()}
                     style={({ pressed }) => [styles.sectionHeading, pressed && styles.pressed]}
                 >
-                    <Text style={[Type.restaurantKicker, { color: palette.textMuted }]}>REVIEWS</Text>
+                    <Text style={[Type.feedSectionKicker, { color: palette.textMuted }]}>REVIEWS</Text>
                     <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>
                         {action}
                     </Text>
@@ -393,7 +393,7 @@ export function FriendsSpread({
                         style={[
                             styles.spreadBar,
                             {
-                                height: Math.max(4, (count / max) * 64),
+                                height: Math.max(Spacing.restaurant.spreadBarMin, (count / max) * Spacing.restaurant.spreadHeight),
                                 backgroundColor: count === 0
                                     ? palette.surfaceJournalHi
                                     : index === modeIndex
@@ -699,7 +699,11 @@ const styles = StyleSheet.create({
         alignItems: 'flex-end',
         gap: Spacing.restaurant.spreadBarGap,
     },
-    spreadBar: { flex: 1, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
+    spreadBar: {
+        flex: 1,
+        borderTopLeftRadius: Spacing.restaurant.spreadBarRadius,
+        borderTopRightRadius: Spacing.restaurant.spreadBarRadius,
+    },
     spreadFooter: {
         marginTop: Spacing.restaurant.spreadFooterTop,
         flexDirection: 'row',

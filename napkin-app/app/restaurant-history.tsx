@@ -120,6 +120,7 @@ export default function RestaurantHistoryScreen() {
     const { data: lists = [] } = useMyLists(user?.id);
     const { data: clippingData } = useRestaurantClippings(restaurantId, user?.id);
     const rows = useMemo(() => page.data?.self_log ?? [], [page.data?.self_log]);
+    const selfLogUnavailable = !!page.data && page.data.self_log === undefined;
     const stats = useMemo(() => deriveLedgerStats(rows), [rows]);
     const selfClipCount = (clippingData?.rows ?? []).filter(
         (clipping) => clipping.relationship === 'self',
@@ -176,7 +177,7 @@ export default function RestaurantHistoryScreen() {
                     <View style={styles.headerSpacer} />
                 </View>
 
-                {page.error && page.data ? (
+                {(page.error && page.data) || selfLogUnavailable ? (
                     <InlineErrorState
                         message="could not load visit history"
                         onRetry={() => void page.refetch()}
@@ -189,51 +190,55 @@ export default function RestaurantHistoryScreen() {
                     </View>
                 ) : (
                     <>
-                        <View style={styles.masthead}>
-                            <Text style={[Type.ratingLarge, { color: palette.amberBright }]}>
-                                {stats.average == null ? '—' : stats.average.toFixed(1)}
-                            </Text>
-                            {rows.length > 0 ? (
-                                <Text style={[Type.metadata, styles.meta, { color: palette.textMuted }]}>
-                                    {formatLedgerMeta(rows)}
-                                </Text>
-                            ) : null}
-                        </View>
-
-                        {rows.length > 0 ? (
-                            <View style={styles.cards}>
-                                {stats.rows.map((row) => {
-                                    const target = selfLogTarget(row);
-                                    return (
-                                        <LedgerCard
-                                            key={row.id}
-                                            row={row}
-                                            onPress={target ? () => router.push(target as any) : undefined}
-                                            palette={palette}
-                                        />
-                                    );
-                                })}
-                            </View>
-                        ) : (
-                            <View style={styles.empty}>
-                                <Text style={[Type.quote, styles.emptyMurmur, { color: palette.textMuted }]}>
-                                    — nothing logged here yet.
-                                </Text>
-                                <Pressable
-                                    onPress={() => router.push({
-                                        pathname: '/create-entry',
-                                        params: { restaurantId },
-                                    })}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="log this restaurant"
-                                    style={({ pressed }) => pressed && styles.pressed}
-                                >
-                                    <Text style={[Type.restaurantSectionAction, styles.emptyAction, { color: palette.primary }]}>
-                                        been here? log it →
+                        {!selfLogUnavailable ? (
+                            <>
+                                <View style={styles.masthead}>
+                                    <Text style={[Type.ratingLarge, { color: palette.amberBright }]}>
+                                        {stats.average == null ? '—' : stats.average.toFixed(1)}
                                     </Text>
-                                </Pressable>
-                            </View>
-                        )}
+                                    {rows.length > 0 ? (
+                                        <Text style={[Type.metadata, styles.meta, { color: palette.textMuted }]}>
+                                            {formatLedgerMeta(rows)}
+                                        </Text>
+                                    ) : null}
+                                </View>
+
+                                {rows.length > 0 ? (
+                                    <View style={styles.cards}>
+                                        {stats.rows.map((row) => {
+                                            const target = selfLogTarget(row);
+                                            return (
+                                                <LedgerCard
+                                                    key={row.id}
+                                                    row={row}
+                                                    onPress={target ? () => router.push(target as any) : undefined}
+                                                    palette={palette}
+                                                />
+                                            );
+                                        })}
+                                    </View>
+                                ) : (
+                                    <View style={styles.empty}>
+                                        <Text style={[Type.quote, styles.emptyMurmur, { color: palette.textMuted }]}>
+                                            — nothing logged here yet.
+                                        </Text>
+                                        <Pressable
+                                            onPress={() => router.push({
+                                                pathname: '/create-entry',
+                                                params: { restaurantId },
+                                            })}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="log this restaurant"
+                                            style={({ pressed }) => pressed && styles.pressed}
+                                        >
+                                            <Text style={[Type.restaurantSectionAction, styles.emptyAction, { color: palette.primary }]}>
+                                                been here? log it →
+                                            </Text>
+                                        </Pressable>
+                                    </View>
+                                )}
+                            </>
+                        ) : null}
 
                         {elsewhere.length > 0 ? (
                             <View style={[styles.elsewhere, { backgroundColor: palette.surfaceJournalLow }]}>

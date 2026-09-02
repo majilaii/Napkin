@@ -100,15 +100,15 @@ describe('restaurant page v3 derivations', () => {
         }), new Date('2026-09-01T12:00:00.000Z'), true)).toBe('thai grill · open until 22:00');
     });
 
-    it('keeps YOU, FRIENDS, and GOOGLE as separate 0.5–5 tiers', () => {
+    it('keeps YOU, FRIENDS, and GOOGLE separate and counts every self-log row', () => {
         const page = {
-            personal: { average: 4.25, visit_count: 7 },
-            self_log: [],
+            personal: { average: 4.25, visit_count: 3 },
+            self_log: Array.from({ length: 5 }, (_, index) => ({ id: `self-${index}` })),
             public_reviews: [review('friend-a', 4, true), review('friend-b', 5, true)],
         } as unknown as RestaurantPageData;
         const tiers = deriveNumberTiers(page, restaurant(), 'viewer');
 
-        expect(tiers.you).toEqual({ value: 4.25, meta: '7 visits' });
+        expect(tiers.you).toEqual({ value: 4.25, meta: '5 visits' });
         expect(tiers.friends).toEqual({ value: 4.5, meta: '2 been' });
         expect(tiers.google).toEqual({ value: 4.6, meta: '2.1k ratings' });
         expect(Math.max(
@@ -116,6 +116,21 @@ describe('restaurant page v3 derivations', () => {
             tiers.friends.value!,
             tiers.google.value!,
         )).toBeLessThanOrEqual(5);
+    });
+
+    it('falls back only when a legacy server omits self_log', () => {
+        const legacyPage = {
+            personal: { average: 4.25, visit_count: 7 },
+            public_reviews: [],
+        } as unknown as RestaurantPageData;
+        const emptyPage = {
+            personal: { average: 4.25, visit_count: 3 },
+            self_log: [],
+            public_reviews: [],
+        } as unknown as RestaurantPageData;
+
+        expect(deriveNumberTiers(legacyPage, restaurant(), 'viewer').you.meta).toBe('7 visits');
+        expect(deriveNumberTiers(emptyPage, restaurant(), 'viewer').you.meta).toBe('0 visits');
     });
 });
 

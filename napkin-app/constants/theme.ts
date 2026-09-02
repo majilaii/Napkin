@@ -261,6 +261,7 @@ export const Spacing = {
     quietActionHeight: 44,
     primaryActionHeight: 48,
     spreadHeight: 64,
+    spreadBarMin: 4,
     spreadBarGap: 5,
     spreadFooterTop: 6,
     spreadBarRadius: 3,

@@ -181,8 +181,8 @@ export type RestaurantPageData = {
     visit_count: number;
     public_reviews: PublicReviewCard[];
     public_reviews_total: number;
-    self_log: SelfLogRow[];
-    table_notes: TableNoteRow[];
+    self_log?: SelfLogRow[];
+    table_notes?: TableNoteRow[];
     /** Reserved for TICKET-221; absent today, so the regular row stays hidden. */
     regular?: string | null;
     // v3 additions
@@ -275,8 +275,6 @@ export async function fetchRestaurantPage(
     if (data.first_logged_at_by_your_table == null) data.first_logged_at_by_your_table = null;
     // TICKET-026: graceful degradation for older edge function responses
     if (!data.professional_critics) data.professional_critics = [];
-    if (!data.self_log) data.self_log = [];
-    if (!data.table_notes) data.table_notes = [];
 
     return data;
 }

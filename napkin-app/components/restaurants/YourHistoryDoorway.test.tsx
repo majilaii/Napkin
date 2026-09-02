@@ -24,9 +24,31 @@ jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 import React from 'react';
 import { fireEvent, render } from '@testing-library/react-native';
+import { View } from 'react-native';
 
 import { Colors } from '@/constants/theme';
 import { shouldShowHistoryDoorway, YourHistoryDoorway } from './YourHistoryDoorway';
+
+type CountPayload = {
+    personal: { visit_count: number };
+    self_log?: unknown[];
+};
+
+function renderDoorway(page: CountPayload) {
+    const visitCount = page.self_log?.length ?? page.personal.visit_count ?? 0;
+    return render(
+        <View>
+            {shouldShowHistoryDoorway(visitCount, 'restaurant') ? (
+                <YourHistoryDoorway
+                    restaurantName="Kiln"
+                    visitCount={visitCount}
+                    onPress={jest.fn()}
+                    palette={Colors.light}
+                />
+            ) : null}
+        </View>,
+    );
+}
 
 describe('YourHistoryDoorway', () => {
     it('gates on both a persisted id and at least one self log', () => {
@@ -50,18 +72,24 @@ describe('YourHistoryDoorway', () => {
         expect(screen.getByText("you've been here · 1 visit")).toBeTruthy();
     });
 
-    it('uses the compatible personal count even when the additive self log is empty', () => {
-        const page = { personal: { visit_count: 7 }, self_log: [] };
-        const screen = render(
-            <YourHistoryDoorway
-                restaurantName="Kiln"
-                visitCount={page.personal.visit_count}
-                onPress={jest.fn()}
-                palette={Colors.light}
-            />,
-        );
+    it('uses the complete self log instead of the rated-only personal count', () => {
+        const screen = renderDoorway({
+            personal: { visit_count: 3 },
+            self_log: Array.from({ length: 5 }, (_, index) => ({ id: `self-${index}` })),
+        });
 
-        expect(page.self_log).toHaveLength(0);
+        expect(screen.getByText("you've been here · 5 visits")).toBeTruthy();
+    });
+
+    it('uses the compatible personal count when a legacy server omits self_log', () => {
+        const screen = renderDoorway({ personal: { visit_count: 7 } });
+
         expect(screen.getByText("you've been here · 7 visits")).toBeTruthy();
+    });
+
+    it('treats an authoritative empty self_log as zero and hides the doorway', () => {
+        const screen = renderDoorway({ personal: { visit_count: 3 }, self_log: [] });
+
+        expect(screen.queryByText(/you've been here/)).toBeNull();
     });
 });

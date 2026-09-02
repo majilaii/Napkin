@@ -72,7 +72,7 @@ export function deriveNumberTiers(
     viewerUserId: string | null | undefined,
 ) {
     const friends = deriveFriendsCohort(page?.public_reviews ?? [], viewerUserId);
-    const selfCount = page?.personal?.visit_count ?? 0;
+    const selfCount = page?.self_log?.length ?? page?.personal?.visit_count ?? 0;
     const personalAverage = page?.personal?.average;
     return {
         you: {
