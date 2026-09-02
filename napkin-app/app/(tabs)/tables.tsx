@@ -24,7 +24,8 @@ import { WishlistGrid } from '@/components/wishlist';
 import { AtlasCityIndex } from '@/components/atlas';
 import { useTableAtlas } from '@/hooks/tables/useTableAtlas';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useRoute, type RouteProp } from '@react-navigation/native';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -165,10 +166,11 @@ export default function TablesScreen() {
     // Deep links may select a Table and optionally force its Activity pane. Track
     // the params object instance, not scalar equality: delivering the same id a
     // second time must re-apply `section=activity` after the user changed panes.
-    const routeParams = useLocalSearchParams<TablesRouteParams>();
-    const appliedParamsInstance = useRef<TablesRouteParams | null>(null);
+    const route = useRoute<RouteProp<{ Tables: TablesRouteParams }, 'Tables'>>();
+    const routeParams = route.params;
+    const appliedParamsInstance = useRef<TablesRouteParams | undefined>(undefined);
     useEffect(() => {
-        if (!tables || appliedParamsInstance.current === routeParams) return;
+        if (!tables || !routeParams || appliedParamsInstance.current === routeParams) return;
         appliedParamsInstance.current = routeParams;
         applyTablesRouteParams(routeParams, tables, setSelectedIndex, setActiveTab);
     }, [routeParams, tables]);

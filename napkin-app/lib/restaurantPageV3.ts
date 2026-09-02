@@ -72,7 +72,7 @@ export function deriveNumberTiers(
     viewerUserId: string | null | undefined,
 ) {
     const friends = deriveFriendsCohort(page?.public_reviews ?? [], viewerUserId);
-    const selfCount = page?.self_log?.length ?? 0;
+    const selfCount = page?.personal?.visit_count ?? 0;
     const personalAverage = page?.personal?.average;
     return {
         you: {
@@ -115,6 +115,7 @@ export function restaurantClosingTime(
 export function buildRestaurantMeta(
     restaurant: RestaurantPageRestaurant,
     date: Date = new Date(),
+    openNow?: boolean | null,
 ): string {
     const price = restaurant.price_level == null
         ? null
@@ -124,7 +125,7 @@ export function buildRestaurantMeta(
         restaurant.cuisine?.toLowerCase() || null,
         restaurant.city?.toLowerCase() || null,
         price,
-        closes ? `open until ${closes}` : null,
+        closes && openNow === true ? `open until ${closes}` : null,
     ].filter((part): part is string => !!part).join(' · ');
 }
 

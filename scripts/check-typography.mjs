@@ -630,6 +630,18 @@ const TYPE_FLOORS = {
     ratingCompact: 16,
     rating: 24,
     ratingLarge: 36,
+    restaurantName: 34,
+    restaurantKicker: 11,
+    restaurantPrimaryAction: 13,
+    restaurantUtilityAction: 13,
+    restaurantDoorway: 16,
+    restaurantSectionAction: 13,
+    restaurantQuote: 16,
+    restaurantQuoteName: 13,
+    restaurantRatingInline: 15,
+    restaurantListTitle: 15,
+    restaurantDetail: 15,
+    restaurantDetailAction: 13,
 };
 const ALLOWED_ITALIC_TYPE_TOKENS = new Set([
     'headlineItalic', // Legacy: app-wide per-file debt prevents new callers.
@@ -642,6 +654,9 @@ const ALLOWED_ITALIC_TYPE_TOKENS = new Set([
     'feedCardRating',
     'feedQuote',
     'feedLedgerRating',
+    // TICKET-227 founder-approved restaurant quotes and inline rating numerals.
+    'restaurantQuote',
+    'restaurantRatingInline',
 ]);
 
 function italicTypeTokens(themeSource) {

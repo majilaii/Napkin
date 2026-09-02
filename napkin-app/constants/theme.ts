@@ -241,6 +241,35 @@ export const Spacing = {
     cardHorizontal: 14,
     quoteLead: 2,
   },
+  /** Founder-approved restaurant v3 page and ledger rhythm (TICKET-227/222). */
+  restaurant: {
+    pageGutter: 20,
+    topBarGutter: 10,
+    topBarHeight: 52,
+    sectionGap: 26,
+    doorwaySectionGap: 22,
+    mastheadTop: 4,
+    numbersTop: 18,
+    numbersVertical: 14,
+    actionTop: 18,
+    actionGap: 10,
+    compactGap: 6,
+    hairlineGap: 1,
+    cardHorizontal: 14,
+    cardVertical: 13,
+    sectionHeadingHeight: 40,
+    quietActionHeight: 44,
+    primaryActionHeight: 48,
+    spreadHeight: 64,
+    spreadBarGap: 5,
+    spreadFooterTop: 6,
+    spreadBarRadius: 3,
+    listChipHorizontal: 12,
+    ledgerGap: 10,
+    ledgerEmptyTop: 100,
+    ledgerEmptyGutter: 40,
+    ledgerPhotoSize: 64,
+  },
 } as const;
 
 export const Radius = {
@@ -512,6 +541,86 @@ export const Type = {
     fontFamily: 'Manrope_800ExtraBold',
     lineHeight: 18,
     letterSpacing: 0.05,
+  } as TextStyle,
+
+  // TICKET-227/222 — one restaurant-page grammar. These names prevent the
+  // founder-approved v3 scale from drifting through local style overrides.
+  restaurantName: {
+    fontSize: 34,
+    fontWeight: '600' as const,
+    fontFamily: 'Newsreader_600SemiBold',
+    letterSpacing: -0.4,
+    lineHeight: 38,
+  } as TextStyle,
+  restaurantKicker: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1.2,
+    lineHeight: 15,
+    textTransform: 'uppercase' as const,
+  } as TextStyle,
+  restaurantPrimaryAction: {
+    fontSize: 13,
+    fontWeight: '800' as const,
+    fontFamily: 'Manrope_800ExtraBold',
+    letterSpacing: 0.6,
+    lineHeight: 19,
+  } as TextStyle,
+  restaurantUtilityAction: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    lineHeight: 19,
+  } as TextStyle,
+  restaurantDoorway: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    fontFamily: 'Manrope_600SemiBold',
+    lineHeight: 22,
+  } as TextStyle,
+  restaurantSectionAction: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    lineHeight: 19,
+  } as TextStyle,
+  restaurantQuote: {
+    fontSize: 16,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    lineHeight: 22,
+  } as TextStyle,
+  restaurantQuoteName: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    lineHeight: 19,
+  } as TextStyle,
+  restaurantRatingInline: {
+    fontSize: 15,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    lineHeight: 19,
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+  restaurantListTitle: {
+    fontSize: 15,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular',
+    lineHeight: 19,
+  } as TextStyle,
+  restaurantDetail: {
+    fontSize: 15,
+    fontWeight: '400' as const,
+    fontFamily: 'Manrope_400Regular',
+    lineHeight: 20,
+  } as TextStyle,
+  restaurantDetailAction: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    fontFamily: 'Manrope_700Bold',
+    lineHeight: 19,
   } as TextStyle,
 
   // Titles — Manrope for functional

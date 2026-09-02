@@ -46,6 +46,7 @@ import {
     loadSelfLog,
     loadTableNotes,
     type SelfLogRow,
+    type TableMembershipPair,
     type TableNoteRow,
 } from './pageProjections.ts';
 
@@ -1135,13 +1136,18 @@ serve(async (req) => {
 
             // ── Shared-Table members ──
             let sharedUserIds: string[] = [];
+            let sharedMembershipPairs: TableMembershipPair[] = [];
             if (memberTableIds.length > 0) {
                 const { data: sharedMembers, error: sharedErr } = await supabase
                     .from('table_members')
-                    .select('member_id')
+                    .select('table_id, member_id')
                     .in('table_id', memberTableIds)
                     .neq('member_id', user.id);
                 if (sharedErr) throw sharedErr;
+                sharedMembershipPairs = (sharedMembers ?? []).map((membership: any) => ({
+                    table_id: membership.table_id as string,
+                    member_id: membership.member_id as string,
+                }));
                 sharedUserIds = [...new Set((sharedMembers ?? []).map((m: any) => m.member_id as string))];
             }
 
@@ -1155,8 +1161,7 @@ serve(async (req) => {
                     supabase,
                     user.id,
                     resolvedRestaurantId,
-                    memberTableIds,
-                    sharedUserIds,
+                    sharedMembershipPairs,
                 ),
             ]);
 

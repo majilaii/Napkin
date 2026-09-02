@@ -92,18 +92,23 @@ describe('restaurant page v3 derivations', () => {
             city: null,
             price_level: null,
             hours: { weekdayDescriptions: ['Tuesday: 12:00\u2009PM – 10:00\u202fPM'] },
-        }), new Date('2026-09-01T12:00:00.000Z'))).toBe('thai grill · open until 22:00');
+        }), new Date('2026-09-01T12:00:00.000Z'))).toBe('thai grill');
+        expect(buildRestaurantMeta(restaurant({
+            city: null,
+            price_level: null,
+            hours: { weekdayDescriptions: ['Tuesday: 12:00\u2009PM – 10:00\u202fPM'] },
+        }), new Date('2026-09-01T12:00:00.000Z'), true)).toBe('thai grill · open until 22:00');
     });
 
     it('keeps YOU, FRIENDS, and GOOGLE as separate 0.5–5 tiers', () => {
         const page = {
-            personal: { average: 4.25, visit_count: 99 },
-            self_log: [{}, {}, {}, {}],
+            personal: { average: 4.25, visit_count: 7 },
+            self_log: [],
             public_reviews: [review('friend-a', 4, true), review('friend-b', 5, true)],
         } as unknown as RestaurantPageData;
         const tiers = deriveNumberTiers(page, restaurant(), 'viewer');
 
-        expect(tiers.you).toEqual({ value: 4.25, meta: '4 visits' });
+        expect(tiers.you).toEqual({ value: 4.25, meta: '7 visits' });
         expect(tiers.friends).toEqual({ value: 4.5, meta: '2 been' });
         expect(tiers.google).toEqual({ value: 4.6, meta: '2.1k ratings' });
         expect(Math.max(

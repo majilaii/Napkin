@@ -6,7 +6,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface Props {
@@ -33,6 +33,24 @@ export function ErrorState({ onRetry, message = "couldn't load" }: Props) {
     );
 }
 
+/** One-line degraded state for a warm query that still has cached content. */
+export function InlineErrorState({ onRetry, message = "couldn't refresh" }: Props) {
+    const scheme = useColorScheme() ?? 'light';
+    const palette = Colors[scheme];
+
+    return (
+        <Pressable
+            onPress={onRetry}
+            accessibilityRole="button"
+            accessibilityLabel={`${message}, try again`}
+            style={({ pressed }) => [styles.inline, pressed && styles.inlinePressed]}
+        >
+            <Text style={[Type.metadata, { color: palette.textMuted }]}>{message}</Text>
+            <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>try again</Text>
+        </Pressable>
+    );
+}
+
 const styles = StyleSheet.create({
     root: {
         alignItems: 'center',
@@ -49,4 +67,13 @@ const styles = StyleSheet.create({
         fontFamily: 'Manrope_600SemiBold',
         fontSize: 13,
     },
+    inline: {
+        minHeight: Spacing.restaurant.quietActionHeight,
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: Spacing.sm,
+    },
+    inlinePressed: { opacity: 0.8 },
 });

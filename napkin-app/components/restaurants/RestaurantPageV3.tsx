@@ -19,7 +19,7 @@ function quietOpen(url: string) {
     void Linking.openURL(url).catch(() => undefined);
 }
 
-function SectionHeading({
+export function SectionHeading({
     label,
     action,
     onAction,
@@ -32,7 +32,12 @@ function SectionHeading({
 }) {
     return (
         <View style={styles.sectionHeading}>
-            <Text style={[Type.feedSectionKicker, { color: palette.textMuted }]}>{label}</Text>
+            <Text
+                accessibilityRole="header"
+                style={[Type.feedSectionKicker, { color: palette.textMuted }]}
+            >
+                {label}
+            </Text>
             {action && onAction ? (
                 <Pressable
                     onPress={onAction}
@@ -155,6 +160,7 @@ export function RestaurantActions({
     onPin,
     onDirections,
     onWebsite,
+    onReserve,
     onGather,
     palette,
 }: {
@@ -163,6 +169,7 @@ export function RestaurantActions({
     onPin: () => void;
     onDirections: () => void;
     onWebsite?: () => void;
+    onReserve?: () => void;
     onGather?: () => void;
     palette: Palette;
 }) {
@@ -172,11 +179,18 @@ export function RestaurantActions({
         ...(onWebsite
             ? [{ key: 'website', label: 'website', icon: 'globe-outline' as const, onPress: onWebsite }]
             : []),
+        ...(onReserve
+            ? [{ key: 'reserve', label: 'reserve', icon: 'calendar-outline' as const, onPress: onReserve }]
+            : []),
         ...(onGather
             ? [{ key: 'gather', label: 'gather', icon: 'people-outline' as const, onPress: onGather }]
             : []),
     ];
-    const twoColumn = utilities.length === 4;
+    const utilityRows = utilities.length === 5
+        ? [utilities.slice(0, 3), utilities.slice(3)]
+        : utilities.length === 4
+            ? [utilities.slice(0, 2), utilities.slice(2)]
+            : [utilities];
     return (
         <View style={styles.actions}>
             <Pressable
@@ -192,25 +206,33 @@ export function RestaurantActions({
                 <Ionicons name="add" size={IconSize.md} color={palette.textInverse} />
                 <Text style={[styles.primaryActionText, { color: palette.textInverse }]}>LOG THIS MEAL</Text>
             </Pressable>
-            <View style={styles.utilityRow}>
-                {utilities.map((action) => (
-                    <Pressable
-                        key={action.key}
-                        onPress={action.onPress}
-                        accessibilityRole="button"
-                        accessibilityLabel={action.label}
-                        style={({ pressed }) => [
-                            styles.utilityAction,
-                            twoColumn ? styles.utilityHalf : styles.utilityFlexible,
-                            { backgroundColor: palette.surfaceJournal },
-                            pressed && styles.pressed,
-                        ]}
+            <View style={styles.utilityRows}>
+                {utilityRows.map((row, rowIndex) => (
+                    <View
+                        key={`utility-row-${rowIndex}`}
+                        testID="restaurant-utility-row"
+                        style={styles.utilityRow}
                     >
-                        <Ionicons name={action.icon} size={IconSize.md} color={palette.textSecondary} />
-                        <Text style={[styles.utilityActionText, { color: palette.textSecondary }]}>
-                            {action.label}
-                        </Text>
-                    </Pressable>
+                        {row.map((action) => (
+                            <Pressable
+                                key={action.key}
+                                onPress={action.onPress}
+                                accessibilityRole="button"
+                                accessibilityLabel={action.label}
+                                style={({ pressed }) => [
+                                    styles.utilityAction,
+                                    styles.utilityFlexible,
+                                    { backgroundColor: palette.surfaceJournal },
+                                    pressed && styles.pressed,
+                                ]}
+                            >
+                                <Ionicons name={action.icon} size={IconSize.md} color={palette.textSecondary} />
+                                <Text style={[styles.utilityActionText, { color: palette.textSecondary }]}>
+                                    {action.label}
+                                </Text>
+                            </Pressable>
+                        ))}
+                    </View>
                 ))}
             </View>
         </View>
@@ -236,7 +258,7 @@ function QuoteCard({
 }) {
     const content = (
         <View style={[styles.quoteCard, { backgroundColor: palette.surfaceNote }, Shadow.ambient]}>
-            <Text style={[Type.quote, styles.quoteBody, { color: palette.textSoft }]}>
+            <Text style={[Type.restaurantQuote, { color: palette.textSoft }]}>
                 {`— ${note}`}
             </Text>
             <View style={styles.quoteAttribution}>
@@ -273,6 +295,24 @@ export function FriendsNotesSection({
 }) {
     if (total <= 0) return null;
     const visible = cohort.slice(0, 2);
+    if (visible.length === 0) {
+        const action = `all ${total} reviews ›`;
+        return (
+            <View style={styles.section}>
+                <Pressable
+                    onPress={onSeeAll}
+                    accessibilityRole="button"
+                    accessibilityLabel={action.replace('›', '').trim()}
+                    style={({ pressed }) => [styles.sectionHeading, pressed && styles.pressed]}
+                >
+                    <Text style={[Type.restaurantKicker, { color: palette.textMuted }]}>REVIEWS</Text>
+                    <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>
+                        {action}
+                    </Text>
+                </Pressable>
+            </View>
+        );
+    }
     return (
         <View style={styles.section}>
             <SectionHeading
@@ -469,20 +509,20 @@ function DetailRow({
 export function RestaurantDetails({
     restaurant,
     directionsUrl,
+    openNow,
     palette,
 }: {
     restaurant: RestaurantPageRestaurant;
     directionsUrl: string;
+    openNow?: boolean | null;
     palette: Palette;
 }) {
     const [hoursExpanded, setHoursExpanded] = useState(false);
     const today = todaysHoursLine(restaurant.hours);
     const closes = restaurantClosingTime(restaurant.hours, new Date());
-    const hoursCopy = closes
+    const hoursCopy = closes && openNow === true
         ? `open · until ${closes}`
-        : today === 'closed'
-            ? 'closed'
-            : today || 'hours';
+        : today || 'hours';
     const week = weekHoursLines(restaurant.hours);
     const rows = [
         restaurant.address ? 'address' : null,
@@ -565,86 +605,84 @@ const styles = StyleSheet.create({
     ctaPressed: { opacity: 0.85 },
     disabled: { opacity: 0.5 },
     topBar: {
-        minHeight: 52,
-        paddingHorizontal: 10,
+        minHeight: Spacing.restaurant.topBarHeight,
+        paddingHorizontal: Spacing.restaurant.topBarGutter,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
     },
     topButton: {
-        width: 44,
-        height: 44,
+        width: Spacing.restaurant.quietActionHeight,
+        height: Spacing.restaurant.quietActionHeight,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    masthead: { paddingHorizontal: 20, paddingTop: Spacing.xs },
-    restaurantName: {
-        fontFamily: 'Newsreader_600SemiBold',
-        fontSize: 34,
-        lineHeight: 38,
-        letterSpacing: -0.4,
+    masthead: {
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        paddingTop: Spacing.restaurant.mastheadTop,
     },
+    restaurantName: Type.restaurantName,
     mastheadMeta: { marginTop: Spacing.xs },
     numbersBand: {
-        marginHorizontal: 20,
-        marginTop: 18,
+        marginHorizontal: Spacing.restaurant.pageGutter,
+        marginTop: Spacing.restaurant.numbersTop,
         borderRadius: Radius.lg,
         paddingHorizontal: Spacing.md,
-        paddingVertical: 14,
+        paddingVertical: Spacing.restaurant.numbersVertical,
         flexDirection: 'row',
         alignItems: 'baseline',
     },
-    numberCell: { flex: 1, gap: 1 },
-    numberKicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        lineHeight: 15,
-        letterSpacing: 1.2,
+    numberCell: { flex: 1, gap: Spacing.restaurant.hairlineGap },
+    numberKicker: Type.restaurantKicker,
+    actions: {
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        paddingTop: Spacing.restaurant.actionTop,
+        gap: Spacing.restaurant.actionGap,
     },
-    actions: { paddingHorizontal: 20, paddingTop: 18, gap: 10 },
     primaryAction: {
-        height: Spacing.xxl,
+        height: Spacing.restaurant.primaryActionHeight,
         borderRadius: Radius.full,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         gap: Spacing.sm,
     },
-    primaryActionText: {
-        fontFamily: 'Manrope_800ExtraBold',
-        fontSize: 13,
-        letterSpacing: 0.6,
-    },
-    utilityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+    primaryActionText: Type.restaurantPrimaryAction,
+    utilityRows: { gap: Spacing.sm },
+    utilityRow: { flexDirection: 'row', gap: Spacing.sm },
     utilityAction: {
-        height: 44,
+        height: Spacing.restaurant.quietActionHeight,
         borderRadius: Radius.full,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
+        gap: Spacing.restaurant.compactGap,
         paddingHorizontal: Spacing.sm,
     },
     utilityFlexible: { flex: 1 },
-    utilityHalf: { flexBasis: '48%', flexGrow: 1 },
-    utilityActionText: { fontFamily: 'Manrope_700Bold', fontSize: 13 },
-    section: { paddingHorizontal: 20, marginTop: Spacing.lg + 2 },
+    utilityActionText: Type.restaurantUtilityAction,
+    section: {
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        marginTop: Spacing.restaurant.sectionGap,
+    },
     sectionHeading: {
-        minHeight: 40,
+        minHeight: Spacing.restaurant.sectionHeadingHeight,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: Spacing.sm,
     },
-    headingActionHit: { minHeight: 40, justifyContent: 'center' },
-    headingAction: { fontFamily: 'Manrope_700Bold', fontSize: 13, lineHeight: 19 },
+    headingActionHit: {
+        minHeight: Spacing.restaurant.sectionHeadingHeight,
+        justifyContent: 'center',
+    },
+    headingAction: Type.restaurantSectionAction,
     quoteCard: {
         borderRadius: Radius.lg,
-        paddingHorizontal: 14,
-        paddingVertical: 13,
+        paddingHorizontal: Spacing.restaurant.cardHorizontal,
+        paddingVertical: Spacing.restaurant.cardVertical,
         marginBottom: Spacing.sm,
     },
-    quoteBody: { lineHeight: 22 },
     quoteAttribution: {
         flexDirection: 'row',
         alignItems: 'baseline',
@@ -652,34 +690,43 @@ const styles = StyleSheet.create({
         gap: Spacing.sm,
         marginTop: Spacing.sm,
     },
-    quoteName: { fontFamily: 'Manrope_700Bold', fontSize: 13, lineHeight: 19 },
-    quoteRating: {
-        ...Type.ratingCompact,
-        fontSize: 15,
-        lineHeight: 19,
-    },
+    quoteName: Type.restaurantQuoteName,
+    quoteRating: Type.restaurantRatingInline,
     spreadBars: {
-        height: 64,
+        height: Spacing.restaurant.spreadHeight,
         marginTop: Spacing.sm,
         flexDirection: 'row',
         alignItems: 'flex-end',
-        gap: 5,
+        gap: Spacing.restaurant.spreadBarGap,
     },
     spreadBar: { flex: 1, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
     spreadFooter: {
-        marginTop: 6,
+        marginTop: Spacing.restaurant.spreadFooterTop,
         flexDirection: 'row',
         alignItems: 'baseline',
         justifyContent: 'space-between',
     },
     listChips: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-    listChip: { borderRadius: Radius.sm, paddingHorizontal: 12, paddingVertical: Spacing.sm },
-    listTitle: { fontFamily: 'Newsreader_400Regular', fontSize: 15, lineHeight: 19 },
+    listChip: {
+        borderRadius: Radius.sm,
+        paddingHorizontal: Spacing.restaurant.listChipHorizontal,
+        paddingVertical: Spacing.sm,
+    },
+    listTitle: Type.restaurantListTitle,
     detailsSection: { paddingBottom: Spacing.xxl },
-    detailRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 },
-    detailCopy: { flex: 1, fontFamily: 'Manrope_400Regular', fontSize: 15, lineHeight: 20 },
-    detailAction: { fontFamily: 'Manrope_700Bold', fontSize: 13, lineHeight: 19 },
+    detailRow: {
+        minHeight: Spacing.restaurant.quietActionHeight,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.restaurant.actionGap,
+    },
+    detailCopy: { flex: 1, ...Type.restaurantDetail },
+    detailAction: Type.restaurantDetailAction,
     divider: { height: StyleSheet.hairlineWidth },
-    weekBlock: { paddingLeft: IconSize.md + 10, paddingBottom: Spacing.sm, gap: 6 },
+    weekBlock: {
+        paddingLeft: IconSize.md + Spacing.restaurant.actionGap,
+        paddingBottom: Spacing.sm,
+        gap: Spacing.restaurant.compactGap,
+    },
     weekRow: { flexDirection: 'row', justifyContent: 'space-between', gap: Spacing.md },
 });

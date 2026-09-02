@@ -32,6 +32,11 @@ export type TableNoteRow = {
     visited_at: string;
 };
 
+export type TableMembershipPair = {
+    table_id: string;
+    member_id: string;
+};
+
 type RoundProjection = {
     participants: Array<{
         user_id: string;
@@ -139,12 +144,11 @@ export async function loadSelfLog(
     }
     const mergedNightById = new Map(mergedNights.map((night) => [night.id as string, night]));
 
-    const rows: SelfLogRow[] = [];
-    for (const entry of entries) {
+    const entryRows = await Promise.all(entries.map(async (entry): Promise<SelfLogRow> => {
         const roundId = bindingByEntry.get(entry.id as string);
         const mergedNight = roundId ? mergedNightById.get(roundId) : null;
         if (roundId && mergedNight) {
-            rows.push({
+            return {
                 id: `round:${roundId}`,
                 entry_id: entry.id as string,
                 table_night_id: roundId,
@@ -160,11 +164,10 @@ export async function loadSelfLog(
                     roundProjector,
                 ),
                 photos: photosForEntry(entry),
-            });
-            continue;
+            };
         }
 
-        rows.push({
+        return {
             id: `entry:${entry.id}`,
             entry_id: entry.id as string,
             table_night_id: null,
@@ -174,8 +177,8 @@ export async function loadSelfLog(
             visited_at: (entry.visited_at ?? entry.created_at) as string,
             companions: [],
             photos: photosForEntry(entry),
-        });
-    }
+        };
+    }));
 
     const { data: liveTakes, error: liveError } = await supabase
         .from('table_night_participants')
@@ -188,14 +191,20 @@ export async function loadSelfLog(
         .eq('user_id', viewerId)
         .eq('table_nights.restaurant_id', restaurantId)
         .eq('table_nights.kind', 'live')
-        .eq('table_nights.status', 'revealed');
+        .in('table_nights.status', ['revealed', 'closed']);
     if (liveError) throw liveError;
 
-    for (const take of (liveTakes ?? []) as any[]) {
+    const liveRows = await Promise.all(((liveTakes ?? []) as any[]).flatMap((take) => {
         const night = one<any>(take.table_nights);
-        if (!night) continue;
+        if (!night) return [];
         const roundId = take.table_night_id as string;
-        rows.push({
+        return [companionsFor(
+            supabase,
+            viewerId,
+            roundId,
+            'live',
+            roundProjector,
+        ).then((companions): SelfLogRow => ({
             id: `round:${roundId}`,
             entry_id: null,
             table_night_id: roundId,
@@ -203,18 +212,12 @@ export async function loadSelfLog(
             rating: take.rating ?? null,
             note: take.notes ?? null,
             visited_at: (night.revealed_at ?? night.created_at) as string,
-            companions: await companionsFor(
-                supabase,
-                viewerId,
-                roundId,
-                'live',
-                roundProjector,
-            ),
+            companions,
             photos: [],
-        });
-    }
+        }))];
+    }));
 
-    return sortProjectionRows(rows, (row) => row.id);
+    return sortProjectionRows([...entryRows, ...liveRows], (row) => row.id);
 }
 
 /** Authorized Table-ring note projection for restaurant-history?action=page. */
@@ -222,10 +225,15 @@ export async function loadTableNotes(
     supabase: any,
     viewerId: string,
     restaurantId: string,
-    memberTableIds: string[],
-    sharedUserIds: string[],
+    memberships: TableMembershipPair[],
 ): Promise<TableNoteRow[]> {
-    if (memberTableIds.length === 0 || sharedUserIds.length === 0) return [];
+    if (memberships.length === 0) return [];
+
+    const memberTableIds = [...new Set(memberships.map((pair) => pair.table_id))];
+    const sharedUserIds = [...new Set(memberships.map((pair) => pair.member_id))];
+    const membershipKeys = new Set(
+        memberships.map((pair) => `${pair.table_id}\u0000${pair.member_id}`),
+    );
 
     const { data: shareRows, error: sharesError } = await supabase
         .from('entry_tables')
@@ -243,7 +251,15 @@ export async function loadTableNotes(
 
     const candidates = ((shareRows ?? []) as any[]).flatMap((share) => {
         const entry = one<any>(share.entries);
-        if (!entry || typeof entry.content !== 'string' || entry.content.trim().length === 0) {
+        const pairKey = entry
+            ? `${share.table_id as string}\u0000${entry.user_id as string}`
+            : '';
+        if (
+            !entry
+            || !membershipKeys.has(pairKey)
+            || typeof entry.content !== 'string'
+            || entry.content.trim().length === 0
+        ) {
             return [];
         }
         return [{ share, entry }];

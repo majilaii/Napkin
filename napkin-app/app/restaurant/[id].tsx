@@ -22,7 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, IconSize, Spacing } from '@/constants/theme';
-import { ErrorState } from '@/components/ErrorState';
+import { ErrorState, InlineErrorState } from '@/components/ErrorState';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
@@ -58,6 +58,7 @@ import {
 } from '@/components/restaurants';
 import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippings';
 import { useRestaurantFeaturedLists } from '@/hooks/restaurants/useRestaurantFeaturedLists';
+import { useReserveLink } from '@/hooks/restaurants/useReserveLink';
 import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 import { AtlasCrossLinkChip } from '@/components/atlas';
 import { AddToListSheet } from '@/components/lists';
@@ -70,6 +71,7 @@ import {
     chooseTableNotesGroup,
     deriveNumberTiers,
 } from '@/lib/restaurantPageV3';
+import { findBookingUrl } from '@/lib/reserveLink';
 
 function placePayloadToWishlistPayload(place: any): RestaurantPayload {
     return {
@@ -209,6 +211,16 @@ export default function RestaurantScreen() {
         tableId: tableId ?? null,
     });
 
+    const reserveCheckedAt = persistedRow?.reserve_url_checked_at
+        ? Date.parse(persistedRow.reserve_url_checked_at)
+        : NaN;
+    const reserveCheckIsStale = Number.isNaN(reserveCheckedAt)
+        || Date.now() - reserveCheckedAt > syncTtlMs;
+    const reserveLink = useReserveLink(
+        persistedRow?.id ?? null,
+        !!persistedRow && !persistedRow.reserve_url && reserveCheckIsStale,
+    );
+
     const persistedRestaurantId = page.data?.restaurant?.id
         ?? (isGhost ? undefined : restaurantId ?? undefined);
     const { data: featuredListsData } = useRestaurantFeaturedLists(
@@ -326,7 +338,10 @@ export default function RestaurantScreen() {
         ? resolveDirectionsUrl(restaurant.google_maps_uri, restaurant.name, restaurant.city)
         : '';
     const gatherVisible = !FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId;
-    const selfLogCount = page.data?.self_log?.length ?? 0;
+    const personalVisitCount = page.data?.personal.visit_count ?? 0;
+    const reserveUrl = persistedRow?.reserve_url
+        ?? reserveLink.data?.reserve_url
+        ?? findBookingUrl(restaurant?.website);
 
     if (showRestaurantErrorShell) {
         return (
@@ -372,7 +387,11 @@ export default function RestaurantScreen() {
                     <>
                         <RestaurantTop
                             restaurant={restaurant}
-                            meta={buildRestaurantMeta(restaurant)}
+                            meta={buildRestaurantMeta(
+                                restaurant,
+                                new Date(),
+                                page.data?.place_details.open_now,
+                            )}
                             saved={isSaved}
                             saveDisabled={bookmarkDisabled}
                             onBack={() => router.back()}
@@ -398,14 +417,22 @@ export default function RestaurantScreen() {
                                         : `https://${restaurant.website}`,
                                 )
                                 : undefined}
+                            onReserve={reserveUrl ? () => quietOpen(reserveUrl) : undefined}
                             onGather={gatherVisible ? () => setGatherSheetOpen(true) : undefined}
                             palette={palette}
                         />
 
-                        {shouldShowHistoryDoorway(selfLogCount, persistedRestaurantId) ? (
+                        {page.error && page.data ? (
+                            <InlineErrorState
+                                message="could not load visit history"
+                                onRetry={() => void page.refetch()}
+                            />
+                        ) : null}
+
+                        {shouldShowHistoryDoorway(personalVisitCount, persistedRestaurantId) ? (
                             <YourHistoryDoorway
                                 restaurantName={restaurant.name}
-                                visitCount={selfLogCount}
+                                visitCount={personalVisitCount}
                                 regular={page.data?.regular ?? null}
                                 onPress={() => router.push({
                                     pathname: '/restaurant-history',
@@ -483,6 +510,7 @@ export default function RestaurantScreen() {
                         <RestaurantDetails
                             restaurant={restaurant}
                             directionsUrl={directionsUrl}
+                            openNow={page.data?.place_details.open_now}
                             palette={palette}
                         />
                     </>

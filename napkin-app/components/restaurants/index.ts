@@ -30,4 +30,5 @@ export {
     FriendsSpread,
     FeaturedListsSection,
     RestaurantDetails,
+    SectionHeading,
 } from './RestaurantPageV3';

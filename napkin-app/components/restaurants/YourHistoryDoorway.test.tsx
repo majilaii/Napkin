@@ -49,4 +49,19 @@ describe('YourHistoryDoorway', () => {
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(screen.getByText("you've been here · 1 visit")).toBeTruthy();
     });
+
+    it('uses the compatible personal count even when the additive self log is empty', () => {
+        const page = { personal: { visit_count: 7 }, self_log: [] };
+        const screen = render(
+            <YourHistoryDoorway
+                restaurantName="Kiln"
+                visitCount={page.personal.visit_count}
+                onPress={jest.fn()}
+                palette={Colors.light}
+            />,
+        );
+
+        expect(page.self_log).toHaveLength(0);
+        expect(screen.getByText("you've been here · 7 visits")).toBeTruthy();
+    });
 });

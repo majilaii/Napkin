@@ -98,6 +98,7 @@ function fakeClient(
 
 const VIEWER = 'viewer';
 const OTHER = 'other';
+const CURRENT_A = 'current-a';
 const RESTAURANT = 'restaurant';
 const TABLE_A = 'table-a';
 const TABLE_B = 'table-b';
@@ -239,6 +240,38 @@ Deno.test('self_log fixture: live round take has no entry id', async () => {
     assertEquals(rows[0].photos, []);
 });
 
+Deno.test('self_log fixture: closed live round remains in the ledger', async () => {
+    const roundId = 'round-closed';
+    const { client } = fakeClient({
+        entries: [],
+        table_night_participants: [{
+            user_id: VIEWER,
+            table_night_id: roundId,
+            rating: 4.5,
+            notes: 'last sitting',
+            table_nights: {
+                id: roundId,
+                restaurant_id: RESTAURANT,
+                kind: 'live',
+                status: 'closed',
+                revealed_at: '2026-08-24T20:00:00.000Z',
+                created_at: '2026-08-24T18:00:00.000Z',
+            },
+        }],
+    });
+
+    const rows = await loadSelfLog(client, VIEWER, RESTAURANT, projector({
+        [roundId]: [
+            { user_id: VIEWER, display_name: 'Jacky' },
+            { user_id: OTHER, display_name: 'Clara' },
+        ],
+    }));
+
+    assertEquals(rows.map((row) => [row.id, row.rating, row.companions]), [
+        [`round:${roundId}`, 4.5, ['Clara']],
+    ]);
+});
+
 Deno.test('self_log fixture: entry photos are stable, ordered id/url pairs', async () => {
     const { client } = fakeClient({
         entries: [entry({
@@ -283,8 +316,7 @@ Deno.test('table_notes fixture: authorized shared note uses fn_visible_entry_ids
         client,
         VIEWER,
         RESTAURANT,
-        [TABLE_A],
-        [OTHER],
+        [{ table_id: TABLE_A, member_id: OTHER }],
     );
 
     assertEquals(rows, [{
@@ -319,7 +351,12 @@ Deno.test('table_notes fixture: inaccessible tables, feed-only rows, self rows, 
         ],
         profiles: [],
     }, ['note-a']);
-    const rows = await loadTableNotes(client, VIEWER, RESTAURANT, [TABLE_A], [OTHER]);
+    const rows = await loadTableNotes(
+        client,
+        VIEWER,
+        RESTAURANT,
+        [{ table_id: TABLE_A, member_id: OTHER }],
+    );
 
     assertEquals(rows, []);
     assertEquals(rpcs, []);
@@ -338,7 +375,12 @@ Deno.test('table_notes fixture: canonical gate includes private-account Table sh
         entry_tables: [privateShared, blocked],
         profiles: [{ user_id: OTHER, display_name: 'Clara', avatar_url: null }],
     }, ['private-shared']);
-    const rows = await loadTableNotes(client, VIEWER, RESTAURANT, [TABLE_A], [OTHER]);
+    const rows = await loadTableNotes(
+        client,
+        VIEWER,
+        RESTAURANT,
+        [{ table_id: TABLE_A, member_id: OTHER }],
+    );
 
     assertEquals(rows.map((row) => row.entry_id), ['private-shared']);
 });
@@ -351,13 +393,41 @@ Deno.test('table_notes fixture: multi-Table shares project only memberships and 
         profiles: [{ user_id: OTHER, display_name: 'Clara', avatar_url: null }],
     }, ['note-a']);
 
-    const onlyB = await loadTableNotes(client, VIEWER, RESTAURANT, [TABLE_B], [OTHER]);
+    const onlyB = await loadTableNotes(
+        client,
+        VIEWER,
+        RESTAURANT,
+        [{ table_id: TABLE_B, member_id: OTHER }],
+    );
     assertEquals(onlyB.map((row) => row.table_id), [TABLE_B]);
 });
 
+Deno.test('table_notes fixture: an author who left A but remains in B projects only under B', async () => {
+    const shareA = tableShare({ table_id: TABLE_A, tables: { id: TABLE_A, name: 'A' } });
+    const shareB = tableShare({ table_id: TABLE_B, tables: { id: TABLE_B, name: 'B' } });
+    const { client, rpcs } = fakeClient({
+        entry_tables: [shareA, shareB],
+        profiles: [{ user_id: OTHER, display_name: 'Clara', avatar_url: null }],
+    }, ['note-a']);
+
+    const rows = await loadTableNotes(
+        client,
+        VIEWER,
+        RESTAURANT,
+        [
+            { table_id: TABLE_A, member_id: CURRENT_A },
+            { table_id: TABLE_B, member_id: OTHER },
+        ],
+    );
+
+    assertEquals(rows.map((row) => row.table_id), [TABLE_B]);
+    assertEquals(rpcs[0].args.p_entry_ids, ['note-a']);
+});
+
 Deno.test('restaurant page additions are byte-additive over untouched keys', () => {
+    const recordedVisitsBytes = '[{"kind":"solo","id":"visit-a","entry_id":"visit-a","rating":4.5,"date":"2026-08-20T12:00:00.000Z","user_display_names":["Jacky"],"note":"charred leeks","is_self":true}]';
     const before = {
-        visits: [{ id: 'visit', rating: 4.5 }],
+        visits: JSON.parse(recordedVisitsBytes),
         whos_been: [{ user_id: OTHER }],
         personal: { average: 4.5, visit_count: 1 },
         photos: { from_your_table: [], from_others: [] },
@@ -369,5 +439,7 @@ Deno.test('restaurant page additions are byte-additive over untouched keys', () 
     const after = appendPageProjections(before, { self_log: [], table_notes: [] });
     const { self_log: _selfLog, table_notes: _tableNotes, ...untouched } = after;
 
+    assertEquals(JSON.stringify(before.visits), recordedVisitsBytes);
+    assertEquals(JSON.stringify(after.visits), recordedVisitsBytes);
     assertEquals(JSON.stringify(untouched), JSON.stringify(before));
 });

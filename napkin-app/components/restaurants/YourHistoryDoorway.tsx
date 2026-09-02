@@ -61,27 +61,22 @@ export function YourHistoryDoorway({
 
 const styles = StyleSheet.create({
     section: {
-        paddingHorizontal: 20,
-        marginTop: Spacing.lg - 2,
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        marginTop: Spacing.restaurant.doorwaySectionGap,
     },
     row: {
         minHeight: Spacing.xxl,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        gap: Spacing.restaurant.actionGap,
         marginTop: Spacing.xs,
     },
-    copy: {
-        flex: 1,
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 16,
-        lineHeight: 22,
-    },
+    copy: { flex: 1, ...Type.restaurantDoorway },
     regularRow: {
-        minHeight: 44,
+        minHeight: Spacing.restaurant.quietActionHeight,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        gap: Spacing.restaurant.actionGap,
     },
     regularCopy: { flex: 1 },
     divider: { height: StyleSheet.hairlineWidth },

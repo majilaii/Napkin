@@ -87,3 +87,27 @@ export function selfLogTarget(row: SelfLogRow):
     }
     return null;
 }
+
+type HistoryRouter = {
+    canGoBack: () => boolean;
+    back: () => void;
+    replace: (target: {
+        pathname: '/restaurant/[id]';
+        params: { id: string; tableId?: string };
+    }) => void;
+};
+
+export function leaveRestaurantHistory(
+    router: HistoryRouter,
+    restaurantId: string,
+    tableId?: string,
+) {
+    if (router.canGoBack()) {
+        router.back();
+        return;
+    }
+    router.replace({
+        pathname: '/restaurant/[id]',
+        params: { id: restaurantId, ...(tableId ? { tableId } : {}) },
+    });
+}

@@ -2,6 +2,7 @@ import {
     buildElsewhereParts,
     deriveLedgerStats,
     formatLedgerMeta,
+    leaveRestaurantHistory,
     selfLogTarget,
 } from './restaurantHistoryLedger';
 import type { MyList } from '@/hooks/lists/useMyLists';
@@ -73,5 +74,28 @@ describe('restaurant history ledger', () => {
             params: { entryId: 'entry' },
         });
         expect(selfLogTarget(row({ entry_id: null, table_night_id: null }))).toBeNull();
+    });
+
+    it('backs one level when possible and replaces a cold arrival with the restaurant', () => {
+        const warmRouter = {
+            canGoBack: jest.fn(() => true),
+            back: jest.fn(),
+            replace: jest.fn(),
+        };
+        leaveRestaurantHistory(warmRouter, 'restaurant', 'table-a');
+        expect(warmRouter.back).toHaveBeenCalledTimes(1);
+        expect(warmRouter.replace).not.toHaveBeenCalled();
+
+        const coldRouter = {
+            canGoBack: jest.fn(() => false),
+            back: jest.fn(),
+            replace: jest.fn(),
+        };
+        leaveRestaurantHistory(coldRouter, 'restaurant', 'table-a');
+        expect(coldRouter.back).not.toHaveBeenCalled();
+        expect(coldRouter.replace).toHaveBeenCalledWith({
+            pathname: '/restaurant/[id]',
+            params: { id: 'restaurant', tableId: 'table-a' },
+        });
     });
 });

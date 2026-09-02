@@ -13,7 +13,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ErrorState } from '@/components/ErrorState';
+import { ErrorState, InlineErrorState } from '@/components/ErrorState';
 import { Colors, IconSize, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
@@ -26,6 +26,7 @@ import {
     buildElsewhereParts,
     deriveLedgerStats,
     formatLedgerMeta,
+    leaveRestaurantHistory,
     selfLogTarget,
 } from '@/lib/restaurantHistoryLedger';
 
@@ -130,6 +131,7 @@ export default function RestaurantHistoryScreen() {
         selfClipCount,
     }), [wishlisted, lists, containingListIds, selfClipCount]);
     const title = page.data?.restaurant?.name ?? name ?? 'Restaurant';
+    const handleBack = () => leaveRestaurantHistory(router, id, tableId);
 
     if (page.error && !page.data) {
         return (
@@ -137,7 +139,7 @@ export default function RestaurantHistoryScreen() {
                 <Stack.Screen options={{ headerShown: false }} />
                 <StatusBar style="dark" />
                 <Pressable
-                    onPress={() => router.back()}
+                    onPress={handleBack}
                     accessibilityRole="button"
                     accessibilityLabel="back"
                     style={styles.backButton}
@@ -161,7 +163,7 @@ export default function RestaurantHistoryScreen() {
             >
                 <View style={[styles.header, { paddingTop: insets.top + Spacing.sm }]}>
                     <Pressable
-                        onPress={() => router.back()}
+                        onPress={handleBack}
                         accessibilityRole="button"
                         accessibilityLabel="back"
                         style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
@@ -173,6 +175,13 @@ export default function RestaurantHistoryScreen() {
                     </Text>
                     <View style={styles.headerSpacer} />
                 </View>
+
+                {page.error && page.data ? (
+                    <InlineErrorState
+                        message="could not load visit history"
+                        onRetry={() => void page.refetch()}
+                    />
+                ) : null}
 
                 {page.isLoading && !page.data ? (
                     <View style={styles.loading}>
@@ -219,7 +228,7 @@ export default function RestaurantHistoryScreen() {
                                     accessibilityLabel="log this restaurant"
                                     style={({ pressed }) => pressed && styles.pressed}
                                 >
-                                    <Text style={[styles.emptyAction, { color: palette.primary }]}>
+                                    <Text style={[Type.restaurantSectionAction, styles.emptyAction, { color: palette.primary }]}>
                                         been here? log it →
                                     </Text>
                                 </Pressable>
@@ -259,23 +268,36 @@ export default function RestaurantHistoryScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     header: {
-        minHeight: 52,
-        paddingHorizontal: 10,
+        minHeight: Spacing.restaurant.topBarHeight,
+        paddingHorizontal: Spacing.restaurant.topBarGutter,
         flexDirection: 'row',
         alignItems: 'center',
     },
-    backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    backButton: {
+        width: Spacing.restaurant.quietActionHeight,
+        height: Spacing.restaurant.quietActionHeight,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     headerTitle: {
         ...Type.screenTitle,
         flex: 1,
         textAlign: 'center',
     },
-    headerSpacer: { width: 44 },
-    loading: { paddingTop: 100, alignItems: 'center' },
+    headerSpacer: { width: Spacing.restaurant.quietActionHeight },
+    loading: { paddingTop: Spacing.restaurant.ledgerEmptyTop, alignItems: 'center' },
     errorBody: { flex: 1, justifyContent: 'center' },
-    masthead: { paddingHorizontal: 20, paddingTop: Spacing.lg, alignItems: 'center' },
+    masthead: {
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        paddingTop: Spacing.lg,
+        alignItems: 'center',
+    },
     meta: { marginTop: Spacing.xs, textAlign: 'center' },
-    cards: { paddingHorizontal: 20, paddingTop: Spacing.lg, gap: 10 },
+    cards: {
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        paddingTop: Spacing.lg,
+        gap: Spacing.restaurant.ledgerGap,
+    },
     card: { borderRadius: Radius.lg, padding: Spacing.md },
     cardTop: {
         flexDirection: 'row',
@@ -285,18 +307,21 @@ const styles = StyleSheet.create({
     },
     note: { marginTop: Spacing.sm, marginBottom: Spacing.sm },
     photoStrip: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md },
-    photo: { width: 64, height: 64, borderRadius: Spacing.sm },
-    empty: { paddingTop: 100, paddingHorizontal: 40, alignItems: 'center' },
-    emptyMurmur: { textAlign: 'center' },
-    emptyAction: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
-        lineHeight: 19,
-        marginTop: Spacing.md,
+    photo: {
+        width: Spacing.restaurant.ledgerPhotoSize,
+        height: Spacing.restaurant.ledgerPhotoSize,
+        borderRadius: Spacing.sm,
     },
+    empty: {
+        paddingTop: Spacing.restaurant.ledgerEmptyTop,
+        paddingHorizontal: Spacing.restaurant.ledgerEmptyGutter,
+        alignItems: 'center',
+    },
+    emptyMurmur: { textAlign: 'center' },
+    emptyAction: { marginTop: Spacing.md },
     elsewhere: {
-        marginHorizontal: 20,
-        marginTop: Spacing.lg + 2,
+        marginHorizontal: Spacing.restaurant.pageGutter,
+        marginTop: Spacing.restaurant.sectionGap,
         borderRadius: Radius.lg,
         padding: Spacing.md,
     },
