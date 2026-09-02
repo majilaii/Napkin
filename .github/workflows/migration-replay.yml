@@ -165,6 +165,9 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/entry_tables_leak.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/entry_companions_mutual_gate.spec.sql
 
       - name: Assert image-moderation multi-session invariants
         if: steps.changes.outputs.run == 'true'

@@ -45,17 +45,23 @@ function invalidateBlockFallout(
     queryClient.invalidateQueries({ queryKey: queryKeys.users.spots(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.reviews(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.taste(targetId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
     queryClient.invalidateQueries({ queryKey: queryKeys.feed.rootAll() });
     // The crown is cohort-derived, so this family prefix is the narrowest correct key; only mounted pages refetch.
     queryClient.invalidateQueries({ queryKey: queryKeys.restaurants.pageAll() });
     if (viewerId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(viewerId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.feed.coDiners(viewerId) });
+        queryClient.invalidateQueries({
+            queryKey: queryKeys.users.recentCompanions(viewerId),
+        });
     }
 }
 
 export function useBlockUser() {
     const queryClient = useQueryClient();
     const { user } = useAuth();
+    const viewerId = user?.id ?? null;
     return useMutation({
         mutationFn: async (targetUserId: string) => {
             await callEdgeFn('account', { action: 'block', body: { user_id: targetUserId } });
@@ -68,7 +74,7 @@ export function useBlockUser() {
                 queryKey: queryKeys.users.taste(targetUserId),
                 exact: true,
             });
-            invalidateBlockFallout(queryClient, targetUserId, user?.id ?? null);
+            invalidateBlockFallout(queryClient, targetUserId, viewerId);
             queryClient.invalidateQueries({ queryKey: queryKeys.account.blocked() });
         },
     });
@@ -77,6 +83,7 @@ export function useBlockUser() {
 export function useUnblockUser() {
     const queryClient = useQueryClient();
     const { user } = useAuth();
+    const viewerId = user?.id ?? null;
     return useMutation({
         mutationFn: async (targetUserId: string) => {
             await callEdgeFn('account', { action: 'unblock', body: { user_id: targetUserId } });
@@ -97,7 +104,7 @@ export function useUnblockUser() {
             }
         },
         onSuccess: (targetUserId) => {
-            invalidateBlockFallout(queryClient, targetUserId, user?.id ?? null);
+            invalidateBlockFallout(queryClient, targetUserId, viewerId);
         },
     });
 }

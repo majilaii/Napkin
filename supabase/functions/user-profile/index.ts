@@ -42,6 +42,8 @@ import {
 } from '../_shared/ledger.ts';
 import { projectListSummary, type ListSummary } from './listSummary.ts';
 import { hydrateProfileTakes, type QuickTake } from './profileTakes.ts';
+import { fetchRecentCompanions } from './recentCompanions.ts';
+import { searchProfilesWithMutualBackfill } from './mutualSearch.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -2019,9 +2021,9 @@ serve(async (req) => {
         // Used by CompanionPickerSheet (TICKET-027) and PeopleSearchPane (TICKET-028).
         // Request: { action: 'search', q: string, limit?: number, mutual_only?: boolean }
         // Response (default): { data: { user_id, display_name, avatar_url, is_following }[] }
-        // Response (mutual_only=true): all rows include is_mutual + is_following
-        //   (caller→row) + follows_caller (row→caller), so callers can explain the
-        //   non-mutual reason. mutuals sort first; non-mutuals still returned.
+        // Response (mutual_only=true): every mutual match first, followed by
+        // non-mutual explain-why rows up to the result limit; every row includes
+        // is_mutual + both directional flags.
         // Order: followed/mutual users first, then by profiles.created_at DESC, then display_name ASC
         if (action === 'search') {
             const { q, limit: rawLimit, mutual_only: mutualOnly } = body as {
@@ -2035,6 +2037,16 @@ serve(async (req) => {
 
             const maxResults = Math.min(Math.max(rawLimit ?? 20, 1), 20);
             const pattern = `%${q.trim()}%`;
+
+            if (mutualOnly) {
+                const rows = await searchProfilesWithMutualBackfill(
+                    supabase,
+                    user.id,
+                    pattern,
+                    maxResults,
+                );
+                return json({ data: rows });
+            }
 
             const { data: results, error: searchErr } = await supabase
                 .from('profiles')
@@ -2067,47 +2079,6 @@ serve(async (req) => {
             const followingSet = new Set<string>(
                 ((followRows ?? []) as { following_id: string }[]).map((f) => f.following_id)
             );
-
-            if (mutualOnly) {
-                // Fetch which of the result-set users follow the caller back
-                const { data: reverseFollowRows } = await supabase
-                    .from('follows')
-                    .select('follower_id')
-                    .eq('following_id', user.id)
-                    .in('follower_id', resultIds);
-
-                const followsCallerSet = new Set<string>(
-                    ((reverseFollowRows ?? []) as { follower_id: string }[]).map((f) => f.follower_id)
-                );
-
-                // is_mutual iff caller→x AND x→caller both exist
-                const isMutual = (userId: string) =>
-                    followingSet.has(userId) && followsCallerSet.has(userId);
-
-                // Sort: mutuals first, then non-mutuals. Within each group: created_at DESC, display_name ASC
-                const sorted = rows.slice().sort((a, b) => {
-                    const aM = isMutual(a.user_id) ? 1 : 0;
-                    const bM = isMutual(b.user_id) ? 1 : 0;
-                    if (aM !== bM) return bM - aM;
-                    if (a.created_at > b.created_at) return -1;
-                    if (a.created_at < b.created_at) return 1;
-                    return a.display_name.localeCompare(b.display_name);
-                });
-
-                return json({
-                    // Both direction sets are already in hand — surface them per
-                    // row so send-surfaces can explain WHY someone is non-mutual
-                    // (you don't follow them / they don't follow you back).
-                    data: sorted.map((r) => ({
-                        user_id: r.user_id,
-                        display_name: r.display_name,
-                        avatar_url: r.avatar_url ?? null,
-                        is_following: followingSet.has(r.user_id),
-                        follows_caller: followsCallerSet.has(r.user_id),
-                        is_mutual: isMutual(r.user_id),
-                    })),
-                });
-            }
 
             // Sort server-side: followed first, then by created_at DESC, then display_name ASC
             const sorted = rows.slice().sort((a, b) => {
@@ -2195,6 +2166,16 @@ serve(async (req) => {
                 .maybeSingle();
 
             return json({ data: { is_following: followRow !== null } });
+        }
+
+        // ── recent_companions ─────────────────────────────────────────────
+        // Top five users the caller has tagged most often, re-authorized
+        // against the current mutual-follow and either-direction block state.
+        // Historical entry_companions rows are intentionally left untouched.
+        // Request: { action: 'recent_companions' }
+        // Response: { data: { user_id, display_name, avatar_url }[] }
+        if (action === 'recent_companions') {
+            return json({ data: await fetchRecentCompanions(supabase, user.id) });
         }
 
         // ── co_diners ─────────────────────────────────────────────────────

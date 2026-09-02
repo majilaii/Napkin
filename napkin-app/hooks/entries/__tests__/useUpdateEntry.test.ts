@@ -18,6 +18,7 @@ const RESTAURANT_ID = 'restaurant-1';
 const USER_ID = 'user-1';
 const PRIYA = { user_id: 'priya-id', display_name: 'Priya' };
 const ORIGINAL = { user_id: 'old-id', display_name: 'Old companion' };
+const DROPPED = { user_id: 'dropped-id', display_name: 'Dropped stranger' };
 const mockCallEdgeFn = callEdgeFn as jest.MockedFunction<typeof callEdgeFn>;
 
 describe('useUpdateEntry writer routing', () => {
@@ -80,6 +81,27 @@ describe('useUpdateEntry writer routing', () => {
 
         await waitFor(() => expect(result.current.isError).toBe(true));
         expect(client.getQueryData(detailKey)).toMatchObject({ companions: [ORIGINAL] });
+    });
+
+    it('removes a companion the server drops from the optimistic detail cache', async () => {
+        mockCallEdgeFn.mockResolvedValue({
+            entry_id: ENTRY_ID,
+            companion_ids: [PRIYA.user_id],
+        });
+
+        const { result, client } = renderHookWithClient(() => useUpdateEntry(ENTRY_ID));
+        const detailKey = queryKeys.entries.detail(ENTRY_ID);
+        client.setQueryData(detailKey, { id: ENTRY_ID, companions: [ORIGINAL] });
+
+        act(() => {
+            result.current.mutate({
+                companion_ids: [PRIYA.user_id, DROPPED.user_id],
+                optimisticCompanions: [PRIYA, DROPPED],
+            });
+        });
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+        expect(client.getQueryData(detailKey)).toMatchObject({ companions: [PRIYA] });
     });
 
     it('routes hero changes through the flag-aware entry writer, never direct PATCH', async () => {
