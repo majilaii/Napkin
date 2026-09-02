@@ -11,6 +11,15 @@ export interface CompanionLike {
     user_id?: string;
 }
 
+export function reconcileAcceptedCompanions<T extends { user_id: string }>(
+    companions: T[],
+    acceptedCompanionIds: string[] | undefined,
+): T[] {
+    if (acceptedCompanionIds === undefined) return companions;
+    const acceptedIds = new Set(acceptedCompanionIds);
+    return companions.filter((companion) => acceptedIds.has(companion.user_id));
+}
+
 /**
  * Format companions into a display string.
  * Returns null when companions array is empty or undefined.

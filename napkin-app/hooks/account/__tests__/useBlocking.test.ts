@@ -3,7 +3,7 @@ import { act, waitFor } from '@testing-library/react-native';
 import { renderHookWithClient } from '@/__tests__/utils/queryWrapper';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-import { useBlockUser } from '../useBlocking';
+import { useBlockUser, useUnblockUser } from '../useBlocking';
 
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
 jest.mock('@/providers/AuthProvider', () => ({
@@ -11,6 +11,15 @@ jest.mock('@/providers/AuthProvider', () => ({
 }));
 
 const TARGET_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+
+function expectTaggablePeopleInvalidated(invalidate: jest.SpyInstance) {
+    expect(invalidate).toHaveBeenCalledWith({
+        queryKey: queryKeys.users.searchAll(),
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+        queryKey: queryKeys.feed.coDiners('viewer-id'),
+    });
+}
 
 describe('useBlockUser', () => {
     it('invalidates the cached public Taste drill-in after a block', async () => {
@@ -32,5 +41,19 @@ describe('useBlockUser', () => {
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.recentCompanions('viewer-id'),
         });
+        expectTaggablePeopleInvalidated(invalidate);
+    });
+});
+
+describe('useUnblockUser', () => {
+    it('invalidates search and co-diners after an unblock', async () => {
+        (callEdgeFn as jest.Mock).mockResolvedValue({ ok: true });
+        const { result, client } = renderHookWithClient(() => useUnblockUser());
+        const invalidate = jest.spyOn(client, 'invalidateQueries');
+
+        act(() => result.current.mutate(TARGET_ID));
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        expectTaggablePeopleInvalidated(invalidate);
     });
 });

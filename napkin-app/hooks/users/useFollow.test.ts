@@ -103,6 +103,9 @@ describe('useFollow', () => {
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.searchAll(),
         });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.feed.coDiners(VIEWER_ID),
+        });
     });
 
     it('(b) restores target profile on server error', async () => {
@@ -305,6 +308,9 @@ describe('useUnfollow', () => {
         });
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.searchAll(),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.feed.coDiners(VIEWER_ID),
         });
     });
 

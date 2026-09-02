@@ -45,8 +45,10 @@ function invalidateBlockFallout(
     queryClient.invalidateQueries({ queryKey: queryKeys.users.spots(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.reviews(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.taste(targetId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
     queryClient.invalidateQueries({ queryKey: queryKeys.feed.rootAll() });
     if (viewerId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.feed.coDiners(viewerId) });
         queryClient.invalidateQueries({
             queryKey: queryKeys.users.recentCompanions(viewerId),
         });

@@ -35,7 +35,7 @@ import { projectRound } from '../_shared/round_projection.ts';
 import { projectListSummary, type ListSummary } from './listSummary.ts';
 import { hydrateProfileTakes, type QuickTake } from './profileTakes.ts';
 import { fetchRecentCompanions } from './recentCompanions.ts';
-import { searchMutualProfiles } from './mutualSearch.ts';
+import { searchProfilesWithMutualBackfill } from './mutualSearch.ts';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -1969,8 +1969,9 @@ serve(async (req) => {
         // Used by CompanionPickerSheet (TICKET-027) and PeopleSearchPane (TICKET-028).
         // Request: { action: 'search', q: string, limit?: number, mutual_only?: boolean }
         // Response (default): { data: { user_id, display_name, avatar_url, is_following }[] }
-        // Response (mutual_only=true): only current mutual follows are returned;
-        // every row includes is_mutual + both directional flags.
+        // Response (mutual_only=true): every mutual match first, followed by
+        // non-mutual explain-why rows up to the result limit; every row includes
+        // is_mutual + both directional flags.
         // Order: followed/mutual users first, then by profiles.created_at DESC, then display_name ASC
         if (action === 'search') {
             const { q, limit: rawLimit, mutual_only: mutualOnly } = body as {
@@ -1986,22 +1987,13 @@ serve(async (req) => {
             const pattern = `%${q.trim()}%`;
 
             if (mutualOnly) {
-                const mutualRows = await searchMutualProfiles(
+                const rows = await searchProfilesWithMutualBackfill(
                     supabase,
                     user.id,
                     pattern,
                     maxResults,
                 );
-                return json({
-                    data: mutualRows.map((row) => ({
-                        user_id: row.user_id,
-                        display_name: row.display_name,
-                        avatar_url: row.avatar_url ?? null,
-                        is_following: true,
-                        follows_caller: true,
-                        is_mutual: true,
-                    })),
-                });
+                return json({ data: rows });
             }
 
             const { data: results, error: searchErr } = await supabase

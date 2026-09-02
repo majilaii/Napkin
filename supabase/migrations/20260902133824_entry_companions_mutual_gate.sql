@@ -15,7 +15,8 @@ security definer
 set search_path = public
 as $function$
   select
-    p_author <> p_target
+    p_author = auth.uid()
+    and p_author <> p_target
     and exists (
       select 1
       from public.follows f
@@ -37,6 +38,7 @@ as $function$
 $function$;
 
 revoke all on function public.fn_can_tag_companion(uuid, uuid) from public;
+revoke execute on function public.fn_can_tag_companion(uuid, uuid) from anon;
 grant execute on function public.fn_can_tag_companion(uuid, uuid) to authenticated, service_role;
 
 drop policy if exists entry_companions_insert on public.entry_companions;

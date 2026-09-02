@@ -40,6 +40,17 @@ values
     now(),
     '{"provider":"email","providers":["email"]}',
     '{"display_name":"Gate Stranger"}'
+  ),
+  (
+    '00000000-0000-0000-0000-000000000000',
+    '23300000-0000-0000-0000-000000000003',
+    'authenticated',
+    'authenticated',
+    'mutual@entry-companion-gate.invalid',
+    now(),
+    now(),
+    '{"provider":"email","providers":["email"]}',
+    '{"display_name":"Gate Mutual"}'
   )
 on conflict (id) do nothing;
 
@@ -52,6 +63,18 @@ values (
 )
 on conflict (id) do nothing;
 
+insert into public.follows (follower_id, following_id)
+values
+  (
+    '23300000-0000-0000-0000-000000000001',
+    '23300000-0000-0000-0000-000000000003'
+  ),
+  (
+    '23300000-0000-0000-0000-000000000003',
+    '23300000-0000-0000-0000-000000000001'
+  )
+on conflict (follower_id, following_id) do nothing;
+
 do $test$
 declare
   rejected boolean := false;
@@ -62,6 +85,12 @@ begin
     true
   );
   set local role authenticated;
+
+  insert into public.entry_companions (entry_id, user_id)
+  values (
+    '23300000-0000-0000-0000-000000000010',
+    '23300000-0000-0000-0000-000000000003'
+  );
 
   begin
     insert into public.entry_companions (entry_id, user_id)
@@ -76,6 +105,12 @@ begin
 
   reset role;
 
+  assert exists (
+    select 1
+    from public.entry_companions
+    where entry_id = '23300000-0000-0000-0000-000000000010'
+      and user_id = '23300000-0000-0000-0000-000000000003'
+  ), 'FAIL: an entry owner could not insert a mutual companion through RLS';
   assert rejected,
     'FAIL: an entry owner inserted a non-mutual companion through RLS';
   assert not exists (
@@ -85,7 +120,7 @@ begin
       and user_id = '23300000-0000-0000-0000-000000000002'
   ), 'FAIL: rejected non-mutual companion row persisted';
 
-  raise notice 'PASS entry_companions_mutual_gate: non-mutual owner insert rejected';
+  raise notice 'PASS entry_companions_mutual_gate: mutual insert accepted and non-mutual insert rejected';
 end;
 $test$;
 

@@ -57,7 +57,7 @@ import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
 import { useAddEntryPhoto, useRemoveEntryPhoto } from '@/hooks/entries/useEntryPhotoMutations';
 import { useReportContent, useBlockUser } from '@/hooks/account';
 import { CompanionPickerSheet } from '@/components/logging';
-import { formatCompanions } from '@/lib/companions';
+import { formatCompanions, reconcileAcceptedCompanions } from '@/lib/companions';
 import { getReviewFolioMode, hasReviewWriting } from '@/lib/reviewFolio';
 import type { UserSearchResult } from '@/hooks/users/useUserSearch';
 import {
@@ -649,10 +649,13 @@ function EntryDetailScreen() {
         setCompanionEditMode(false);
         setCompanionSaving(true);
         try {
-            await updateEntry.mutateAsync({
+            const result = await updateEntry.mutateAsync({
                 companion_ids: nextCompanions.map(c => c.user_id),
                 optimisticCompanions: nextCompanions,
             });
+            setCompanionPreview(
+                reconcileAcceptedCompanions(nextCompanions, result.acceptedCompanionIds),
+            );
         } catch {
             setCompanionPreview(null);
             setLocalCompanions(previousCompanions.map(c => ({
