@@ -24,10 +24,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
     ListsSearchPane,
+    ListRow,
     PeopleSearchPane,
     RecentSearchesList,
     SearchLocalityBar,
     SearchModeTabs,
+    TierHeader,
 } from '@/components/search';
 import type { SearchMode } from '@/components/search';
 import { ErrorState, InlineErrorState } from '@/components/ErrorState';
@@ -52,14 +54,18 @@ import {
 } from '@/components/wishlist/mapFacets';
 import {
     composeRowMeta,
+    composePlacesContentKey,
     decorateAndSortRows,
     deriveDistanceOrigin,
+    filterPlacesLayerRows,
+    placesSearchBranch,
     presentPlacesRating,
     projectPlacesPins,
     resolvePlacesFailurePresentation,
     resolvePlacesProjection,
     restaurantRouteForRow,
     searchRowsToDisplayRows,
+    selectNearbyPlaces,
     spotRowsToDisplayRows,
     wishlistRowsToDisplayRows,
     type DecoratedPlacesRow,
@@ -69,7 +75,10 @@ import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
+    enterPlacesSearch,
+    leavePlacesSearch,
     queryForPlacesRouteArrival,
+    togglePlacesLayerFilter,
     transitionPlacesSegment,
     usePlacesScreenState,
 } from '@/hooks/search/placesScreenState';
@@ -83,6 +92,7 @@ import {
 } from '@/hooks/search/useRestaurantSearch';
 import { useUserProfile } from '@/hooks/users';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
+import { useMyLists, type MyList } from '@/hooks/lists/useMyLists';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { priceTierLabel } from '@/lib/priceLevel';
 import { useAuth } from '@/providers/AuthProvider';
@@ -224,6 +234,7 @@ export default function PlacesScreen() {
 
     const requestedMode = routeMode(incomingMode)
         ?? (incomingQ !== undefined ? 'places' : null);
+    const routeWantsSearch = incomingQ !== undefined || incomingMode !== undefined;
     const routeRequestedSegment = requestedMode === 'people' && FRIEND_TEST.hidePeopleSearch
         ? 'places'
         : requestedMode;
@@ -233,6 +244,7 @@ export default function PlacesScreen() {
     const activeSegment = routeRequestedSegment
         ? routeRequestedSegment
         : storedSegment;
+    const searchMode = routeWantsSearch || screenState.previousNonSearchSnap !== null;
     const routeQuery = incomingQ?.trim() ?? '';
     const initialQuery = queryForPlacesRouteArrival(
         screenState.query,
@@ -251,7 +263,7 @@ export default function PlacesScreen() {
     const renderedUserRef = useRef(user?.id ?? null);
 
     const sheetH = Math.max(1, (height - insets.top) * 0.76);
-    const firstSnap = activeSegment === 'people' ? FULL : screenState.sheetSnap;
+    const firstSnap = searchMode || activeSegment === 'people' ? FULL : screenState.sheetSnap;
     const sheetRef = useRef<SnapSheetHandle>(null);
     const [bottomInset, setBottomInset] = useState(() => (
         visibleHeight(sheetH, firstSnap, PLACES_SNAP_METRICS)
@@ -276,8 +288,8 @@ export default function PlacesScreen() {
             nextQuery || requestedMode === 'lists' || requestedMode === 'people',
         ));
         restoredScrollRef.current = false;
-        sheetRef.current?.snapTo(screenState.sheetSnap);
-    }, [incomingQ, requestedMode, screenState.query, screenState.sheetSnap, user?.id]);
+        sheetRef.current?.snapTo(searchMode ? FULL : screenState.sheetSnap);
+    }, [incomingQ, requestedMode, screenState.query, screenState.sheetSnap, searchMode, user?.id]);
 
     useEffect(() => {
         const hasRouteRequest = incomingQ !== undefined || incomingMode !== undefined;
@@ -287,7 +299,9 @@ export default function PlacesScreen() {
         }
         if (routeEffectHandledRef.current) return;
         routeEffectHandledRef.current = true;
-        let nextState = screenState;
+        let nextState = routeWantsSearch
+            ? enterPlacesSearch(screenState)
+            : screenState;
         if (requestedMode) {
             setSegmentHeaderRevealed(true);
             nextState = transitionPlacesSegment(
@@ -313,7 +327,7 @@ export default function PlacesScreen() {
         if (nextState.sheetSnap !== screenState.sheetSnap) {
             sheetRef.current?.snapTo(nextState.sheetSnap);
         }
-        if (requestedMode === 'lists' || requestedMode === 'people') {
+        if (routeWantsSearch) {
             setTimeout(() => inputRef.current?.focus(), 260);
         }
         if (hasRouteRequest) {
@@ -324,6 +338,7 @@ export default function PlacesScreen() {
         incomingQ,
         patchScreenState,
         requestedMode,
+        routeWantsSearch,
         router,
         screenState,
     ]);
@@ -361,6 +376,11 @@ export default function PlacesScreen() {
 
     const wishlistQuery = useMyWishlist(user?.id);
     const spotsQuery = useUserSpots(user?.id);
+    const myListsQuery = useMyLists(
+        searchMode && activeSegment === 'places' && immediateQuery.trim().length === 0
+            ? user?.id
+            : null,
+    );
     const wishlistData = wishlistQuery.data;
     const spotsData = spotsQuery.data;
     const recentQueries = useRecentSearches();
@@ -371,8 +391,14 @@ export default function PlacesScreen() {
         [wishlistData],
     );
     const beenRows = useMemo(() => spotRowsToDisplayRows(spotsData ?? []), [spotsData]);
-    const [activeLayer, setActiveLayer] = useState<'pinned' | 'been'>('pinned');
-    const layerRows = activeLayer === 'pinned' ? pinnedRows : beenRows;
+    const allLayerRows = useMemo(
+        () => filterPlacesLayerRows('all', pinnedRows, beenRows),
+        [beenRows, pinnedRows],
+    );
+    const layerRows = useMemo(
+        () => filterPlacesLayerRows(screenState.layerFilter, pinnedRows, beenRows),
+        [beenRows, pinnedRows, screenState.layerFilter],
+    );
 
     const mergedSearchRows = useMemo(
         () => searchRowsToDisplayRows(mergeUnified(results, debouncedQuery)),
@@ -380,12 +406,14 @@ export default function PlacesScreen() {
     );
     const queryActive = immediateQuery.trim().length >= 2;
     const sourceRows = queryActive ? mergedSearchRows : layerRows;
-    const layerLoading = activeLayer === 'pinned'
-        ? wishlistQuery.isLoading
-        : spotsQuery.isLoading;
+    const layerLoading = screenState.layerFilter === 'all'
+        ? wishlistQuery.isLoading || spotsQuery.isLoading
+        : screenState.layerFilter === 'pinned'
+          ? wishlistQuery.isLoading
+          : spotsQuery.isLoading;
     const failurePresentation = resolvePlacesFailurePresentation({
         queryActive,
-        activeLayer,
+        layerFilter: screenState.layerFilter,
         hasCachedRows: sourceRows.length > 0,
         placesFailed: isPlacesError,
         persistedFailed: isPersistedError,
@@ -407,27 +435,45 @@ export default function PlacesScreen() {
         () => decorateAndSortRows(filteredRows, distanceOrigin),
         [distanceOrigin, filteredRows],
     );
-    const placesContentBranch = isLoading && decoratedRows.length === 0 && queryActive
-        ? 'search-loading'
-        : layerLoading && sourceRows.length === 0 && !queryActive
-          ? 'layer-loading'
-          : failurePresentation.kind === 'broken'
-            ? 'broken'
-            : queryActive
-              ? 'results'
-              : 'guidance';
+    const nearbySearchRows = useMemo(
+        () => selectNearbyPlaces(allLayerRows, distanceOrigin),
+        [allLayerRows, distanceOrigin],
+    );
+    const searchGuidanceBranch = placesSearchBranch(immediateQuery);
+    // Unfreeze on the DEBOUNCED branch: flipping lock/scrim/projection on the
+    // immediate keystroke stalls the JS thread mid-burst and drops characters.
+    const guidanceSearchMode = searchMode && placesSearchBranch(debouncedQuery) !== 'results';
+    const placesContentBranch = searchMode && searchGuidanceBranch !== 'results'
+        ? searchGuidanceBranch
+        : isLoading && decoratedRows.length === 0 && queryActive
+          ? 'search-loading'
+          : layerLoading && sourceRows.length === 0 && !queryActive
+            ? 'layer-loading'
+            : failurePresentation.kind === 'broken'
+              ? 'broken'
+              : queryActive
+                ? 'results'
+                : 'guidance';
     // The mounted list follows the DEBOUNCED query: a new query remounts the
     // scroll surface, so it must join the key or a stale offset survives A→B.
     const contentQueryKey = debouncedQuery.trim().toLowerCase();
-    const sheetContentKey = activeSegment === 'lists'
-        ? `lists:${immediateQuery.trim().length < 2 ? 'guidance' : 'results'}:${contentQueryKey}`
+    const segmentContentBranch = activeSegment === 'lists'
+        ? immediateQuery.trim().length < 2 ? 'guidance' : 'results'
         : activeSegment === 'people'
-          ? `people:${immediateQuery.trim().length === 0 ? 'guidance' : 'results'}:${contentQueryKey}`
-          : `places:${placesContentBranch}:${contentQueryKey}`;
+          ? immediateQuery.trim().length === 0 ? 'guidance' : 'results'
+          : searchMode
+            ? placesContentBranch
+            : `${placesContentBranch}-${screenState.layerFilter}`;
+    const sheetContentKey = composePlacesContentKey({
+        searchMode,
+        segment: activeSegment,
+        branch: segmentContentBranch,
+        query: contentQueryKey,
+    });
     const currentPins = useMemo(() => projectPlacesPins(filteredRows), [filteredRows]);
     const currentScopeKey = queryActive
         ? `search:${locality === 'auto' ? 'auto' : locality.city.trim().toLowerCase()}:${debouncedQuery.trim().toLowerCase()}`
-        : `layer:${activeLayer}`;
+        : `layer:${screenState.layerFilter}`;
     const currentProjection = useMemo<FrozenProjection>(() => ({
         pins: currentPins,
         rows: filteredRows,
@@ -442,16 +488,19 @@ export default function PlacesScreen() {
         frozenProjectionRef.current = emptyProjection();
     }
 
-    // Round 5 builder note: ONLY Places may commit the frozen projection.
-    // Disabled Lists/People searches therefore cannot replace pins with [].
+    // Guidance freezes the map; results commit their live projection so result
+    // pins remain usable when the sheet is dragged down.
     useEffect(() => {
-        if (activeSegment === 'places') frozenProjectionRef.current = currentProjection;
-    }, [activeSegment, currentProjection]);
+        if (activeSegment === 'places' && !guidanceSearchMode) {
+            frozenProjectionRef.current = currentProjection;
+        }
+    }, [activeSegment, currentProjection, guidanceSearchMode]);
 
     const renderedProjection = resolvePlacesProjection(
         activeSegment,
         currentProjection,
         frozenProjectionRef.current,
+        guidanceSearchMode,
     ).rendered;
     const selectedRow = renderedProjection.rows.find(
         (row) => row.id === screenState.selectedPinId,
@@ -464,6 +513,24 @@ export default function PlacesScreen() {
         const trimmed = debouncedQuery.trim();
         if (activeSegment === 'places' && trimmed.length >= 2) searchCache.addRecent(trimmed);
     }, [activeSegment, debouncedQuery]);
+
+    const handleEnterSearch = useCallback(() => {
+        setSegmentHeaderRevealed(true);
+        const focused = enterPlacesSearch(screenState);
+        patchScreenState(focused);
+        sheetRef.current?.snapTo(FULL);
+    }, [patchScreenState, screenState]);
+
+    const handleLeaveSearch = useCallback(() => {
+        Keyboard.dismiss();
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+        setImmediateQuery('');
+        setDebouncedQuery('');
+        setSegmentHeaderRevealed(false);
+        const restored = leavePlacesSearch(screenState);
+        patchScreenState(restored);
+    }, [patchScreenState, screenState]);
 
     const handleQueryChange = useCallback((text: string) => {
         setImmediateQuery(text);
@@ -516,6 +583,18 @@ export default function PlacesScreen() {
         if (route) router.push(route as never);
     }, [router]);
 
+    const openList = useCallback((list: MyList) => {
+        router.push({ pathname: '/list/[id]', params: { id: list.id } });
+    }, [router]);
+
+    const handleLayerPress = useCallback((requested: 'pinned' | 'been') => {
+        patchScreenState({
+            layerFilter: togglePlacesLayerFilter(screenState.layerFilter, requested),
+            selectedPinId: null,
+            scrollOffset: 0,
+        });
+    }, [patchScreenState, screenState.layerFilter]);
+
     const handleCurrentLocation = useCallback(() => {
         setAutoLocality();
         if (permissionStatus === null || permissionStatus === 'undetermined') {
@@ -553,14 +632,14 @@ export default function PlacesScreen() {
 
     const renderSheetHeader = useCallback(() => (
         <View style={styles.sheetHeader}>
-            {segmentHeaderRevealed ? (
+            {searchMode || segmentHeaderRevealed ? (
                 <SearchModeTabs
                     mode={activeSegment}
                     onModeChange={handleSegmentChange}
                     hidePeople={FRIEND_TEST.hidePeopleSearch}
                 />
             ) : null}
-            {activeSegment === 'places' ? (
+            {activeSegment === 'places' && (!searchMode || queryActive) ? (
                 <View style={styles.sheetLedgerHeader}>
                     <Text style={[styles.kicker, { color: palette.primary }]}>
                         {queryActive ? 'RESULTS' : 'NEARBY'}
@@ -578,6 +657,7 @@ export default function PlacesScreen() {
         palette.primary,
         palette.textMuted,
         queryActive,
+        searchMode,
         segmentHeaderRevealed,
     ]);
 
@@ -611,6 +691,16 @@ export default function PlacesScreen() {
                 palette={palette}
             />
 
+            {guidanceSearchMode ? (
+                <Pressable
+                    testID="places-search-map-scrim"
+                    onPress={handleLeaveSearch}
+                    style={[StyleSheet.absoluteFill, { backgroundColor: palette.overlay }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="return to places map"
+                />
+            ) : null}
+
             <LinearGradient
                 colors={[
                     palette.background,
@@ -623,10 +713,22 @@ export default function PlacesScreen() {
             >
                 <View style={styles.searchLine}>
                     <View style={[styles.searchPill, Shadow.ambient, { backgroundColor: palette.surfaceNote }]}>
-                        <Ionicons name="search-outline" size={20} color={palette.textMuted} />
+                        {searchMode ? (
+                            <Pressable
+                                onPress={handleLeaveSearch}
+                                hitSlop={8}
+                                accessibilityRole="button"
+                                accessibilityLabel="back to places map"
+                            >
+                                <Ionicons name="chevron-back-outline" size={20} color={palette.textMuted} />
+                            </Pressable>
+                        ) : (
+                            <Ionicons name="search-outline" size={20} color={palette.textMuted} />
+                        )}
                         <TextInput
                             ref={inputRef}
                             value={immediateQuery}
+                            onFocus={handleEnterSearch}
                             onChangeText={handleQueryChange}
                             placeholder="find a place"
                             placeholderTextColor={palette.textFaint}
@@ -647,18 +749,20 @@ export default function PlacesScreen() {
                             </Pressable>
                         ) : null}
                     </View>
-                    <Pressable
-                        onPress={() => setImportOpen(true)}
-                        style={({ pressed }) => [
-                            styles.iconButton,
-                            Shadow.ambient,
-                            { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.7 : 1 },
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel="import places"
-                    >
-                        <Ionicons name="download-outline" size={20} color={palette.textSecondary} />
-                    </Pressable>
+                    {!searchMode ? (
+                        <Pressable
+                            onPress={() => setImportOpen(true)}
+                            style={({ pressed }) => [
+                                styles.iconButton,
+                                Shadow.ambient,
+                                { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.7 : 1 },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="import places"
+                        >
+                            <Ionicons name="download-outline" size={20} color={palette.textSecondary} />
+                        </Pressable>
+                    ) : null}
                 </View>
                 <View style={styles.chipLine}>
                     <SearchLocalityBar
@@ -668,46 +772,50 @@ export default function PlacesScreen() {
                         onSelectCurrentLocation={handleCurrentLocation}
                         onSelectCity={setCityLocality}
                     />
-                    <LayerChip
-                        label="pinned"
-                        icon="bookmark-outline"
-                        active={!queryActive && activeLayer === 'pinned'}
-                        palette={palette}
-                        onPress={() => setActiveLayer('pinned')}
-                    />
-                    <LayerChip
-                        label="been"
-                        icon="checkmark-circle-outline"
-                        active={!queryActive && activeLayer === 'been'}
-                        palette={palette}
-                        onPress={() => setActiveLayer('been')}
-                    />
-                    <Pressable
-                        onPress={() => setFilterOpen(true)}
-                        style={({ pressed }) => [
-                            styles.filterButton,
-                            Shadow.ambient,
-                            {
-                                backgroundColor: palette.scrimFrost,
-                                opacity: pressed ? 0.7 : 1,
-                            },
-                        ]}
-                        accessibilityRole="button"
-                        accessibilityLabel="filters"
-                    >
-                        <Ionicons
-                            name="options-outline"
-                            size={16}
-                            color={filtersActive ? palette.primary : palette.textSecondary}
-                        />
-                        {filtersActive ? (
-                            <View style={[styles.filterDot, { backgroundColor: palette.primary }]} />
-                        ) : null}
-                    </Pressable>
+                    {!searchMode ? (
+                        <>
+                            <LayerChip
+                                label="pinned"
+                                icon="bookmark-outline"
+                                active={screenState.layerFilter === 'pinned'}
+                                palette={palette}
+                                onPress={() => handleLayerPress('pinned')}
+                            />
+                            <LayerChip
+                                label="been"
+                                icon="checkmark-circle-outline"
+                                active={screenState.layerFilter === 'been'}
+                                palette={palette}
+                                onPress={() => handleLayerPress('been')}
+                            />
+                            <Pressable
+                                onPress={() => setFilterOpen(true)}
+                                style={({ pressed }) => [
+                                    styles.filterButton,
+                                    Shadow.ambient,
+                                    {
+                                        backgroundColor: palette.scrimFrost,
+                                        opacity: pressed ? 0.7 : 1,
+                                    },
+                                ]}
+                                accessibilityRole="button"
+                                accessibilityLabel="filters"
+                            >
+                                <Ionicons
+                                    name="options-outline"
+                                    size={16}
+                                    color={filtersActive ? palette.primary : palette.textSecondary}
+                                />
+                                {filtersActive ? (
+                                    <View style={[styles.filterDot, { backgroundColor: palette.primary }]} />
+                                ) : null}
+                            </Pressable>
+                        </>
+                    ) : null}
                 </View>
             </LinearGradient>
 
-            {activeSegment === 'places' && selectedRow ? (
+            {!searchMode && activeSegment === 'places' && selectedRow ? (
                 <Pressable
                     onPress={() => openRestaurant(selectedRow)}
                     style={[
@@ -742,6 +850,9 @@ export default function PlacesScreen() {
             <SnapSheet
                 H={sheetH}
                 initialSnap={firstSnap}
+                locked={guidanceSearchMode}
+                lockedSnap={FULL}
+                unlockedSnap={screenState.sheetSnap}
                 sheetRef={sheetRef}
                 backgroundColor={palette.surfaceNote}
                 handleColor={palette.ruleWarmNib}
@@ -772,6 +883,86 @@ export default function PlacesScreen() {
                                 scrollEnabled={scrollEnabled}
                                 onScroll={onScroll}
                             />
+                        );
+                    }
+                    if (searchMode && searchGuidanceBranch === 'sections') {
+                        const recentSearches = recentQueries.slice(0, 8);
+                        const myLists = (myListsQuery.data ?? []).slice(0, 4);
+                        return (
+                            <Animated.FlatList
+                                testID="places-search-sections"
+                                data={[] as string[]}
+                                keyExtractor={(item) => item}
+                                renderItem={() => null}
+                                scrollEnabled={scrollEnabled}
+                                onScroll={onScroll}
+                                scrollEventThrottle={16}
+                                keyboardShouldPersistTaps="handled"
+                                keyboardDismissMode="on-drag"
+                                contentContainerStyle={[
+                                    styles.searchSectionsContent,
+                                    { paddingBottom: insets.bottom + NAV_CLEARANCE },
+                                ]}
+                                ListHeaderComponent={(
+                                    <>
+                                        {recentSearches.length > 0 ? (
+                                            <RecentSearchesList
+                                                queries={recentSearches}
+                                                onSelect={handleQueryChange}
+                                                onClear={searchCache.clearRecents}
+                                            />
+                                        ) : null}
+                                        {nearbySearchRows.length > 0 ? (
+                                            <View>
+                                                <TierHeader label="Near you" />
+                                                {nearbySearchRows.map((item) => (
+                                                    <ResultRow
+                                                        key={item.row.id}
+                                                        item={item}
+                                                        palette={palette}
+                                                        onPress={openRestaurant}
+                                                    />
+                                                ))}
+                                            </View>
+                                        ) : null}
+                                        {myLists.length > 0 ? (
+                                            <View>
+                                                <TierHeader label="Your lists" />
+                                                {myLists.map((list) => (
+                                                    <ListRow
+                                                        key={list.id}
+                                                        list={list}
+                                                        onPress={openList}
+                                                    />
+                                                ))}
+                                            </View>
+                                        ) : null}
+                                        {recentSearches.length === 0
+                                            && nearbySearchRows.length === 0
+                                            && myLists.length === 0 ? (
+                                                <View style={styles.emptyResults}>
+                                                    <Text
+                                                        style={[
+                                                            Type.metadata,
+                                                            { color: palette.textMuted },
+                                                        ]}
+                                                    >
+                                                        search a place, list or person
+                                                    </Text>
+                                                </View>
+                                            ) : null}
+                                    </>
+                                )}
+                            />
+                        );
+                    }
+                    if (searchMode && searchGuidanceBranch === 'minimum') {
+                        return (
+                            <View style={styles.emptyResults}>
+                                <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
+                                    type one more letter
+                                </Text>
+                            </View>
                         );
                     }
                     if (isLoading && decoratedRows.length === 0 && queryActive) {
@@ -817,13 +1008,6 @@ export default function PlacesScreen() {
                                             message="couldn't refresh places"
                                         />
                                     ) : null}
-                                    {!queryActive && recentQueries.length > 0 ? (
-                                        <RecentSearchesList
-                                            queries={recentQueries}
-                                            onSelect={handleQueryChange}
-                                            onClear={searchCache.clearRecents}
-                                        />
-                                    ) : null}
                                 </>
                             )}
                             ListEmptyComponent={
@@ -833,9 +1017,11 @@ export default function PlacesScreen() {
                                               ? 'type one more letter'
                                               : queryActive
                                                 ? 'no places found'
-                                                : activeLayer === 'pinned'
+                                                : screenState.layerFilter === 'pinned'
                                                   ? 'no pinned places yet'
-                                                  : 'no logged places yet'}
+                                                  : screenState.layerFilter === 'been'
+                                                    ? 'no logged places yet'
+                                                    : 'no places yet'}
                                     </Text>
                                 </View>
                             }
@@ -955,6 +1141,10 @@ const styles = StyleSheet.create({
     resultsContent: {
         flexGrow: 1,
         paddingHorizontal: 8,
+    },
+    searchSectionsContent: {
+        flexGrow: 1,
+        paddingHorizontal: Spacing.sm,
     },
     resultRow: {
         minHeight: 65,
