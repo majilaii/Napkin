@@ -1,16 +1,31 @@
 /* eslint-disable import/first -- Jest mocks must be registered before imports. */
 const mockBack = jest.fn();
 let mockLedgerState: Record<string, unknown>;
+let mockCurrentMonth = '2026-09';
+let mockFocusEffect: (() => void) | null = null;
 
 jest.mock('react-native', () => {
     const ReactModule = jest.requireActual('react');
     const host = (name: string) => (props: Record<string, unknown>) =>
         ReactModule.createElement(name, props, props.children);
+    const FlatList = (props: {
+        data?: Record<string, unknown>[];
+        keyExtractor: (item: Record<string, unknown>, index: number) => string;
+        renderItem: (info: { item: Record<string, unknown>; index: number }) => React.ReactNode;
+    }) => ReactModule.createElement(
+        'FlatList',
+        props,
+        (props.data ?? []).map((item, index) => ReactModule.createElement(
+            ReactModule.Fragment,
+            { key: props.keyExtractor(item, index) },
+            props.renderItem({ item, index }),
+        )),
+    );
     return {
         ActivityIndicator: host('ActivityIndicator'),
+        FlatList,
         Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.default },
         Pressable: host('Pressable'),
-        ScrollView: host('ScrollView'),
         StyleSheet: {
             create: (styles: unknown) => styles,
             flatten: (style: unknown) => Array.isArray(style)
@@ -22,7 +37,9 @@ jest.mock('react-native', () => {
     };
 });
 jest.mock('expo-router', () => ({
-    Stack: { Screen: 'StackScreen' },
+    useFocusEffect: (effect: () => void) => {
+        mockFocusEffect = effect;
+    },
     useRouter: () => ({ back: mockBack }),
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -33,12 +50,12 @@ jest.mock('@/hooks/use-color-scheme', () => ({ useColorScheme: () => 'light' }))
 jest.mock('@/components/feed/Avatar', () => ({ Avatar: 'Avatar' }));
 jest.mock('@/hooks/users/useLedger', () => ({
     deviceTimeZone: () => 'UTC',
-    ledgerMonthFor: () => '2026-09',
+    ledgerMonthFor: () => mockCurrentMonth,
     useLedger: () => mockLedgerState,
 }));
 
 import React from 'react';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 
 import { LedgerScreen, ledgerMonthLabel, shiftLedgerMonth } from '../LedgerScreen';
 
@@ -56,6 +73,8 @@ const VIEWER_ROW = {
 describe('LedgerScreen', () => {
     beforeEach(() => {
         mockBack.mockReset();
+        mockCurrentMonth = '2026-09';
+        mockFocusEffect = null;
         mockLedgerState = {
             data: { rows: [VIEWER_ROW], scope: { kind: 'friends' } },
             isLoading: false,
@@ -71,10 +90,23 @@ describe('LedgerScreen', () => {
         const next = screen.getByLabelText('next month');
         expect(next.props.accessibilityState).toEqual({ disabled: true });
         fireEvent.press(next);
-        expect(screen.getByText('september 2026')).toBeTruthy();
+        expect(screen.getAllByText('september 2026')).toHaveLength(1);
+        expect(screen.getByText('FRIENDS')).toBeTruthy();
 
         fireEvent.press(screen.getByLabelText('previous month'));
         expect(screen.getByText('august 2026')).toBeTruthy();
+    });
+
+    it('refreshes the future-month gate when the screen regains focus', () => {
+        const screen = render(<LedgerScreen viewerId="viewer" initialMonth="2026-09" />);
+        expect(screen.getByLabelText('next month').props.accessibilityState)
+            .toEqual({ disabled: true });
+
+        mockCurrentMonth = '2026-10';
+        act(() => mockFocusEffect?.());
+
+        expect(screen.getByLabelText('next month').props.accessibilityState)
+            .toEqual({ disabled: false });
     });
 
     it('renders the empty-ring line instead of a one-person standing', () => {
@@ -98,6 +130,7 @@ describe('LedgerScreen', () => {
         const screen = render(<LedgerScreen viewerId="viewer" initialMonth="2026-09" />);
         expect(screen.getByText('12 napkins')).toBeTruthy();
         expect(screen.getByText('8 meals · 3 new · 1 crown')).toBeTruthy();
+        expect(screen.getByTestId('ledger-standings').props.initialNumToRender).toBe(20);
         expect(screen.getByLabelText('1. Jacky, 12 napkins').props.style[1]).toEqual({
             backgroundColor: 'rgba(160, 63, 40, 0.08)',
         });
@@ -115,7 +148,8 @@ describe('LedgerScreen', () => {
         const screen = render(
             <LedgerScreen viewerId="viewer" initialMonth="2026-09" tableId="table-1" />,
         );
-        expect(screen.getByText('Sunday Roast · september 2026')).toBeTruthy();
+        expect(screen.getByText('SUNDAY ROAST')).toBeTruthy();
+        expect(screen.getByText('september 2026')).toBeTruthy();
         expect(screen.queryByText('follow a few friends and the ledger fills itself')).toBeNull();
         expect(screen.getByText('8 napkins')).toBeTruthy();
     });

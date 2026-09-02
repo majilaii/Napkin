@@ -222,7 +222,7 @@ export const Spacing = {
   lg: 24,
   xl: 32,
   xxl: 48,
-  hitTarget: 40,
+  hitTarget: 44,
   pageGutter: 20,
   saverAvatar: { size: 22, overlap: 6, ring: 1.5 },
   /** Founder-approved compact Friends-feed rhythm (TICKET-226). */

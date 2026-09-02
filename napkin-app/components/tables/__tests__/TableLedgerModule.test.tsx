@@ -74,7 +74,8 @@ describe('TableLedgerModule', () => {
         expect(screen.getByText("you're 5th · 6 napkins")).toBeTruthy();
         expect(mockUseLedger).toHaveBeenCalledWith('viewer', '2026-09', 'UTC', 'table-1');
 
-        fireEvent.press(screen.getByLabelText('open the table ledger'));
+        expect(screen.getByLabelText('Clara Jones, 12 napkins')).toBeTruthy();
+        fireEvent.press(screen.getByTestId('table-ledger-module'));
         expect(mockPush).toHaveBeenCalledWith({ pathname: '/ledger', params: { tableId: 'table-1' } });
     });
 

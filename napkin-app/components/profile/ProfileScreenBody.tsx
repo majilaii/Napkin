@@ -57,6 +57,7 @@ import { ProfileNapkinsLine } from './ProfileNapkinsLine';
 import { NotFoundState } from './NotFoundState';
 import type { IndexSection } from './ProfileIndex';
 import { useConnectivity } from '@/providers/ConnectivityProvider';
+import { useAuth } from '@/providers/AuthProvider';
 import {
     chooseAndSaveNewProfilePhoto,
     shouldBlockProfilePhotoPicker,
@@ -74,6 +75,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const { user } = useAuth();
 
     const { data: result, isLoading, error, refetch, isRefetching } = useUserProfile(identifier);
 
@@ -89,7 +91,7 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
     const ledgerTz = useMemo(() => deviceTimeZone(), []);
     const ledgerMonth = useMemo(() => ledgerMonthFor(new Date(), ledgerTz), [ledgerTz]);
     const ledger = useLedger(
-        profileUserId,
+        user?.id,
         ledgerMonth,
         ledgerTz,
         undefined,

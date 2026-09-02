@@ -46,6 +46,8 @@ function invalidateBlockFallout(
     queryClient.invalidateQueries({ queryKey: queryKeys.users.reviews(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.taste(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.feed.rootAll() });
+    // The crown is cohort-derived, so this family prefix is the narrowest correct key; only mounted pages refetch.
+    queryClient.invalidateQueries({ queryKey: queryKeys.restaurants.pageAll() });
     if (viewerId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(viewerId) });
     }

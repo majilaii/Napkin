@@ -1,13 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    FlatList,
     Pressable,
-    ScrollView,
     StyleSheet,
     Text,
     View,
 } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -87,12 +87,16 @@ export function LedgerScreen({ viewerId, initialMonth, tableId }: Props) {
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const tz = useMemo(() => deviceTimeZone(), []);
-    const currentMonth = useMemo(() => ledgerMonthFor(new Date(), tz), [tz]);
+    const initialCurrentMonth = useMemo(() => ledgerMonthFor(new Date(), tz), [tz]);
+    const [currentMonth, setCurrentMonth] = useState(initialCurrentMonth);
     const [month, setMonth] = useState(
-        initialMonth && MONTH_PATTERN.test(initialMonth) && initialMonth <= currentMonth
+        initialMonth && MONTH_PATTERN.test(initialMonth) && initialMonth <= initialCurrentMonth
             ? initialMonth
-            : currentMonth,
+            : initialCurrentMonth,
     );
+    useFocusEffect(useCallback(() => {
+        setCurrentMonth(ledgerMonthFor(new Date(), tz));
+    }, [tz]));
     const ledger = useLedger(viewerId, month, tz, tableId ?? undefined);
     const canMoveForward = month < currentMonth;
     const hasFriends = (ledger.data?.rows ?? []).some((row) => !row.is_viewer);
@@ -101,10 +105,10 @@ export function LedgerScreen({ viewerId, initialMonth, tableId }: Props) {
         : tableId
         ? 'the table'
         : 'friends';
+    const rows = ledger.data?.rows ?? [];
 
     return (
         <View style={[styles.container, { backgroundColor: palette.background, paddingTop: insets.top }]}>
-            <Stack.Screen options={{ headerShown: false }} />
             <View style={styles.header}>
                 <Pressable
                     onPress={() => router.back()}
@@ -119,7 +123,7 @@ export function LedgerScreen({ viewerId, initialMonth, tableId }: Props) {
             </View>
 
             <Text style={[Type.labelSmall, styles.scopeKicker, { color: palette.textMuted }]}>
-                {`${scopeName} · ${ledgerMonthLabel(month)}`}
+                {scopeName.toUpperCase()}
             </Text>
 
             <View style={styles.monthPicker}>
@@ -163,19 +167,21 @@ export function LedgerScreen({ viewerId, initialMonth, tableId }: Props) {
                     follow a few friends and the ledger fills itself
                 </Text>
             ) : (
-                <ScrollView
+                <FlatList
+                    testID="ledger-standings"
+                    data={rows}
+                    keyExtractor={(row) => row.user_id}
+                    initialNumToRender={20}
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xxl }}
-                >
-                    {(ledger.data?.rows ?? []).map((row, index) => (
+                    renderItem={({ item, index }) => (
                         <LedgerStandingRow
-                            key={row.user_id}
-                            row={row}
+                            row={item}
                             rank={index + 1}
                             palette={palette}
                         />
-                    ))}
-                </ScrollView>
+                    )}
+                />
             )}
         </View>
     );

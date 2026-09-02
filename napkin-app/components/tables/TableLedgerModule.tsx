@@ -51,8 +51,9 @@ export function TableLedgerModule({ viewerId, tableId }: Props) {
 
     return (
         <Pressable
+            testID="table-ledger-module"
             accessibilityRole="button"
-            accessibilityLabel="open the table ledger"
+            accessibilityHint="opens the full table ledger"
             onPress={() => router.push({ pathname: '/ledger', params: { tableId } })}
             style={({ pressed }) => [styles.module, pressed && styles.pressed]}
         >

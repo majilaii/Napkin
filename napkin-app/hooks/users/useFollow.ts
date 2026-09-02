@@ -284,6 +284,8 @@ export function useFollow() {
             if (viewerId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.feed.friends(viewerId) });
                 queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(viewerId) });
+                // The crown is cohort-derived, so this family prefix is the narrowest correct key; only mounted pages refetch.
+                queryClient.invalidateQueries({ queryKey: queryKeys.restaurants.pageAll() });
             }
         },
     });
@@ -376,6 +378,8 @@ export function useUnfollow() {
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
             if (viewerId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.users.ledgerAll(viewerId) });
+                // The crown is cohort-derived, so this family prefix is the narrowest correct key; only mounted pages refetch.
+                queryClient.invalidateQueries({ queryKey: queryKeys.restaurants.pageAll() });
             }
         },
     });

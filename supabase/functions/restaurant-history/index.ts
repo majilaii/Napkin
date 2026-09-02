@@ -42,7 +42,7 @@ import { contentKey } from '../_shared/videoUrlKey.ts';
 import { loadVisibleEntryIds } from '../_shared/entryVisibility.ts';
 import {
     createSupabaseLedgerReader,
-    loadRestaurantRegular,
+    loadRestaurantRegularNonFatal,
     type RegularDetail,
 } from '../_shared/ledger.ts';
 import { enrichSearchRows } from './searchProjection.ts';
@@ -1181,7 +1181,7 @@ serve(async (req) => {
                     resolvedRestaurantId,
                     sharedMembershipPairs,
                 ),
-                loadRestaurantRegular(
+                loadRestaurantRegularNonFatal(
                     createSupabaseLedgerReader(supabase),
                     user.id,
                     resolvedRestaurantId,

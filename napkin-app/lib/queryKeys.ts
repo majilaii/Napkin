@@ -171,6 +171,7 @@ export const queryKeys = {
 
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
+        pageAll: () => ['restaurantPage'] as const,
         tableHistory: (
             restaurantId: string,
             tableId: string,

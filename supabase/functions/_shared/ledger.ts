@@ -645,6 +645,24 @@ export async function loadRestaurantRegular(
     };
 }
 
+/** Keep the optional restaurant-page crown from failing the core page payload. */
+export async function loadRestaurantRegularNonFatal(
+    reader: LedgerReadPort,
+    viewerId: string,
+    restaurantId: string,
+    now = new Date(),
+): Promise<RegularSnapshot> {
+    try {
+        return await loadRestaurantRegular(reader, viewerId, restaurantId, now);
+    } catch (err) {
+        console.error('[restaurant-history] regular unavailable (non-fatal):', err);
+        return {
+            data: { regular: null, regular_detail: null },
+            metrics: emptyMetrics(),
+        };
+    }
+}
+
 /** Load one monthly friends ledger using the locked bounded read plan. */
 export async function loadFriendsLedger(
     reader: LedgerReadPort,

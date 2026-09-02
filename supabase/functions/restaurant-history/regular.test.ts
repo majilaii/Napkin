@@ -1,6 +1,7 @@
 import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
     loadRestaurantRegular,
+    loadRestaurantRegularNonFatal,
     type LedgerCandidate,
     type LedgerCandidateRead,
     type LedgerReadPort,
@@ -160,4 +161,34 @@ Deno.test('regular fixtures: unrated and 91-day-old meals never qualify', async 
     ];
     const snapshot = await loadRestaurantRegular(readerFor(entries), VIEWER, RESTAURANT, NOW);
     assertEquals(snapshot.data, { regular: null, regular_detail: null });
+});
+
+Deno.test('regular wrapper keeps a failed cohort read non-fatal', async () => {
+    const reader = readerFor([]);
+    reader.fetchFollowees = () => Promise.reject(new Error('follow read failed'));
+    const logged: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => logged.push(args);
+
+    try {
+        const snapshot = await loadRestaurantRegularNonFatal(
+            reader,
+            VIEWER,
+            RESTAURANT,
+            NOW,
+        );
+        assertEquals(snapshot.data, { regular: null, regular_detail: null });
+        assertEquals(snapshot.metrics, {
+            month: 0,
+            crown: 0,
+            lookback: 0,
+            visibility: 0,
+            follows: 0,
+            profiles: 0,
+        });
+        assertEquals(logged[0]?.[0], '[restaurant-history] regular unavailable (non-fatal):');
+        assertEquals((logged[0]?.[1] as Error).message, 'follow read failed');
+    } finally {
+        console.error = originalError;
+    }
 });

@@ -104,6 +104,9 @@ jest.mock('@/hooks/imports/useImportSlot', () => ({
 jest.mock('@/providers/ConnectivityProvider', () => ({
     useConnectivity: () => ({ status: mockConnectivityStatus }),
 }));
+jest.mock('@/providers/AuthProvider', () => ({
+    useAuth: () => ({ user: { id: 'viewer-id' } }),
+}));
 jest.mock('@/lib/profilePhoto', () => ({
     chooseAndSaveNewProfilePhoto: jest.fn(),
     shouldBlockProfilePhotoPicker: (status: string) => status === 'offline',
@@ -167,7 +170,7 @@ describe('ProfileScreenBody avatar-swap orchestration', () => {
 
         expect(profileHeader(renderer).props.onChangePhoto).toBeUndefined();
         expect(profileHeader(renderer).props.isChangingPhoto).toBe(false);
-        expect(mockUseLedger).toHaveBeenCalledWith('user-1', '2026-09', 'UTC', undefined, false);
+        expect(mockUseLedger).toHaveBeenCalledWith('viewer-id', '2026-09', 'UTC', undefined, false);
         expect(renderer.root.findAllByType('ProfileNapkinsLine')).toHaveLength(0);
         act(() => renderer.unmount());
     });

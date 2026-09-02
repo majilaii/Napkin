@@ -3,7 +3,7 @@ import { act, waitFor } from '@testing-library/react-native';
 import { renderHookWithClient } from '@/__tests__/utils/queryWrapper';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-import { useBlockUser } from '../useBlocking';
+import { useBlockUser, useUnblockUser } from '../useBlocking';
 
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
 jest.mock('@/providers/AuthProvider', () => ({
@@ -25,9 +25,25 @@ describe('useBlockUser', () => {
         expect(invalidate).toHaveBeenCalledWith({
             queryKey: queryKeys.users.taste(TARGET_ID),
         });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.pageAll(),
+        });
         expect(remove).toHaveBeenCalledWith({
             queryKey: queryKeys.users.taste(TARGET_ID),
             exact: true,
+        });
+    });
+
+    it('invalidates every cached restaurant crown after an unblock', async () => {
+        (callEdgeFn as jest.Mock).mockResolvedValue({ ok: true });
+        const { result, client } = renderHookWithClient(() => useUnblockUser());
+        const invalidate = jest.spyOn(client, 'invalidateQueries');
+
+        act(() => result.current.mutate(TARGET_ID));
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.pageAll(),
         });
     });
 });
