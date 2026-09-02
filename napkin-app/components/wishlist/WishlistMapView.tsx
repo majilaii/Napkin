@@ -135,6 +135,15 @@ interface Props {
     locationStatus: LocationStatus;
     onRequestLocation: () => void;
     onOpenRestaurant: (restaurantId: string) => void;
+    /** Places uses a bare map and owns its compact selected-pin caption. */
+    peek?: 'carousel' | 'none';
+    /** Undefined = legacy uncontrolled mode; null/string = controlled mode. */
+    selectedId?: string | null;
+    onSelectedChange?: (id: string | null) => void;
+    /** Settled sheet height only; feeds native map padding and bottom chrome. */
+    bottomInset?: number;
+    /** Takes precedence over onOpenRestaurant (including synthetic place: ids). */
+    onOpenItem?: (item: WishlistMapItem) => void;
     /**
      * TICKET-124: open a followee's review (entry-detail). Provided by the
      * network layer only; when a selected pin carries `entryId` AND this is set,
@@ -570,6 +579,11 @@ export function WishlistMapView({
     locationStatus,
     onRequestLocation,
     onOpenRestaurant,
+    peek = 'carousel',
+    selectedId: controlledSelectedId,
+    onSelectedChange,
+    bottomInset,
+    onOpenItem,
     onOpenReview,
     onSwitchToList,
     listChip,
@@ -591,7 +605,20 @@ export function WishlistMapView({
 }: Props) {
     const insets = useSafeAreaInsets();
     const mapRef = useRef<MapViewType>(null);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [internalSelectedId, setInternalSelectedId] = useState<string | null>(
+        controlledSelectedId ?? null,
+    );
+    const isSelectionControlled = controlledSelectedId !== undefined;
+    const selectedId = isSelectionControlled
+        ? controlledSelectedId ?? null
+        : internalSelectedId;
+    const setSelectedId = useCallback((next: string | null) => {
+        setInternalSelectedId(next);
+        onSelectedChange?.(next);
+    }, [onSelectedChange]);
+    useEffect(() => {
+        if (isSelectionControlled) setInternalSelectedId(controlledSelectedId ?? null);
+    }, [controlledSelectedId, isSelectionControlled]);
     const { user } = useAuth();
     const { data: wishlistPages } = useMyWishlist(user?.id);
     // One screen-level seed replaces per-card checks. The selected card alone
@@ -622,13 +649,23 @@ export function WishlistMapView({
     // is inline by design (no new theme tokens — TICKET-131).
     const frostBg = isDark ? FROST_DARK : palette.scrimFrost;
     const chromeTop = chromeTopOffset ?? 12;
+    const usesExternalBottomInset = bottomInset !== undefined;
+    // Places passes preserveItemOrder when locality is explicit/no-location:
+    // keep deviceCoords for the native blue dot + locate FAB, but do not let
+    // London reorder or anchor a Paris result collection.
+    const collectionUserCoords = usesExternalBottomInset && preserveItemOrder
+        ? null
+        : userCoords;
+    const collectionLocationStatus = usesExternalBottomInset && preserveItemOrder
+        ? 'denied'
+        : locationStatus;
 
     // Selection survives only while its restaurant is still on the map.
     useEffect(() => {
         if (selectedId && !items.some((i) => i.id === selectedId)) {
             setSelectedId(null);
         }
-    }, [items, selectedId]);
+    }, [items, selectedId, setSelectedId]);
 
     // Collection framing is intentionally separate from global layer framing.
     // A List is a bounded authored object, so showing its whole footprint is
@@ -666,10 +703,19 @@ export function WishlistMapView({
             // The shared collection-framing algorithm (mapShared). This map has
             // never deferred, so `defer` collapses to its historical fallback —
             // items[0] at CITY_DELTA — keeping behavior byte-identical.
-            const action = chooseCollectionCamera(items, userCoords, locationStatus);
+            const action = chooseCollectionCamera(
+                items,
+                collectionUserCoords,
+                collectionLocationStatus,
+            );
             if (action.kind === 'fit') {
                 mapRef.current?.fitToCoordinates(action.coords, {
-                    edgePadding: { top: 150, right: 56, bottom: 250, left: 56 },
+                    edgePadding: {
+                        top: 150,
+                        right: 56,
+                        bottom: usesExternalBottomInset ? 32 : 250,
+                        left: 56,
+                    },
                     animated: true,
                 });
                 return;
@@ -687,7 +733,16 @@ export function WishlistMapView({
         return () => clearTimeout(timer);
         // locationStatus feeds chooseCollectionCamera; the framedCollectionRef
         // guard keeps re-runs a no-op, so adding it never re-frames.
-    }, [collectionFrameKey, collectionScopeKey, focusItemId, items, userCoords, locationStatus]);
+    }, [
+        collectionFrameKey,
+        collectionScopeKey,
+        focusItemId,
+        items,
+        collectionLocationStatus,
+        collectionUserCoords,
+        setSelectedId,
+        usesExternalBottomInset,
+    ]);
 
     // Frame the map ONCE per open. This is a "near me" map, so prefer centering on
     // the user at city zoom — fitting ALL pins zooms way out for a globally-spread
@@ -874,7 +929,18 @@ export function WishlistMapView({
             { center: { latitude: item.lat, longitude: item.lng } },
             { duration: 260 },
         );
-    }, []);
+    }, [setSelectedId]);
+
+    const handleOpenRestaurant = useCallback((restaurantId: string) => {
+        const item = items.find((candidate) => candidate.id === restaurantId);
+        if (item && onOpenItem) {
+            onOpenItem(item);
+            return;
+        }
+        onOpenRestaurant(restaurantId);
+    }, [items, onOpenItem, onOpenRestaurant]);
+
+    const bottomChromeInset = bottomInset ?? insets.bottom + NAV_CLEARANCE;
 
     // ── Source pills (TICKET-131) — frosted segmented, top-LEFT on the glass ────
     // Shown in BOTH the empty state and the populated map so switching back from
@@ -955,7 +1021,7 @@ export function WishlistMapView({
                 onPress={onSwitchToList}
                 style={[
                     styles.listToggle,
-                    { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE },
+                    { backgroundColor: frostBg, bottom: bottomChromeInset },
                     Shadow.ambient,
                 ]}
                 accessibilityRole="button"
@@ -1021,6 +1087,8 @@ export function WishlistMapView({
     const emptyCopy =
         items.length > 0
             ? null
+            : peek === 'none' && emptyMessage == null
+              ? null
             : emptyMessage
               ? emptyMessage
             : sources?.value === 'discover' || sources?.value === 'network'
@@ -1071,6 +1139,7 @@ export function WishlistMapView({
                 rotateEnabled={false}
                 showsUserLocation={locationStatus === 'granted'}
                 onPress={() => setSelectedId(null)}
+                mapPadding={{ top: 0, right: 0, bottom: bottomInset ?? 0, left: 0 }}
             >
                 {/* MapTiler cream raster — first child, beneath the markers. iOS
                     replaces the base; Android is mapType none so this is the only
@@ -1201,10 +1270,13 @@ export function WishlistMapView({
                         styles.fab,
                         {
                             backgroundColor: frostBg,
-                            bottom:
-                                insets.bottom +
-                                NAV_CLEARANCE +
-                                (onSwitchToList ? RIGHT_STACK_OFFSET : 0),
+                            bottom: bottomChromeInset + (
+                                onSwitchToList
+                                    ? RIGHT_STACK_OFFSET
+                                    : usesExternalBottomInset
+                                      ? 12
+                                      : 0
+                            ),
                         },
                         Shadow.ambient,
                     ]}
@@ -1235,7 +1307,7 @@ export function WishlistMapView({
                     onPress={listChip.onPress}
                     style={[
                         styles.peopleChip,
-                        { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE },
+                        { backgroundColor: frostBg, bottom: bottomChromeInset },
                         Shadow.ambient,
                     ]}
                     accessibilityRole="button"
@@ -1257,7 +1329,7 @@ export function WishlistMapView({
                     onPress={peopleChip.onPress}
                     style={[
                         styles.peopleChip,
-                        { backgroundColor: frostBg, bottom: insets.bottom + NAV_CLEARANCE },
+                        { backgroundColor: frostBg, bottom: bottomChromeInset },
                         Shadow.ambient,
                     ]}
                     accessibilityRole="button"
@@ -1277,7 +1349,7 @@ export function WishlistMapView({
                 <Text
                     style={[
                         styles.attribution,
-                        { color: palette.textMuted, bottom: insets.bottom + NAV_CLEARANCE - 18 },
+                        { color: palette.textMuted, bottom: bottomChromeInset - 18 },
                     ]}
                     pointerEvents="none"
                 >
@@ -1288,17 +1360,17 @@ export function WishlistMapView({
             {/* Peek carousel — rises when a pin is tapped; swipe for what's
                 nearby. No key: it must NOT remount (re-animate) per pin change,
                 only on closed → open. */}
-            {selected ? (
+            {selected && peek === 'carousel' ? (
                 <PeekCarousel
                     items={orderedItems}
                     selectedId={selected.id}
                     viewerId={user?.id}
                     savedRestaurantIds={savedRestaurantIds}
                     palette={palette}
-                    bottomInset={insets.bottom + NAV_CLEARANCE}
+                    bottomInset={bottomChromeInset}
                     onSelect={handleCarouselSelect}
                     onClose={() => setSelectedId(null)}
-                    onOpenRestaurant={onOpenRestaurant}
+                    onOpenRestaurant={handleOpenRestaurant}
                     onOpenReview={onOpenReview}
                     onGather={onGather}
                 />

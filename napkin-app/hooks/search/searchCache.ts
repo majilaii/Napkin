@@ -10,7 +10,9 @@
  * insertion order so the first key is always the oldest.
  *
  * TICKET-097: recent queries are persisted to AsyncStorage
- * (`napkin.recentSearches.v1`) so they survive app restarts. Hydration is
+ * (`napkin.recentSearches.v1.<userId>`) so they survive app restarts without
+ * crossing auth identities. The old device-global key is deleted, not migrated.
+ * Hydration is
  * lazy (first subscribe/add), async, and merge-safe: queries added before
  * hydration lands stay newest. Write-through on add/clear. The result LRU
  * stays memory-only.
@@ -75,6 +77,17 @@ export interface PersistedRow {
     /** Stored Places author attribution paired with photo_url. */
     places_photo_attribution_html?: string | null;
     external_id: string | null; // Google Place ID — see migration 20251215134700
+    /** TICKET-228 additive search projection; optional for stale LRU entries. */
+    lat?: number | null;
+    lng?: number | null;
+    google_rating?: number | null;
+    is_pinned?: boolean;
+    friends_been_count?: number;
+    rating?: {
+        tier: 'you' | 'friends' | 'google';
+        value: number;
+        scale: 5;
+    } | null;
 }
 
 export interface VisitedRow extends PersistedRow {
@@ -90,7 +103,11 @@ export interface PersistedSearchResult {
 const LRU_CAPACITY = 10;
 const RESULT_TTL_MS = 1000 * 60 * 15;
 const RECENT_CAPACITY = 8;
-const RECENTS_STORAGE_KEY = 'napkin.recentSearches.v1';
+const LEGACY_RECENTS_STORAGE_KEY = 'napkin.recentSearches.v1';
+
+export function recentsStorageKey(userId: string): string {
+    return `${LEGACY_RECENTS_STORAGE_KEY}.${userId}`;
+}
 
 // Module-scope state — survives tab unmounts
 const cache = new Map<string, CachedSearchResult>();
@@ -111,6 +128,7 @@ let pendingPersistPreHydration = false;
 // Bumped on clearRecents so an in-flight hydration can't resurrect cleared
 // entries (clear-while-hydrating race).
 let recentsEpoch = 0;
+let activeUserId: string | null = null;
 
 function normalizeQuery(q: string): string {
     return q.trim().toLowerCase();
@@ -132,19 +150,23 @@ function emitRecents(): void {
 
 /** Fire-and-forget write-through. Storage failures are non-fatal. */
 function persistRecents(): void {
+    const userId = activeUserId;
+    if (!userId) return;
     if (!recentsHydrated) {
         pendingPersistPreHydration = true;
         return;
     }
-    AsyncStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(recentQueries)).catch(() => {});
+    AsyncStorage.setItem(recentsStorageKey(userId), JSON.stringify(recentQueries)).catch(() => {});
 }
 
 async function hydrateRecents(): Promise<void> {
     const epochAtStart = recentsEpoch;
+    const userIdAtStart = activeUserId;
+    if (!userIdAtStart) return;
     try {
-        const raw = await AsyncStorage.getItem(RECENTS_STORAGE_KEY);
+        const raw = await AsyncStorage.getItem(recentsStorageKey(userIdAtStart));
         // A clear won the race — its state (memory + removeItem) is authoritative.
-        if (epochAtStart !== recentsEpoch) return;
+        if (epochAtStart !== recentsEpoch || activeUserId !== userIdAtStart) return;
         if (raw == null) return;
         const parsed: unknown = JSON.parse(raw);
         if (!Array.isArray(parsed)) return;
@@ -163,6 +185,7 @@ async function hydrateRecents(): Promise<void> {
     } catch {
         // Unreadable stash — start fresh; next add overwrites it.
     } finally {
+        if (epochAtStart !== recentsEpoch || activeUserId !== userIdAtStart) return;
         recentsHydrated = true;
         // One combined write covers everything added while the read was in
         // flight (also what used to be the length-heuristic re-persist).
@@ -180,6 +203,23 @@ function ensureRecentsHydrated(): void {
 }
 
 export const searchCache = {
+    setActiveUser(userId: string | null | undefined): void {
+        const nextUserId = userId?.trim() || null;
+        if (activeUserId === nextUserId) return;
+
+        activeUserId = nextUserId;
+        recentsEpoch += 1;
+        cache.clear();
+        recentQueries = [];
+        hydrationStarted = false;
+        recentsHydrated = false;
+        pendingPersistPreHydration = false;
+        emitRecents();
+
+        // Never hand the pre-TICKET-228 device-global stash to a signed-in user.
+        AsyncStorage.removeItem(LEGACY_RECENTS_STORAGE_KEY).catch(() => {});
+    },
+
     get(userId: string, query: string, localityBucket?: string | null): CachedSearchResult | undefined {
         const key = resultKey(userId, query, localityBucket);
         const result = cache.get(key);
@@ -212,6 +252,7 @@ export const searchCache = {
     },
 
     addRecent(query: string): void {
+        if (!activeUserId) return;
         const trimmed = query.trim();
         if (!trimmed) return;
         ensureRecentsHydrated();
@@ -246,13 +287,14 @@ export const searchCache = {
 
     /** Clear recents only (memory + disk). The result LRU is untouched. */
     clearRecents(): void {
+        const userId = activeUserId;
         hydrationStarted = true; // an explicit clear must never be resurrected
         recentsHydrated = true; // the clear defines the state; a late read is epoch-discarded
         pendingPersistPreHydration = false;
         recentsEpoch += 1;
         recentQueries = [];
         emitRecents();
-        AsyncStorage.removeItem(RECENTS_STORAGE_KEY).catch(() => {});
+        if (userId) AsyncStorage.removeItem(recentsStorageKey(userId)).catch(() => {});
     },
 
     clear(): void {

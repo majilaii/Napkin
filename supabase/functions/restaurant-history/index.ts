@@ -40,6 +40,7 @@ import { isInstagramUrl } from '../_shared/socialHost.ts';
 // backfill keys never diverge.
 import { contentKey } from '../_shared/videoUrlKey.ts';
 import { loadVisibleEntryIds } from './entryVisibility.ts';
+import { enrichSearchRows } from './searchProjection.ts';
 import { isPeekCardContext, loadPeekCard } from './peekCard.ts';
 import {
     appendPageProjections,
@@ -353,7 +354,7 @@ serve(async (req) => {
                         .from('restaurants')
                         // TICKET-167: address disambiguates same-name venues in the
                         // unified search list (shown on every row).
-                        .select('id, name, city, cuisine, address, photo_url, photo_source, places_photo_attribution_html, external_id')
+                        .select('id, name, city, cuisine, address, photo_url, photo_source, places_photo_attribution_html, external_id, lat, lng, google_rating')
                         .in('id', visitedIds)
                         .ilike('name', `%${q}%`)
                         .eq('verification', 'verified')
@@ -378,7 +379,7 @@ serve(async (req) => {
                 .from('restaurants')
                 // TICKET-167: address disambiguates same-name venues in the
                 // unified search list (shown on every row).
-                .select('id, name, city, cuisine, address, photo_url, photo_source, places_photo_attribution_html, external_id')
+                .select('id, name, city, cuisine, address, photo_url, photo_source, places_photo_attribution_html, external_id, lat, lng, google_rating')
                 .ilike('name', `%${q}%`)
                 .eq('verification', 'verified')
                 .limit(30); // fetch extra to account for JS-side filter
@@ -387,10 +388,16 @@ serve(async (req) => {
                 : [];
             if (onNapkinErr) throw onNapkinErr;
 
+            const enriched = await enrichSearchRows(
+                supabase,
+                user.id,
+                [...visitedRestaurants, ...onNapkin],
+            );
+
             return json({
                 data: {
-                    visitedByMyTables: visitedRestaurants,
-                    onNapkin: (onNapkin ?? []).slice(0, 10),
+                    visitedByMyTables: enriched.slice(0, visitedRestaurants.length),
+                    onNapkin: enriched.slice(visitedRestaurants.length),
                 },
             });
         }

@@ -132,7 +132,7 @@ export function JournalList({
                         {"— starts with one. log tonight’s."}
                     </Text>
                     <Pressable
-                        onPress={() => router.push('/search')}
+                        onPress={() => router.push('/(tabs)/places')}
                         style={({ pressed }) => [
                             styles.emptyButton,
                             { borderColor: 'rgba(160,63,40,0.35)', opacity: pressed ? 0.7 : 1 },

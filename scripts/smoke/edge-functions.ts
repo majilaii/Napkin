@@ -303,7 +303,7 @@ const CHECKS: Check[] = [
     },
     // TICKET-167: restaurant-history?action=search — the Search tab's persisted
     // read path (visited-by-my-Tables + on-Napkin tiers). Both SELECTs now carry
-    // `address` for the unified list. A 2-char query returns the two-array
+    // map coordinates plus labelled rating/pin/friends projections. A 2-char query returns the two-array
     // envelope; empty arrays are legitimate for the smoke fixture (no matching
     // restaurant). A 500 here means the SELECT / table_members embed / ilike drifted.
     {
@@ -318,6 +318,11 @@ const CHECKS: Check[] = [
             if (!data) return 'missing data envelope';
             if (!Array.isArray(data.visitedByMyTables)) return 'data.visitedByMyTables is not an array';
             if (!Array.isArray(data.onNapkin)) return 'data.onNapkin is not an array';
+            for (const row of [...data.visitedByMyTables, ...data.onNapkin] as Record<string, unknown>[]) {
+                for (const key of ['lat', 'lng', 'is_pinned', 'friends_been_count', 'rating']) {
+                    if (!(key in row)) return `search row missing ${key}`;
+                }
+            }
             return null;
         },
     },

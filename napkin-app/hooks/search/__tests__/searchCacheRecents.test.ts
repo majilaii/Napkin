@@ -9,7 +9,9 @@
 import { queryKeys } from '@/lib/queryKeys';
 import { cityLocalityBucket } from '../searchLocalityStore';
 
-const STORAGE_KEY = 'napkin.recentSearches.v1';
+const USER_ID = 'user-a';
+const STORAGE_KEY = `napkin.recentSearches.v1.${USER_ID}`;
+const LEGACY_STORAGE_KEY = 'napkin.recentSearches.v1';
 
 type SearchCache = typeof import('../searchCache').searchCache;
 type AsyncStorageMock = typeof import('@react-native-async-storage/async-storage').default;
@@ -30,6 +32,7 @@ function freshModules(): void {
     AsyncStorage = asMod.default ?? asMod;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     searchCache = require('../searchCache').searchCache;
+    searchCache.setActiveUser(USER_ID);
 }
 
 beforeEach(() => {
@@ -37,7 +40,7 @@ beforeEach(() => {
 });
 
 describe('write-through on add', () => {
-    it('addRecent persists the list under napkin.recentSearches.v1', async () => {
+    it('addRecent persists the list under the active user key', async () => {
         searchCache.addRecent('carbone');
         searchCache.addRecent('donia');
         await flush();
@@ -155,6 +158,32 @@ describe('hydration', () => {
         searchCache.subscribeRecents(() => {});
         await flush();
         expect([...searchCache.getRecentQueries()]).toEqual(['ok']);
+    });
+});
+
+describe('per-user isolation', () => {
+    it('drops the legacy global key instead of migrating it', async () => {
+        await AsyncStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(['private-a']));
+        searchCache.setActiveUser('user-b');
+        searchCache.subscribeRecents(() => {});
+        await flush();
+
+        expect(searchCache.getRecentQueries()).toEqual([]);
+        expect(await AsyncStorage.getItem(LEGACY_STORAGE_KEY)).toBeNull();
+    });
+
+    it('switching identities resets memory and hydrates only the new key', async () => {
+        await AsyncStorage.setItem('napkin.recentSearches.v1.user-b', JSON.stringify(['bistro-b']));
+        searchCache.addRecent('cafe-a');
+        await flush();
+
+        searchCache.setActiveUser('user-b');
+        expect(searchCache.getRecentQueries()).toEqual([]);
+        searchCache.subscribeRecents(() => {});
+        await flush();
+
+        expect([...searchCache.getRecentQueries()]).toEqual(['bistro-b']);
+        expect(await AsyncStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify(['cafe-a']));
     });
 });
 

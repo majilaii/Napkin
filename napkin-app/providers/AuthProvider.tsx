@@ -3,6 +3,8 @@ import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { queryClient } from '@/lib/queryClient';
 import { searchLocalityStore } from '@/hooks/search/searchLocalityStore';
+import { searchCache } from '@/hooks/search/searchCache';
+import { placesScreenState } from '@/hooks/search/placesScreenState';
 
 interface AuthContextType {
     session: Session | null;
@@ -101,6 +103,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Get initial session
         supabase.auth.getSession().then(({ data: { session } }) => {
             searchLocalityStore.setActiveUser(session?.user?.id);
+            searchCache.setActiveUser(session?.user?.id);
+            placesScreenState.setActiveUser(session?.user?.id);
             setSession(session);
             setUser(session?.user ?? null);
             setIsLoading(false);
@@ -111,6 +115,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (_event, session) => {
                 searchLocalityStore.setActiveUser(session?.user?.id);
+                searchCache.setActiveUser(session?.user?.id);
+                placesScreenState.setActiveUser(session?.user?.id);
                 setSession(session);
                 setUser(session?.user ?? null);
                 setIsLoading(false);
@@ -128,6 +134,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         gateReadGeneration.current += 1;
         await supabase.auth.signOut();
         searchLocalityStore.setActiveUser(null);
+        searchCache.setActiveUser(null);
+        placesScreenState.setActiveUser(null);
         // Clear all cached data to prevent user A seeing user B's data
         queryClient.removeQueries();
         setOnboardedAtState(undefined);

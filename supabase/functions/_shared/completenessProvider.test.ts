@@ -367,6 +367,7 @@ Deno.test("deferred Text Search couples exact endpoint/mask to Text Search debit
           displayName: { text: "Kartuli" },
           formattedAddress: "London, UK",
           addressComponents: [{ longText: "London", types: ["locality"] }],
+          location: { latitude: 51.5, longitude: -0.1 },
         }],
       });
     },
@@ -376,6 +377,10 @@ Deno.test("deferred Text Search couples exact endpoint/mask to Text Search debit
     city: "London",
   });
   assertEquals(result[0].externalId, "ChIJ-kartuli");
+  assertEquals((result[0].raw as { location?: unknown }).location, {
+    latitude: 51.5,
+    longitude: -0.1,
+  });
   assertEquals(outbound?.url, PLACE_TEXT_SEARCH_ENDPOINT);
   assertEquals(
     new Headers(outbound?.init?.headers).get("X-Goog-FieldMask"),

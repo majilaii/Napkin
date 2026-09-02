@@ -1,6 +1,6 @@
 /**
  * TICKET-106 — pure tab-ordering for SearchModeTabs.
- * Order is Places · People · Lists. People is conditionally dropped when
+ * Order is places · lists · people. People is conditionally dropped when
  * people-search is curtained (FRIEND_TEST.hidePeopleSearch), but Lists ALWAYS
  * survives — it is decoupled from the people-search curtain.
  */
@@ -12,9 +12,9 @@ export interface SearchTab {
 }
 
 const ALL_TABS: SearchTab[] = [
-    { mode: 'places', label: 'Places' },
-    { mode: 'people', label: 'People' },
-    { mode: 'lists', label: 'Lists' },
+    { mode: 'places', label: 'places' },
+    { mode: 'lists', label: 'lists' },
+    { mode: 'people', label: 'people' },
 ];
 
 export function visibleSearchTabs(hidePeople: boolean): SearchTab[] {

@@ -22,6 +22,8 @@ interface SearchLocalityBarProps {
     locality: SearchLocality;
     onSelectCurrentLocation: () => void;
     onSelectCity: (city: string) => void;
+    /** Places header variant: compact pill beside the saved/been/filter chips. */
+    compact?: boolean;
 }
 
 export function SearchLocalityBar({
@@ -29,6 +31,7 @@ export function SearchLocalityBar({
     locality,
     onSelectCurrentLocation,
     onSelectCity,
+    compact = false,
 }: SearchLocalityBarProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -60,6 +63,11 @@ export function SearchLocalityBar({
                 onPress={openSheet}
                 style={({ pressed }) => [
                     styles.bar,
+                    compact && [
+                        styles.compactBar,
+                        Shadow.ambient,
+                        { backgroundColor: palette.scrimFrost },
+                    ],
                     { opacity: pressed ? 0.65 : 1 },
                 ]}
                 accessibilityRole="button"
@@ -68,18 +76,23 @@ export function SearchLocalityBar({
             >
                 <Ionicons
                     name="location-outline"
-                    size={IconSize.lg}
+                    size={compact ? 15 : IconSize.lg}
                     color={palette.textMuted}
                 />
                 <Text
                     numberOfLines={1}
-                    style={[Type.metadata, styles.barLabel, { color: palette.textMuted }]}
+                    style={[
+                        Type.metadata,
+                        styles.barLabel,
+                        compact && styles.compactLabel,
+                        { color: palette.textMuted },
+                    ]}
                 >
                     {label}
                 </Text>
                 <Ionicons
                     name="chevron-down-outline"
-                    size={IconSize.lg}
+                    size={compact ? 14 : IconSize.lg}
                     color={palette.textFaint}
                 />
             </Pressable>
@@ -203,6 +216,21 @@ const styles = StyleSheet.create({
     },
     barLabel: {
         flex: 1,
+    },
+    compactBar: {
+        minHeight: 34,
+        marginHorizontal: 0,
+        paddingHorizontal: 11,
+        borderRadius: Radius.full,
+        gap: 6,
+        flex: 0,
+        maxWidth: 160,
+    },
+    compactLabel: {
+        flex: 0,
+        maxWidth: 102,
+        fontFamily: 'Manrope_600SemiBold',
+        fontSize: 12,
     },
     modalRoot: {
         flex: 1,

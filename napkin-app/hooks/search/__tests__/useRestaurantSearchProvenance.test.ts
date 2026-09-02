@@ -70,4 +70,40 @@ describe('useRestaurantSearch provenance adapter', () => {
             fartherAfield: true,
         });
     });
+
+    it('enriches persisted coordinates/price from the matching Place without replacing its labelled rating', () => {
+        const labelled = { tier: 'friends' as const, value: 3.3, scale: 5 as const };
+        const matching: PlacesResult = {
+            ...ghost,
+            id: 'google-visited',
+            latitude: 48.86,
+            longitude: 2.35,
+            googleRating: 4.9,
+            priceLevel: 3,
+        };
+        const enrichedPersisted: PersistedSearchResult = {
+            ...persisted,
+            visitedByMyTables: [{
+                ...persisted.visitedByMyTables[0],
+                lat: null,
+                lng: null,
+                google_rating: 4.4,
+                is_pinned: true,
+                friends_been_count: 2,
+                rating: labelled,
+            }],
+        };
+
+        const result = mergeSearchResults([matching], enrichedPersisted);
+        expect(result.visited[0]).toMatchObject({
+            lat: 48.86,
+            lng: 2.35,
+            googleRating: 4.9,
+            priceLevel: 3,
+            isPinned: true,
+            friendsBeenCount: 2,
+            rating: labelled,
+        });
+        expect(result.morePlaces).toEqual([]);
+    });
 });

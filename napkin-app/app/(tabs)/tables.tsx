@@ -672,7 +672,7 @@ export default function TablesScreen() {
                                     {'— quiet so far. what you log lands here.'}
                                 </Text>
                                 <Pressable
-                                    onPress={() => router.push('/search')}
+                                    onPress={() => router.push('/(tabs)/places')}
                                     style={({ pressed }) => ({
                                         borderWidth: 1.5,
                                         borderColor: 'rgba(160,63,40,0.35)',

@@ -37,6 +37,7 @@ const EMPTY_PERSISTED = { visitedByMyTables: [], onNapkin: [] };
 beforeEach(() => {
     jest.clearAllMocks();
     searchCache.clear();
+    searchCache.setActiveUser('user-1');
     mockGetPermissions.mockResolvedValue({ status: 'undetermined' });
     mockRequestPermissions.mockResolvedValue({ status: 'granted' });
     mockLastKnown.mockResolvedValue({ coords: { latitude: 51.5, longitude: -0.1 } });
@@ -47,6 +48,32 @@ beforeEach(() => {
 });
 
 describe('useRestaurantSearch cache and location lifecycle', () => {
+    it('enabled=false suppresses both restaurant requests and re-enables them on switch', async () => {
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const { result, rerender } = renderHook(
+            ({ enabled }: { enabled: boolean }) =>
+                useRestaurantSearch('Parisik', 'user-1', { enabled }),
+            { initialProps: { enabled: false }, wrapper: wrapper(queryClient) },
+        );
+        await act(async () => {});
+        act(() => result.current.refetch());
+        expect(mockCallEdgeFn).not.toHaveBeenCalled();
+
+        rerender({ enabled: true });
+        await waitFor(() => expect(mockCallEdgeFn).toHaveBeenCalledTimes(2));
+        expect(mockCallEdgeFn.mock.calls.map(([name]) => name).sort()).toEqual([
+            'places-search',
+            'restaurant-history',
+        ]);
+    });
+
+    it('a caller that omits enabled behaves as before', async () => {
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        renderHook(() => useRestaurantSearch('Parisik', 'user-1'), {
+            wrapper: wrapper(queryClient),
+        });
+        await waitFor(() => expect(mockCallEdgeFn).toHaveBeenCalledTimes(2));
+    });
     it('waits through granted-with-coordinates-pending and sends one biased Places query', async () => {
         let resolvePosition!: (value: {
             coords: { latitude: number; longitude: number };

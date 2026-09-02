@@ -244,7 +244,7 @@ export function WishlistByCity({ userId }: WishlistByCityProps) {
     }
 
     if (items.length === 0) {
-        return <WishlistEmpty palette={palette} onPin={() => router.push('/(tabs)/search')} />;
+        return <WishlistEmpty palette={palette} onPin={() => router.push('/(tabs)/places')} />;
     }
 
     const handlePosterPress = (item: PersonalWishlistItem) => {

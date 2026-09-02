@@ -10,6 +10,7 @@
  * `ScopedListMap` each own their own MapView, refs, and lifecycle.
  */
 import { haversineMiles, type LatLng as GeoLatLng } from '@/lib/geo';
+import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
 
 export type { GeoLatLng };
 
@@ -96,6 +97,8 @@ export interface WishlistMapItem {
         participants: { user_id: string; display_name: string; avatar_url: string | null }[];
         suppersCount: number;
     } | null;
+    /** Search ghosts keep their full sanitized Places payload on the pin. */
+    searchRow?: SearchResultRow;
 }
 
 /** Lazy-location lifecycle (mirrors `useNearbyLocation`). */
