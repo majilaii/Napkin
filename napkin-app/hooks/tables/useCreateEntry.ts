@@ -55,6 +55,8 @@ import type { InfiniteData } from '@tanstack/react-query';
 import { invalidateEntryTasteCaches } from '@/hooks/entries/invalidateEntryTaste';
 
 export interface CreateEntryInput {
+    /** Persisted restaurant id. Ghost logs send `restaurant` and receive this id back. */
+    restaurant_id?: string;
     restaurant?: {
         external_id: string;
         name: string;
@@ -514,7 +516,9 @@ export function useCreateEntry(
 
             // Profile stats, Spots, and the earned Taste emblem are all
             // server/spot-derived and cannot be patched from this response.
-            invalidateEntryTasteCaches(qc, userId);
+            invalidateEntryTasteCaches(qc, userId, {
+                restaurantId: result?.restaurant_id ?? _input.restaurant_id ?? null,
+            });
         },
     });
 }

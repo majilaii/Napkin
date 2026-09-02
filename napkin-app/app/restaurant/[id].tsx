@@ -47,6 +47,7 @@ import {
     FeaturedListsSection,
     FriendsNotesSection,
     FriendsSpread,
+    MemoriesStrip,
     OnSocialsRail,
     RestaurantActions,
     RestaurantDetails,
@@ -402,6 +403,12 @@ export default function RestaurantScreen() {
                             topInset={insets.top}
                             palette={palette}
                         />
+                        {!isGhost && persistedRestaurantId && page.data ? (
+                            <MemoriesStrip
+                                restaurantId={persistedRestaurantId}
+                                payload={page.data}
+                            />
+                        ) : null}
                         <RestaurantNumbersBand
                             you={numberTiers.you}
                             friends={numberTiers.friends}
