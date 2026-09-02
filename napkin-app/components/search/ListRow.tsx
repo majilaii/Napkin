@@ -2,26 +2,31 @@
  * ListRow — compact typographic list row for search surfaces (TICKET-097).
  *
  * Lists are typographic per design doctrine: NO thumbnails. Title in
- * Newsreader italic (content voice), `<n> spots` meta in Manrope. Metrics
+ * upright Newsreader, `<n> spots` meta in Manrope. Metrics
  * match SearchResultRow (padding, type sizes) so it sits in the same ledger.
  */
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MyList } from '@/hooks/lists/useMyLists';
 
+export type ListRowList = Pick<MyList, 'id' | 'title' | 'emoji' | 'entry_count'>
+    & Partial<Pick<MyList, 'privacy'>>;
+
 interface Props {
-    list: MyList;
-    onPress: (list: MyList) => void;
+    list: ListRowList;
+    meta?: string;
+    onPress: (list: ListRowList) => void;
 }
 
-export function ListRow({ list, onPress }: Props) {
+export function ListRow({ list, meta: metaOverride, onPress }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
-    const meta = `${list.entry_count} ${list.entry_count === 1 ? 'spot' : 'spots'}`;
+    const meta = metaOverride
+        ?? `${list.entry_count} ${list.entry_count === 1 ? 'spot' : 'spots'}`;
 
     return (
         <Pressable
@@ -35,6 +40,7 @@ export function ListRow({ list, onPress }: Props) {
         >
             <View style={styles.textBlock}>
                 <View style={styles.titleRow}>
+                    {list.emoji ? <Text style={styles.emoji}>{list.emoji}</Text> : null}
                     <Text
                         style={[styles.title, { color: palette.text }]}
                         numberOfLines={1}
@@ -70,19 +76,19 @@ const styles = StyleSheet.create({
         minWidth: 0,
         gap: 2,
     },
+    emoji: {
+        ...Type.feedNoteRestaurant,
+    },
     titleRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.xs,
     },
     title: {
+        ...Type.feedNoteRestaurant,
         flexShrink: 1,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 17,
-        lineHeight: 22,
     },
     meta: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
+        ...Type.metadata,
     },
 });

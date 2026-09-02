@@ -1,11 +1,13 @@
 import type { PersonalWishlistItem } from '@/hooks/wishlist/useMyWishlist';
 import type { SpotSummary } from '@/hooks/users/useUserSpots';
+import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
 import type { SearchLocality } from '@/hooks/search/searchLocalityStore';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
 import type { WishlistMapItem } from '@/components/wishlist/mapShared';
 import type { SearchMode } from '@/components/search/searchModeTabsGate';
 import type { PlacesLayerFilter } from '@/hooks/search/placesScreenState';
 import { formatDistance, haversineMiles, type LatLng } from '@/lib/geo';
+import { FULL, PEEK, type Snap } from '@/components/sheets/snapSheetMath';
 
 export type PlacesRating = NonNullable<SearchResultRow['rating']>;
 
@@ -22,6 +24,13 @@ export interface PlacesDisplayRow {
     friendsBeenCount: number;
     searchRow?: SearchResultRow;
     been?: boolean;
+    network?: {
+        author: NetworkMapItem['author'];
+        entryId: string;
+        hasReview: boolean;
+        rating: number | null;
+        note: string | null;
+    };
 }
 
 export interface DecoratedPlacesRow {
@@ -35,7 +44,7 @@ export interface PlacesRatingPresentation {
     tone: 'amber' | 'muted' | 'faint';
 }
 
-export type PlacesSource = 'places' | 'persisted' | 'wishlist' | 'spots';
+export type PlacesSource = 'places' | 'persisted' | 'wishlist' | 'spots' | 'network';
 export type PlacesFailurePresentation = {
     kind: 'none' | 'broken' | 'inline';
     sources: PlacesSource[];
@@ -54,24 +63,23 @@ export function resolvePlacesFailurePresentation(args: {
     persistedFailed: boolean;
     wishlistFailed: boolean;
     spotsFailed: boolean;
+    networkFailed: boolean;
 }): PlacesFailurePresentation {
     const sources: PlacesSource[] = args.queryActive
         ? [
             ...(args.placesFailed ? ['places' as const] : []),
             ...(args.persistedFailed ? ['persisted' as const] : []),
         ]
-        : [
-            ...(
-                args.layerFilter !== 'been' && args.wishlistFailed
-                    ? ['wishlist' as const]
-                    : []
-            ),
-            ...(
-                args.layerFilter !== 'pinned' && args.spotsFailed
-                    ? ['spots' as const]
-                    : []
-            ),
-        ];
+        : args.layerFilter === 'friends'
+          ? (args.networkFailed ? ['network' as const] : [])
+          : [
+              ...(args.layerFilter !== 'been' && args.wishlistFailed
+                  ? ['wishlist' as const]
+                  : []),
+              ...(args.layerFilter !== 'pinned' && args.spotsFailed
+                  ? ['spots' as const]
+                  : []),
+          ];
     if (sources.length === 0) return { kind: 'none', sources };
     return { kind: args.hasCachedRows ? 'inline' : 'broken', sources };
 }
@@ -161,6 +169,30 @@ export function spotRowsToDisplayRows(rows: readonly SpotSummary[]): PlacesDispl
     }));
 }
 
+export function networkRowsToDisplayRows(
+    rows: readonly NetworkMapItem[],
+): PlacesDisplayRow[] {
+    return rows.map((pin) => ({
+        id: pin.restaurant_id,
+        name: pin.name,
+        city: pin.city,
+        cuisine: pin.cuisine,
+        lat: pin.lat,
+        lng: pin.lng,
+        priceLevel: null,
+        rating: null,
+        isPinned: false,
+        friendsBeenCount: 1 + pin.others_count,
+        network: {
+            author: pin.author,
+            entryId: pin.entry_id,
+            hasReview: pin.has_review,
+            rating: pin.rating,
+            note: pin.note,
+        },
+    }));
+}
+
 /** Pinned order leads the union; a duplicate inherits the richer been signal. */
 export function mergePlacesLayerRows(
     pinnedRows: readonly PlacesDisplayRow[],
@@ -190,9 +222,11 @@ export function filterPlacesLayerRows(
     layerFilter: PlacesLayerFilter,
     pinnedRows: readonly PlacesDisplayRow[],
     beenRows: readonly PlacesDisplayRow[],
+    friendsRows: readonly PlacesDisplayRow[] = [],
 ): PlacesDisplayRow[] {
     if (layerFilter === 'pinned') return [...pinnedRows];
     if (layerFilter === 'been') return [...beenRows];
+    if (layerFilter === 'friends') return [...friendsRows];
     return mergePlacesLayerRows(pinnedRows, beenRows);
 }
 
@@ -240,6 +274,32 @@ export function placesSearchBranch(query: string): PlacesSearchBranch {
     return length < 2 ? 'minimum' : 'results';
 }
 
+export type PlacesListsBranch = 'loading' | 'error' | 'empty' | 'rows';
+
+export function resolvePlacesListsBranch(args: {
+    myCount: number;
+    savedCount: number;
+    myLoading: boolean;
+    savedLoading: boolean;
+    myError: boolean;
+    savedError: boolean;
+}): PlacesListsBranch {
+    const hasRows = args.myCount + args.savedCount > 0;
+    if (!hasRows && (args.myLoading || args.savedLoading)) return 'loading';
+    if (args.myError && !hasRows) return 'error';
+    if (args.savedError || hasRows) return 'rows';
+    return 'empty';
+}
+
+export function placesListsContentBranch(
+    query: string,
+    shelfBranch: PlacesListsBranch,
+): PlacesListsBranch | 'minimum' | 'results' {
+    const length = query.trim().length;
+    if (length === 0) return shelfBranch;
+    return length === 1 ? 'minimum' : 'results';
+}
+
 export function composePlacesContentKey(args: {
     searchMode: boolean;
     segment: SearchMode;
@@ -264,9 +324,44 @@ export function composeRowMeta(
     return parts.join(' · ');
 }
 
+export function composeFriendCaptionMeta(row: PlacesDisplayRow): string {
+    if (!row.network) return '';
+    const headcount = `${row.friendsBeenCount} ${row.friendsBeenCount === 1 ? 'friend' : 'friends'} been`;
+    return `${row.network.author.name} · ${headcount}`;
+}
+
+export function placesViewToggle(snap: Snap): {
+    label: 'list' | 'map';
+    icon: 'list-outline' | 'map-outline';
+    target: Snap;
+} {
+    return snap === FULL
+        ? { label: 'map', icon: 'map-outline', target: PEEK }
+        : { label: 'list', icon: 'list-outline', target: FULL };
+}
+
+export function placesCountLabel(count: number, hasMore: boolean): string {
+    return `${count}${hasMore ? '+' : ''} ${count === 1 && !hasMore ? 'place' : 'places'}`;
+}
+
+export function shouldFetchNextPlacesPage(args: {
+    searchMode: boolean;
+    activeSegment: SearchMode;
+    layerFilter: PlacesLayerFilter;
+    hasNextPage: boolean;
+    isFetchingNextPage: boolean;
+}): boolean {
+    return !args.searchMode
+        && args.activeSegment === 'places'
+        && (args.layerFilter === 'all' || args.layerFilter === 'pinned')
+        && args.hasNextPage
+        && !args.isFetchingNextPage;
+}
+
 export function projectPlacesPins(rows: readonly PlacesDisplayRow[]): WishlistMapItem[] {
     return rows.flatMap((row) => {
         if (row.lat == null || row.lng == null) return [];
+        const network = row.network;
         return [{
             id: row.id,
             name: row.name,
@@ -278,6 +373,14 @@ export function projectPlacesPins(rows: readonly PlacesDisplayRow[]): WishlistMa
             myRating: row.rating?.tier === 'you' ? row.rating.value : null,
             been: row.been,
             searchRow: row.searchRow,
+            ...(network ? {
+                author: network.author,
+                entryId: network.entryId,
+                hasReview: network.hasReview,
+                rating: network.rating,
+                note: network.note,
+                othersCount: Math.max(0, row.friendsBeenCount - 1),
+            } : {}),
         }];
     });
 }

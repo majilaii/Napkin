@@ -52,12 +52,15 @@ async function fetchNetworkMapPins(): Promise<NetworkMapItem[]> {
     return (data?.pins ?? []) as NetworkMapItem[];
 }
 
-export function useNetworkMapPins(userId: string | null | undefined) {
+export function useNetworkMapPins(
+    userId: string | null | undefined,
+    options: { enabled?: boolean } = {},
+) {
     return useQuery<NetworkMapItem[], Error>({
         // Keyed by the caller's own id (the endpoint is caller-scoped).
         queryKey: queryKeys.users.networkMapPins(userId ?? ''),
         queryFn: fetchNetworkMapPins,
-        enabled: !!userId,
+        enabled: !!userId && (options.enabled ?? true),
         staleTime: 1000 * 60 * 5,
     });
 }

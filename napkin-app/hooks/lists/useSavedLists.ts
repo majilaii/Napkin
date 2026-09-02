@@ -37,11 +37,14 @@ async function fetchSavedLists(): Promise<SavedList[]> {
     return data ?? [];
 }
 
-export function useSavedLists(userId: string | null | undefined) {
+export function useSavedLists(
+    userId: string | null | undefined,
+    options: { enabled?: boolean } = {},
+) {
     return useQuery<SavedList[], Error>({
         queryKey: queryKeys.lists.saved(userId ?? ''),
         queryFn: fetchSavedLists,
-        enabled: !!userId,
+        enabled: !!userId && (options.enabled ?? true),
         staleTime: 1000 * 60 * 5,
     });
 }

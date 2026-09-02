@@ -107,7 +107,6 @@
     "napkin-app/components/restaurants/VoiceCard.tsx": [0, 0, 0, 1],
     "napkin-app/components/restaurants/VoicesStream.tsx": [0, 0, 6, 4],
     "napkin-app/components/restaurants/YourLastKicker.tsx": [0, 0, 2, 0],
-    "napkin-app/components/search/ListRow.tsx": [0, 0, 1, 0],
     "napkin-app/components/search/ListsSearchPane.tsx": [0, 0, 1, 0],
     "napkin-app/components/search/PeopleResultRow.tsx": [0, 0, 1, 0],
     "napkin-app/components/search/SearchResultRow.tsx": [0, 0, 1, 0],
