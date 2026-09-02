@@ -51,6 +51,8 @@ interface SnapSheetProps {
     onPanStart?: () => void;
     renderHeader?: () => React.ReactNode;
     renderContent: (context: SnapSheetContentContext) => React.ReactNode;
+    /** Identity of the mounted scroll surface; changing it resets native-list handoff state. */
+    contentKey?: string;
     backgroundColor?: string;
     handleColor?: string;
     metrics?: SnapMetrics;
@@ -72,6 +74,7 @@ export function SnapSheet({
     onPanStart,
     renderHeader,
     renderContent,
+    contentKey,
     backgroundColor = Colors.light.surfaceNote,
     handleColor = Colors.light.ruleWarmNib,
     metrics,
@@ -132,6 +135,19 @@ export function SnapSheet({
         runOnUI(settle)(locked ? lockedSnap : unlockedSnap);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [locked, H, lockedSnap, unlockedSnap]);
+
+    const previousContentKey = useRef(contentKey);
+    useEffect(() => {
+        if (contentKey === undefined || previousContentKey.current === contentKey) return;
+        previousContentKey.current = contentKey;
+        runOnUI(() => {
+            'worklet';
+            scrollOffset.value = 0;
+            listBeganTop.value = true;
+        })();
+        // Shared values are stable Reanimated handles.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [contentKey]);
 
     useImperativeHandle(sheetRef, () => ({
         snapTo: (snap) => runOnUI(settle)(locked ? lockedSnap : snap),

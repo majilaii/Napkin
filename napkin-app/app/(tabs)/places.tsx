@@ -407,6 +407,20 @@ export default function PlacesScreen() {
         () => decorateAndSortRows(filteredRows, distanceOrigin),
         [distanceOrigin, filteredRows],
     );
+    const placesContentBranch = isLoading && decoratedRows.length === 0 && queryActive
+        ? 'search-loading'
+        : layerLoading && sourceRows.length === 0 && !queryActive
+          ? 'layer-loading'
+          : failurePresentation.kind === 'broken'
+            ? 'broken'
+            : queryActive
+              ? 'results'
+              : 'guidance';
+    const sheetContentKey = activeSegment === 'lists'
+        ? `lists:${immediateQuery.trim().length < 2 ? 'guidance' : 'results'}`
+        : activeSegment === 'people'
+          ? `people:${immediateQuery.trim().length === 0 ? 'guidance' : 'results'}`
+          : `places:${placesContentBranch}`;
     const currentPins = useMemo(() => projectPlacesPins(filteredRows), [filteredRows]);
     const currentScopeKey = queryActive
         ? `search:${locality === 'auto' ? 'auto' : locality.city.trim().toLowerCase()}:${debouncedQuery.trim().toLowerCase()}`
@@ -729,6 +743,7 @@ export default function PlacesScreen() {
                 backgroundColor={palette.surfaceNote}
                 handleColor={palette.ruleWarmNib}
                 metrics={PLACES_SNAP_METRICS}
+                contentKey={sheetContentKey}
                 onPanStart={Keyboard.dismiss}
                 onSettle={(sheetSnap, settledHeight) => {
                     setBottomInset(settledHeight);
