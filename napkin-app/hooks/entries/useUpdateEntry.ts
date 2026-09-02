@@ -18,7 +18,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
-import { invalidateEntryTasteCaches } from './invalidateEntryTaste';
+import {
+    invalidateEntryTasteCaches,
+    invalidateRestaurantEntryCaches,
+} from './invalidateEntryTaste';
 
 export interface UpdateEntryInput {
     rating?: number | null;
@@ -42,7 +45,11 @@ export interface UpdateEntryInput {
     optimisticCompanions?: { user_id: string; display_name: string }[];
 }
 
-export function useUpdateEntry(entryId: string) {
+export function useUpdateEntry(
+    entryId: string,
+    restaurantId?: string | null,
+    userId?: string | null,
+) {
     const qc = useQueryClient();
 
     return useMutation({
@@ -165,7 +172,23 @@ export function useUpdateEntry(entryId: string) {
                 optimisticCompanions: _ignoredPreviews,
                 ...scalarPatch
             } = input;
-            if (Object.keys(scalarPatch).length === 0) return;
+            const { photo_url: _ignoredPhoto, ...tasteScalarPatch } = scalarPatch;
+
+            // Entry detail knows the owner and restaurant even when a writer
+            // response is intentionally narrow (companions / hero photo).
+            const resultRow = data as {
+                user_id?: string;
+                restaurant_id?: string | null;
+            } | null;
+            const ownerId = resultRow?.user_id ?? userId;
+            const resolvedRestaurantId = resultRow?.restaurant_id ?? restaurantId ?? null;
+
+            if (Object.keys(scalarPatch).length === 0) {
+                if (ownerId) {
+                    invalidateRestaurantEntryCaches(qc, ownerId, resolvedRestaurantId);
+                }
+                return;
+            }
 
             const patchEntry = (e: any) => (e?.id === entryId ? { ...e, ...scalarPatch } : e);
 
@@ -198,14 +221,17 @@ export function useUpdateEntry(entryId: string) {
                 console.warn('[useUpdateEntry] list-cache reconcile skipped:', reconcileErr?.message);
             }
 
-            // TICKET-165: profile stats (rating histogram, dimension means,
-            // averages, counts) are server-derived from entries — refetch when a
-            // scalar edit lands. The scalar PATCH returns the row, so user_id is
-            // in hand; a companions-only edit never reaches here (early return
-            // above) and doesn't touch stats anyway.
-            const ownerId = (data as { user_id?: string } | null)?.user_id;
+            if (Object.keys(tasteScalarPatch).length === 0) {
+                if (ownerId) {
+                    invalidateRestaurantEntryCaches(qc, ownerId, resolvedRestaurantId);
+                }
+                return;
+            }
+
             if (ownerId) {
-                invalidateEntryTasteCaches(qc, ownerId);
+                invalidateEntryTasteCaches(qc, ownerId, {
+                    restaurantId: resolvedRestaurantId,
+                });
             }
 
             // mySolo cache still isn't reconciled here (uses the entry's user_id

@@ -22,6 +22,12 @@ export { OnSocialsRail } from './OnSocialsRail';
 export { ClippingCard, type ClippingCardData } from './ClippingCard';
 export { YourHistoryDoorway, shouldShowHistoryDoorway } from './YourHistoryDoorway';
 export { RestaurantRegularRow } from './RestaurantRegularRow';
+export { MemoriesStrip, buildMemoryTiles, type MemoryTile } from './MemoriesStrip';
+export {
+    formatHistoryDate,
+    RestaurantHistoryMasthead,
+    RestaurantHistoryRow,
+} from './RestaurantHistoryRows';
 export {
     RestaurantTop,
     RestaurantNumbersBand,

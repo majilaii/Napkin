@@ -269,10 +269,10 @@ export const Spacing = {
     spreadFooterTop: 6,
     spreadBarRadius: 3,
     listChipHorizontal: 12,
-    ledgerGap: 10,
     ledgerEmptyTop: 100,
     ledgerEmptyGutter: 40,
-    ledgerPhotoSize: 64,
+    historyRowVertical: 14,
+    memoryPhotoSize: 96,
   },
   /** Shared sheet chrome; detent geometry remains component-owned. */
   sheet: {
@@ -286,6 +286,7 @@ export const Spacing = {
 export const Radius = {
   sm: 4,     // scrapbook clips, chips
   compact: 8, // compact feed media + thumbnails
+  memory: 10, // restaurant memories and visit-ledger photography
   md: 12,
   lg: 16,    // text cards, notes
   xl: 24,
@@ -647,6 +648,26 @@ export const Type = {
     fontWeight: '700' as const,
     fontFamily: 'Manrope_700Bold',
     lineHeight: 19,
+  } as TextStyle,
+  restaurantHistoryVisits: {
+    fontSize: 16,
+    fontWeight: '500' as const,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 21,
+  } as TextStyle,
+  restaurantHistoryDateline: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.8,
+    lineHeight: 15,
+    textTransform: 'uppercase' as const,
+  } as TextStyle,
+  restaurantHistoryNote: {
+    fontSize: 16,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular',
+    lineHeight: 22,
   } as TextStyle,
 
   // Titles — Manrope for functional

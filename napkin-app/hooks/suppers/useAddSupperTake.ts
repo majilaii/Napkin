@@ -90,6 +90,7 @@ async function addSupperTake(input: AddSupperTakeInput): Promise<ServerTakeRow> 
 interface MutationContext {
     previous?: SupperDetail;
     nonce: string;
+    restaurantId: string | null;
 }
 
 export function useAddSupperTake() {
@@ -143,7 +144,11 @@ export function useAddSupperTake() {
                 qc.setQueryData<SupperDetail>(key, { ...previous, takes: nextTakes });
             }
 
-            return { previous, nonce };
+            return {
+                previous,
+                nonce,
+                restaurantId: previous?.supper.restaurant_id ?? null,
+            };
         },
 
         onError: (_err, input, ctx) => {
@@ -152,12 +157,16 @@ export function useAddSupperTake() {
             }
         },
 
-        onSuccess: (data) => {
+        onSuccess: (data, _input, context) => {
             // A Supper take is an entries row owned by the caller. Refresh every
             // profile/Taste aggregate that derives from it, using the canonical
             // owner returned by the server when available.
             const ownerId = data.user_id ?? viewerId;
-            if (ownerId) invalidateEntryTasteCaches(qc, ownerId);
+            if (ownerId) {
+                invalidateEntryTasteCaches(qc, ownerId, {
+                    restaurantId: data.restaurant_id ?? context?.restaurantId ?? null,
+                });
+            }
         },
 
         onSettled: (_data, _err, input) => {

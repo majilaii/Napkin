@@ -642,6 +642,9 @@ const TYPE_FLOORS = {
     restaurantListTitle: 15,
     restaurantDetail: 15,
     restaurantDetailAction: 13,
+    restaurantHistoryVisits: 16,
+    restaurantHistoryDateline: 11,
+    restaurantHistoryNote: 16,
 };
 const ALLOWED_ITALIC_TYPE_TOKENS = new Set([
     'headlineItalic', // Legacy: app-wide per-file debt prevents new callers.
