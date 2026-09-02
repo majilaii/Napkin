@@ -440,7 +440,9 @@ export default function PlacesScreen() {
         [allLayerRows, distanceOrigin],
     );
     const searchGuidanceBranch = placesSearchBranch(immediateQuery);
-    const guidanceSearchMode = searchMode && searchGuidanceBranch !== 'results';
+    // Unfreeze on the DEBOUNCED branch: flipping lock/scrim/projection on the
+    // immediate keystroke stalls the JS thread mid-burst and drops characters.
+    const guidanceSearchMode = searchMode && placesSearchBranch(debouncedQuery) !== 'results';
     const placesContentBranch = searchMode && searchGuidanceBranch !== 'results'
         ? searchGuidanceBranch
         : isLoading && decoratedRows.length === 0 && queryActive
