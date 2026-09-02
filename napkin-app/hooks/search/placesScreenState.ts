@@ -8,8 +8,12 @@ export interface PlacesScreenSnapshot {
     selectedPinId: string | null;
     scrollOffset: number;
     activeSegment: SearchMode;
+    layerFilter: PlacesLayerFilter;
     previousNonPeopleSnap: Snap | null;
+    previousNonSearchSnap: Snap | null;
 }
+
+export type PlacesLayerFilter = 'all' | 'pinned' | 'been';
 
 const INITIAL_STATE: PlacesScreenSnapshot = Object.freeze({
     query: '',
@@ -17,12 +21,46 @@ const INITIAL_STATE: PlacesScreenSnapshot = Object.freeze({
     selectedPinId: null,
     scrollOffset: 0,
     activeSegment: 'places',
+    layerFilter: 'all',
     previousNonPeopleSnap: null,
+    previousNonSearchSnap: null,
 });
 
 let activeUserId: string | null = null;
 let snapshot: PlacesScreenSnapshot = INITIAL_STATE;
 const listeners = new Set<() => void>();
+
+export function togglePlacesLayerFilter(
+    current: PlacesLayerFilter,
+    requested: Exclude<PlacesLayerFilter, 'all'>,
+): PlacesLayerFilter {
+    return current === requested ? 'all' : requested;
+}
+
+/** Search owns full height and remembers the last browse detent exactly once. */
+export function enterPlacesSearch(current: PlacesScreenSnapshot): PlacesScreenSnapshot {
+    if (current.previousNonSearchSnap !== null) return current;
+    return {
+        ...current,
+        sheetSnap: FULL,
+        previousNonSearchSnap: current.sheetSnap,
+    };
+}
+
+/** Leaving search returns to Places browse with the prior detent and layer intact. */
+export function leavePlacesSearch(current: PlacesScreenSnapshot): PlacesScreenSnapshot {
+    if (current.previousNonSearchSnap === null) return current;
+    return {
+        ...current,
+        query: '',
+        sheetSnap: current.previousNonSearchSnap,
+        selectedPinId: null,
+        scrollOffset: 0,
+        activeSegment: 'places',
+        previousNonPeopleSnap: null,
+        previousNonSearchSnap: null,
+    };
+}
 
 /** Pure segment transition: People owns full height, then restores the prior detent. */
 export function transitionPlacesSegment(

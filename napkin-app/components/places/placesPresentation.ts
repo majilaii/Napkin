@@ -4,6 +4,7 @@ import type { SearchLocality } from '@/hooks/search/searchLocalityStore';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
 import type { WishlistMapItem } from '@/components/wishlist/mapShared';
 import type { SearchMode } from '@/components/search/searchModeTabsGate';
+import type { PlacesLayerFilter } from '@/hooks/search/placesScreenState';
 import { formatDistance, haversineMiles, type LatLng } from '@/lib/geo';
 
 export type PlacesRating = NonNullable<SearchResultRow['rating']>;
@@ -47,7 +48,7 @@ export type PlacesFailurePresentation = {
  */
 export function resolvePlacesFailurePresentation(args: {
     queryActive: boolean;
-    activeLayer: 'pinned' | 'been';
+    layerFilter: PlacesLayerFilter;
     hasCachedRows: boolean;
     placesFailed: boolean;
     persistedFailed: boolean;
@@ -59,9 +60,18 @@ export function resolvePlacesFailurePresentation(args: {
             ...(args.placesFailed ? ['places' as const] : []),
             ...(args.persistedFailed ? ['persisted' as const] : []),
         ]
-        : args.activeLayer === 'pinned'
-            ? (args.wishlistFailed ? ['wishlist'] : [])
-            : (args.spotsFailed ? ['spots'] : []);
+        : [
+            ...(
+                args.layerFilter !== 'been' && args.wishlistFailed
+                    ? ['wishlist' as const]
+                    : []
+            ),
+            ...(
+                args.layerFilter !== 'pinned' && args.spotsFailed
+                    ? ['spots' as const]
+                    : []
+            ),
+        ];
     if (sources.length === 0) return { kind: 'none', sources };
     return { kind: args.hasCachedRows ? 'inline' : 'broken', sources };
 }
@@ -70,8 +80,9 @@ export function resolvePlacesProjection<T>(
     activeSegment: SearchMode,
     current: T,
     frozen: T,
+    searchMode = false,
 ): { rendered: T; nextFrozen: T } {
-    return activeSegment === 'places'
+    return activeSegment === 'places' && !searchMode
         ? { rendered: current, nextFrozen: current }
         : { rendered: frozen, nextFrozen: frozen };
 }
@@ -150,6 +161,41 @@ export function spotRowsToDisplayRows(rows: readonly SpotSummary[]): PlacesDispl
     }));
 }
 
+/** Pinned order leads the union; a duplicate inherits the richer been signal. */
+export function mergePlacesLayerRows(
+    pinnedRows: readonly PlacesDisplayRow[],
+    beenRows: readonly PlacesDisplayRow[],
+): PlacesDisplayRow[] {
+    const merged = new Map<string, PlacesDisplayRow>();
+    for (const row of pinnedRows) merged.set(row.id, row);
+    for (const row of beenRows) {
+        const pinned = merged.get(row.id);
+        merged.set(row.id, pinned ? {
+            ...pinned,
+            ...row,
+            city: row.city ?? pinned.city,
+            cuisine: row.cuisine ?? pinned.cuisine,
+            lat: row.lat ?? pinned.lat,
+            lng: row.lng ?? pinned.lng,
+            priceLevel: row.priceLevel ?? pinned.priceLevel,
+            rating: row.rating ?? pinned.rating,
+            isPinned: pinned.isPinned || row.isPinned,
+            been: true,
+        } : row);
+    }
+    return [...merged.values()];
+}
+
+export function filterPlacesLayerRows(
+    layerFilter: PlacesLayerFilter,
+    pinnedRows: readonly PlacesDisplayRow[],
+    beenRows: readonly PlacesDisplayRow[],
+): PlacesDisplayRow[] {
+    if (layerFilter === 'pinned') return [...pinnedRows];
+    if (layerFilter === 'been') return [...beenRows];
+    return mergePlacesLayerRows(pinnedRows, beenRows);
+}
+
 export function decorateAndSortRows(
     rows: readonly PlacesDisplayRow[],
     distanceOrigin: LatLng | null,
@@ -171,6 +217,37 @@ export function decorateAndSortRows(
         ));
     }
     return decorated.map(({ row, distanceLabel }) => ({ row, distanceLabel }));
+}
+
+/** Focused-search guidance exists only for a real, auto-locality origin. */
+export function selectNearbyPlaces(
+    rows: readonly PlacesDisplayRow[],
+    distanceOrigin: LatLng | null,
+    limit = 6,
+): DecoratedPlacesRow[] {
+    if (!distanceOrigin) return [];
+    return decorateAndSortRows(
+        rows.filter((row) => row.lat != null && row.lng != null),
+        distanceOrigin,
+    ).slice(0, limit);
+}
+
+export type PlacesSearchBranch = 'sections' | 'minimum' | 'results';
+
+export function placesSearchBranch(query: string): PlacesSearchBranch {
+    const length = query.trim().length;
+    if (length === 0) return 'sections';
+    return length < 2 ? 'minimum' : 'results';
+}
+
+export function composePlacesContentKey(args: {
+    searchMode: boolean;
+    segment: SearchMode;
+    branch: string;
+    query: string;
+}): string {
+    const prefix = args.searchMode ? 'search' : 'browse';
+    return `${prefix}:${args.segment}:${args.branch}:${args.query.trim().toLowerCase()}`;
 }
 
 export function composeRowMeta(
