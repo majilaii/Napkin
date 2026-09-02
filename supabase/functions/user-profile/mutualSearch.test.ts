@@ -20,6 +20,7 @@ function fakeSearchClient(rowsByTable: Record<string, Row[]>) {
                         let inValues: string[] = [];
                         let excludedUserId: string | null = null;
                         const notInValues = new Set<string>();
+                        const orders: Array<{ column: string; ascending: boolean }> = [];
                         const resolveRows = (limit?: number) => {
                             const rows = (rowsByTable[table] ?? [])
                                 .filter((row) => !excludedUserId || row.user_id !== excludedUserId)
@@ -27,7 +28,17 @@ function fakeSearchClient(rowsByTable: Record<string, Row[]>) {
                                 .filter((row) => !notInValues.has(String(row.user_id)))
                                 .filter((row) =>
                                     String(row.display_name).toLocaleLowerCase().includes(pattern)
-                                );
+                                )
+                                .sort((a, b) => {
+                                    for (const order of orders) {
+                                        const comparison = String(a[order.column] ?? '')
+                                            .localeCompare(String(b[order.column] ?? ''));
+                                        if (comparison !== 0) {
+                                            return order.ascending ? comparison : -comparison;
+                                        }
+                                    }
+                                    return 0;
+                                });
                             return {
                                 data: limit === undefined ? rows : rows.slice(0, limit),
                                 error: null,
@@ -61,17 +72,18 @@ function fakeSearchClient(rowsByTable: Record<string, Row[]>) {
                                 });
                                 return builder;
                             },
-                            order(_column: string, _options: { ascending: boolean }) {
-                                return Promise.resolve({
-                                    ...resolveRows(),
-                                    data: resolveRows().data
-                                        .sort((a, b) =>
-                                            String(a.display_name).localeCompare(String(b.display_name))
-                                        ),
-                                });
+                            order(column: string, options: { ascending: boolean }) {
+                                orders.push({ column, ascending: options.ascending });
+                                return builder;
                             },
                             limit(value: number) {
                                 return Promise.resolve(resolveRows(value));
+                            },
+                            then<TResult1 = ReturnType<typeof resolveRows>, TResult2 = never>(
+                                onfulfilled?: ((value: ReturnType<typeof resolveRows>) => TResult1 | PromiseLike<TResult1>) | null,
+                                onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+                            ) {
+                                return Promise.resolve(resolveRows()).then(onfulfilled, onrejected);
                             },
                         };
                         return builder;
@@ -82,11 +94,11 @@ function fakeSearchClient(rowsByTable: Record<string, Row[]>) {
     };
 }
 
-Deno.test('mutual-only search returns the mutual first and backfills flagged strangers', async () => {
+Deno.test('mutual-only search prioritizes followed non-mutuals before stranger backfill', async () => {
     const viewerId = 'viewer';
     const mutualId = 'mutual-last';
     const profiles = [
-        ...Array.from({ length: 24 }, (_, index) => ({
+        ...Array.from({ length: 30 }, (_, index) => ({
             user_id: `stranger-${index}`,
             display_name: `Match ${String(index).padStart(2, '0')}`,
             avatar_url: null,
@@ -98,12 +110,18 @@ Deno.test('mutual-only search returns the mutual first and backfills flagged str
             avatar_url: 'mutual.jpg',
             created_at: '2026-01-01T00:00:00Z',
         },
+        {
+            user_id: 'followed-last',
+            display_name: 'Match ZZZ Followed',
+            avatar_url: null,
+            created_at: '2026-01-01T00:00:00Z',
+        },
     ];
     const fake = fakeSearchClient({
         follows: [
             { follower_id: viewerId, following_id: mutualId },
             { follower_id: mutualId, following_id: viewerId },
-            { follower_id: viewerId, following_id: 'stranger-0' },
+            { follower_id: viewerId, following_id: 'followed-last' },
             { follower_id: 'stranger-1', following_id: viewerId },
         ],
         profiles,
@@ -120,15 +138,15 @@ Deno.test('mutual-only search returns the mutual first and backfills flagged str
         follows_caller: true,
         is_mutual: true,
     });
-    assertEquals(result.slice(1).every((row) => !row.is_mutual), true);
-    assertEquals(result.find((row) => row.user_id === 'stranger-0'), {
-        user_id: 'stranger-0',
-        display_name: 'Match 00',
+    assertEquals(result[1], {
+        user_id: 'followed-last',
+        display_name: 'Match ZZZ Followed',
         avatar_url: null,
         is_following: true,
         follows_caller: false,
         is_mutual: false,
     });
+    assertEquals(result.slice(2).every((row) => !row.is_mutual && !row.is_following), true);
     assertEquals(result.find((row) => row.user_id === 'stranger-1'), {
         user_id: 'stranger-1',
         display_name: 'Match 01',
@@ -138,5 +156,5 @@ Deno.test('mutual-only search returns the mutual first and backfills flagged str
         is_mutual: false,
     });
     assertEquals(fake.followReads, 2);
-    assertEquals(fake.profileInValues, [[mutualId]]);
+    assertEquals(fake.profileInValues, [[mutualId], ['followed-last']]);
 });

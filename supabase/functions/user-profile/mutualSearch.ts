@@ -87,20 +87,15 @@ async function searchMutualProfileRows(
         );
 }
 
-/** Return every mutual name match; the caller's result limit never truncates this set. */
-export async function searchMutualProfiles(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    supabase: any,
-    viewerId: string,
-    pattern: string,
-): Promise<MutualSearchProfile[]> {
-    const { mutualIds } = await fetchFollowGraph(supabase, viewerId);
-    return searchMutualProfileRows(supabase, pattern, mutualIds);
+function compareBackfillRows(a: MutualSearchProfile, b: MutualSearchProfile): number {
+    if (a.created_at > b.created_at) return -1;
+    if (a.created_at < b.created_at) return 1;
+    return a.display_name.localeCompare(b.display_name) || a.user_id.localeCompare(b.user_id);
 }
 
 /**
  * Mutual-only search contract shared by companion and table pickers: all mutual
- * matches first, then enough explain-why non-mutual rows to fill maxResults.
+ * matches first, then followed non-mutuals, then strangers up to maxResults.
  */
 export async function searchProfilesWithMutualBackfill(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -123,27 +118,54 @@ export async function searchProfilesWithMutualBackfill(
     const backfillLimit = Math.max(0, maxResults - mutualResults.length);
     if (backfillLimit === 0) return mutualResults;
 
-    let backfillQuery = supabase
+    const followedOnlyIds = [...graph.following]
+        .filter((userId) => !graph.followers.has(userId));
+    const followedMatches: MutualSearchProfile[] = [];
+    for (const idChunk of chunks(followedOnlyIds, IN_CHUNK_SIZE)) {
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('user_id, display_name, avatar_url, created_at')
+            .ilike('display_name', pattern)
+            .in('user_id', idChunk)
+            .order('created_at', { ascending: false })
+            .order('display_name', { ascending: true })
+            .limit(backfillLimit);
+        if (error) throw error;
+        followedMatches.push(...((data ?? []) as MutualSearchProfile[]));
+    }
+
+    const followedRows = followedMatches
+        .sort(compareBackfillRows)
+        .slice(0, backfillLimit);
+    const followedResults = followedRows.map((row) => ({
+        user_id: row.user_id,
+        display_name: row.display_name,
+        avatar_url: row.avatar_url ?? null,
+        is_following: graph.following.has(row.user_id),
+        follows_caller: graph.followers.has(row.user_id),
+        is_mutual: false,
+    }));
+
+    const strangerLimit = backfillLimit - followedResults.length;
+    if (strangerLimit === 0) return [...mutualResults, ...followedResults];
+
+    let strangerQuery = supabase
         .from('profiles')
         .select('user_id, display_name, avatar_url, created_at')
         .ilike('display_name', pattern)
         .neq('user_id', viewerId);
-    for (const idChunk of chunks(graph.mutualIds, IN_CHUNK_SIZE)) {
-        backfillQuery = backfillQuery.not('user_id', 'in', `(${idChunk.join(',')})`);
+    const excludedIds = [...new Set([...graph.mutualIds, ...graph.following])];
+    for (const idChunk of chunks(excludedIds, IN_CHUNK_SIZE)) {
+        strangerQuery = strangerQuery.not('user_id', 'in', `(${idChunk.join(',')})`);
     }
 
-    const { data: backfillData, error: backfillError } = await backfillQuery.limit(backfillLimit);
-    if (backfillError) throw backfillError;
+    const { data: strangerData, error: strangerError } = await strangerQuery
+        .order('created_at', { ascending: false })
+        .order('display_name', { ascending: true })
+        .limit(strangerLimit);
+    if (strangerError) throw strangerError;
 
-    const backfillRows = ((backfillData ?? []) as MutualSearchProfile[])
-        .sort((a, b) => {
-            const aFollowing = graph.following.has(a.user_id) ? 1 : 0;
-            const bFollowing = graph.following.has(b.user_id) ? 1 : 0;
-            if (aFollowing !== bFollowing) return bFollowing - aFollowing;
-            if (a.created_at > b.created_at) return -1;
-            if (a.created_at < b.created_at) return 1;
-            return a.display_name.localeCompare(b.display_name);
-        })
+    const strangerResults = ((strangerData ?? []) as MutualSearchProfile[])
         .map((row) => ({
             user_id: row.user_id,
             display_name: row.display_name,
@@ -153,5 +175,5 @@ export async function searchProfilesWithMutualBackfill(
             is_mutual: false,
         }));
 
-    return [...mutualResults, ...backfillRows];
+    return [...mutualResults, ...followedResults, ...strangerResults];
 }
