@@ -6,15 +6,16 @@
  * press-clipping cards on cream, tapping out to the original video.
  *
  * Self-hides entirely when empty (return null — no header, no rule, no skeleton).
- * Header copy is "ON SOCIALS" alone, in the shared hairline-flanked uppercase
- * Manrope band grammar.
+ * Header copy is "ON SOCIALS" alone, in the restaurant page's left-kicker
+ * SectionHeading grammar.
  */
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, ScrollView, StyleSheet } from 'react-native';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ClippingCard, type ClippingCardData } from './ClippingCard';
+import { SectionHeading } from './RestaurantPageV3';
 
 interface Props {
     clippings: ClippingCardData[];
@@ -29,16 +30,8 @@ export function OnSocialsRail({ clippings }: Props) {
 
     return (
         <View style={styles.band}>
-            {/* Section header: hairline · "ON SOCIALS" · hairline (shared band grammar) */}
-            <View style={styles.headerRow}>
-                <View style={[styles.headerRule, { backgroundColor: palette.ruleInkSoft }]} />
-                <Text
-                    style={[styles.headerLabel, { color: palette.textMuted }]}
-                    accessibilityRole="header"
-                >
-                    ON SOCIALS
-                </Text>
-                <View style={[styles.headerRule, { backgroundColor: palette.ruleInkSoft }]} />
+            <View style={styles.heading}>
+                <SectionHeading label="ON SOCIALS" palette={palette} />
             </View>
 
             <ScrollView
@@ -56,29 +49,15 @@ export function OnSocialsRail({ clippings }: Props) {
 
 const styles = StyleSheet.create({
     band: {
+        marginTop: Spacing.restaurant.sectionGap,
         paddingBottom: Spacing.md,
     },
-    headerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.sm,
-        marginBottom: Spacing.md,
-        paddingHorizontal: 22,
-    },
-    headerRule: {
-        flex: 1,
-        height: 1,
-    },
-    headerLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        lineHeight: 15,
-        letterSpacing: 1.5,
-        textTransform: 'uppercase',
+    heading: {
+        paddingHorizontal: Spacing.restaurant.pageGutter,
     },
     rail: {
         flexDirection: 'row',
-        gap: 12,
-        paddingHorizontal: 22,
+        gap: Spacing.restaurant.listChipHorizontal,
+        paddingHorizontal: Spacing.restaurant.pageGutter,
     },
 });
