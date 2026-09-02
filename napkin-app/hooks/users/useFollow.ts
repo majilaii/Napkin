@@ -278,11 +278,16 @@ export function useFollow() {
             queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
             // TICKET-189: the newly-followed author's reviews belong in
             // Following now — narrow, viewer-scoped refetch. The candidate
             // patches above stand (no blanket invalidation).
             if (viewerId) {
                 queryClient.invalidateQueries({ queryKey: queryKeys.feed.friends(viewerId) });
+                queryClient.invalidateQueries({ queryKey: queryKeys.feed.coDiners(viewerId) });
+                queryClient.invalidateQueries({
+                    queryKey: queryKeys.users.recentCompanions(viewerId),
+                });
             }
         },
     });
@@ -373,6 +378,13 @@ export function useUnfollow() {
             queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetUserId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followingAll() });
             queryClient.invalidateQueries({ queryKey: queryKeys.users.followListAll() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
+            if (viewerId) {
+                queryClient.invalidateQueries({ queryKey: queryKeys.feed.coDiners(viewerId) });
+                queryClient.invalidateQueries({
+                    queryKey: queryKeys.users.recentCompanions(viewerId),
+                });
+            }
         },
     });
 }

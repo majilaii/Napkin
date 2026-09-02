@@ -8,6 +8,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
+import { useAuth } from '@/providers/AuthProvider';
 
 export interface BlockedUserRow {
     user_id: string;
@@ -34,17 +35,30 @@ export function useBlockedUsers(enabled = true) {
 
 /** Shared cache fallout of a block/unblock — the target's profile surfaces and
  * the aggregate feed re-read against the new blocked_users state. */
-function invalidateBlockFallout(queryClient: ReturnType<typeof useQueryClient>, targetId: string) {
+function invalidateBlockFallout(
+    queryClient: ReturnType<typeof useQueryClient>,
+    targetId: string,
+    viewerId: string | null,
+) {
     queryClient.invalidateQueries({ queryKey: queryKeys.users.profile(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.diary(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.spots(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.reviews(targetId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.users.taste(targetId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.users.searchAll() });
     queryClient.invalidateQueries({ queryKey: queryKeys.feed.rootAll() });
+    if (viewerId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.feed.coDiners(viewerId) });
+        queryClient.invalidateQueries({
+            queryKey: queryKeys.users.recentCompanions(viewerId),
+        });
+    }
 }
 
 export function useBlockUser() {
     const queryClient = useQueryClient();
+    const { user } = useAuth();
+    const viewerId = user?.id ?? null;
     return useMutation({
         mutationFn: async (targetUserId: string) => {
             await callEdgeFn('account', { action: 'block', body: { user_id: targetUserId } });
@@ -57,7 +71,7 @@ export function useBlockUser() {
                 queryKey: queryKeys.users.taste(targetUserId),
                 exact: true,
             });
-            invalidateBlockFallout(queryClient, targetUserId);
+            invalidateBlockFallout(queryClient, targetUserId, viewerId);
             queryClient.invalidateQueries({ queryKey: queryKeys.account.blocked() });
         },
     });
@@ -65,6 +79,8 @@ export function useBlockUser() {
 
 export function useUnblockUser() {
     const queryClient = useQueryClient();
+    const { user } = useAuth();
+    const viewerId = user?.id ?? null;
     return useMutation({
         mutationFn: async (targetUserId: string) => {
             await callEdgeFn('account', { action: 'unblock', body: { user_id: targetUserId } });
@@ -85,7 +101,7 @@ export function useUnblockUser() {
             }
         },
         onSuccess: (targetUserId) => {
-            invalidateBlockFallout(queryClient, targetUserId);
+            invalidateBlockFallout(queryClient, targetUserId, viewerId);
         },
     });
 }

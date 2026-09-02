@@ -4,10 +4,12 @@
  * and AddMemberSheet (TICKET-029).
  *
  * Calls user-profile edge function action=search.
- * Returns up to 20 results, excluding the current user (enforced server-side).
+ * Default searches return up to 20 results, excluding the current user. A
+ * mutualOnly search may exceed 20 so no matching mutual follow is truncated.
  *
  * TICKET-029: When mutualOnly=true the hook passes mutual_only=true to the edge
- * function and every result row includes is_mutual: boolean.
+ * function. Every mutual match leads the response, followed by explain-why
+ * non-mutual rows up to the limit; every row includes is_mutual: boolean.
  * The query key is distinct (includes 'mutual' suffix) so mutual/non-mutual
  * results don't collide in the cache.
  */
@@ -29,7 +31,7 @@ export interface UserSearchResult {
 }
 
 interface SearchOptions {
-    /** When true, each row includes is_mutual: boolean. Mutuals sort first. */
+    /** When true, lead with all mutual matches and include directional flags. */
     mutualOnly: boolean;
 }
 

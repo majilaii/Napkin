@@ -83,6 +83,7 @@ describe('useFollow', () => {
         mockEdgeFnResolves({ following: true });
 
         const { result, client } = renderHookWithClient(() => useFollow());
+        const invalidate = jest.spyOn(client, 'invalidateQueries');
 
         const targetKey = queryKeys.users.profile(TARGET_ID);
         client.setQueryData(targetKey, makeProfile(TARGET_ID, false, 5));
@@ -96,6 +97,15 @@ describe('useFollow', () => {
         const profile = client.getQueryData<UserProfileResult>(targetKey);
         expect(profile?.data?.is_following_viewer).toBe(true);
         expect(profile?.data?.stats?.followers_count).toBe(6);
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.users.recentCompanions(VIEWER_ID),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.users.searchAll(),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.feed.coDiners(VIEWER_ID),
+        });
     });
 
     it('(b) restores target profile on server error', async () => {
@@ -279,6 +289,7 @@ describe('useUnfollow', () => {
         mockEdgeFnResolves({ following: false });
 
         const { result, client } = renderHookWithClient(() => useUnfollow());
+        const invalidate = jest.spyOn(client, 'invalidateQueries');
 
         const targetKey = queryKeys.users.profile(TARGET_ID);
         client.setQueryData(targetKey, makeProfile(TARGET_ID, true, 6));
@@ -292,6 +303,15 @@ describe('useUnfollow', () => {
         const profile = client.getQueryData<UserProfileResult>(targetKey);
         expect(profile?.data?.is_following_viewer).toBe(false);
         expect(profile?.data?.stats?.followers_count).toBe(5);
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.users.recentCompanions(VIEWER_ID),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.users.searchAll(),
+        });
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.feed.coDiners(VIEWER_ID),
+        });
     });
 
     it('(b) restores profile on server error', async () => {

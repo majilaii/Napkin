@@ -62,8 +62,8 @@ jest.mock('@/hooks/users/useUserSearch', () => ({
 jest.mock('@/hooks/users/useFollowingList', () => ({
     useFollowingList: () => ({ data: [] }),
 }));
-jest.mock('@/hooks/users/useRecentCompanions', () => ({
-    useRecentCompanions: () => ({ data: [] }),
+jest.mock('@/hooks/feed/useCoDiners', () => ({
+    useCoDiners: () => ({ data: [] }),
 }));
 
 beforeEach(() => {
