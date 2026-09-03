@@ -7,7 +7,7 @@
   "files": {
     "napkin-app/app/_layout.tsx": [0, 0, 0, 1],
     "napkin-app/app/(tabs)/journal.tsx": [0, 0, 0, 1],
-    "napkin-app/app/(tabs)/tables.tsx": [0, 0, 2, 3],
+    "napkin-app/app/(tabs)/tables.tsx": [0, 0, 2, 2],
     "napkin-app/app/auth.tsx": [0, 2, 0, 0],
     "napkin-app/app/create-table.tsx": [0, 0, 2, 0],
     "napkin-app/app/diary.tsx": [1, 1, 1, 0],
@@ -127,7 +127,7 @@
     "napkin-app/components/tables/PinToBoardSheet.tsx": [0, 0, 2, 2],
     "napkin-app/components/tables/StartRoundPill.tsx": [0, 0, 1, 0],
     "napkin-app/components/tables/SubsetCard.tsx": [0, 0, 2, 2],
-    "napkin-app/components/tables/TableHeader.tsx": [0, 0, 1, 2],
+    "napkin-app/components/tables/TableHeader.tsx": [0, 0, 0, 1],
     "napkin-app/components/tables/TableSwitcherSheet.tsx": [0, 0, 2, 2],
     "napkin-app/components/tables/TableTopFourGrid.tsx": [2, 0, 2, 2],
     "napkin-app/components/tables/TableTopFourPlaceholder.tsx": [1, 0, 1, 1],

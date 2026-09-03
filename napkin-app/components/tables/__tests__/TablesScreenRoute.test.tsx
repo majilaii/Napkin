@@ -1,5 +1,9 @@
 /* eslint-disable import/first -- Jest mocks must be registered before the route module loads. */
 const routeParams = { selected: 'table-b', section: 'activity' };
+const mockPush = jest.fn();
+let mockIsPersonal = false;
+const mockUseTableWishlist = jest.fn();
+const mockUseTableMapPins = jest.fn();
 
 jest.mock('react-native', () => {
     const ReactModule = jest.requireActual('react');
@@ -32,8 +36,9 @@ jest.mock('@react-navigation/native', () => ({
 }));
 jest.mock('expo-router', () => ({
     useFocusEffect: jest.fn(),
-    useRouter: () => ({ push: jest.fn() }),
+    useRouter: () => ({ push: mockPush }),
 }));
+jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
@@ -56,7 +61,7 @@ jest.mock('@/hooks/tables/useTables', () => ({
     useTables: () => ({
         data: [
             { tables: { id: 'table-a', name: 'Table A', owner_id: 'viewer', created_at: '2026-01-01', is_personal: false } },
-            { tables: { id: 'table-b', name: 'Table B', owner_id: 'viewer', created_at: '2026-01-01', is_personal: false } },
+            { tables: { id: 'table-b', name: 'Table B', owner_id: 'viewer', created_at: '2026-01-01', is_personal: mockIsPersonal } },
         ],
         isLoading: false,
         isError: false,
@@ -87,12 +92,15 @@ jest.mock('@/hooks/tables/useTableTopFour', () => ({ useTableTopFour: () => ({ d
 jest.mock('@/hooks/tables/useTableAtlas', () => ({
     useTableAtlas: () => ({ data: null, isLoading: false, isRefetching: false, refetch: jest.fn() }),
 }));
+// TICKET-238 AC 3b: the Activity pane must mount neither of these. They are
+// mocked only so that re-introducing a counted doorway registers as a call.
+jest.mock('@/hooks/wishlist/useTableWishlist', () => ({
+    useTableWishlist: (...args: unknown[]) => mockUseTableWishlist(...args),
+}));
+jest.mock('@/hooks/tables/useTableMapPins', () => ({
+    useTableMapPins: (...args: unknown[]) => mockUseTableMapPins(...args),
+}));
 
-jest.mock('@/components/wishlist', () => {
-    const ReactModule = jest.requireActual('react');
-    const { Text } = jest.requireMock('react-native');
-    return { WishlistGrid: () => ReactModule.createElement(Text, null, 'wishlist pane') };
-});
 jest.mock('@/components/atlas', () => ({ AtlasCityIndex: () => null }));
 jest.mock('@/components/tables', () => {
     const ReactModule = jest.requireActual('react');
@@ -101,6 +109,10 @@ jest.mock('@/components/tables', () => {
     return {
         TableHeader: ({ tableName }: { tableName: string }) =>
             ReactModule.createElement(Text, null, `header ${tableName}`),
+        // The segment row and the map doorway are the presentation under test —
+        // keep the real components.
+        TableSegments: jest.requireActual('@/components/tables/TableSegments').TableSegments,
+        OnTheMapRow: jest.requireActual('@/components/tables/OnTheMapRow').OnTheMapRow,
         FoundedHero: empty,
         EmptyChairInvitation: empty,
         TableSwitcherSheet: empty,
@@ -114,6 +126,7 @@ jest.mock('@/components/tables', () => {
         StartRoundPill: empty,
         AddMemberSheet: empty,
         TableListsBlock: () => ReactModule.createElement(Text, null, 'lists pane'),
+        TableLedgerModule: empty,
     };
 });
 
@@ -132,19 +145,59 @@ jest.mock('@/components/ErrorState', () => ({ ErrorState: () => null }));
 import React from 'react';
 import { fireEvent, render } from '@testing-library/react-native';
 
-import TablesScreen from '../../app/(tabs)/tables';
+import TablesScreen from '../../../app/(tabs)/tables';
 
 describe('mounted Tables route arrival', () => {
+    beforeEach(() => {
+        mockIsPersonal = false;
+    });
+
     it('consumes section=activity once, then keeps later pane switches', () => {
         const screen = render(<TablesScreen />);
 
         expect(screen.getByText('header Table B')).toBeTruthy();
         expect(screen.queryByText('lists pane')).toBeNull();
 
-        fireEvent.press(screen.getByText('Lists'));
+        fireEvent.press(screen.getByText('lists'));
         expect(screen.getByText('lists pane')).toBeTruthy();
 
-        fireEvent.press(screen.getByText('Wishlist'));
-        expect(screen.getByText('wishlist pane')).toBeTruthy();
+        fireEvent.press(screen.getByText('activity'));
+        expect(screen.queryByText('lists pane')).toBeNull();
+    });
+
+    it('offers exactly activity · lists on a social table', () => {
+        const screen = render(<TablesScreen />);
+
+        expect(screen.getByText('activity')).toBeTruthy();
+        expect(screen.getByText('lists')).toBeTruthy();
+        expect(screen.queryByText('wishlist')).toBeNull();
+        expect(screen.queryByText('atlas')).toBeNull();
+    });
+
+    it('offers activity alone and no map doorway on a personal table', () => {
+        mockIsPersonal = true;
+        const screen = render(<TablesScreen />);
+
+        expect(screen.getByText('activity')).toBeTruthy();
+        expect(screen.queryByText('lists')).toBeNull();
+        expect(screen.queryByText('on the map')).toBeNull();
+    });
+
+    it('routes the map doorway to the table-scoped Places screen', () => {
+        const screen = render(<TablesScreen />);
+
+        fireEvent.press(screen.getByText('on the map'));
+
+        expect(mockPush).toHaveBeenCalledWith({
+            pathname: '/places-scope',
+            params: { scope: 'table', tableId: 'table-b' },
+        });
+    });
+
+    it('issues no wishlist or map-pins query on the Activity pane', () => {
+        render(<TablesScreen />);
+
+        expect(mockUseTableWishlist).not.toHaveBeenCalled();
+        expect(mockUseTableMapPins).not.toHaveBeenCalled();
     });
 });

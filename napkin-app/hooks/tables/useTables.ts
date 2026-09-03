@@ -14,6 +14,11 @@ export interface Table {
     updated_at: string;
     /** Optional on richer cached table-list projections; omit UI count when absent. */
     member_count?: number;
+    /** LEGACY — the column was dropped by `20260427000010_remove_personal_tables.sql`
+     * and `table-management` never selects it, so this is `undefined` on every wire
+     * shape today. Kept as a typed, defensive branch: absent = social. Do not build
+     * personal-table affordances against it. */
+    is_personal?: boolean;
 }
 
 export interface TableMembership {
