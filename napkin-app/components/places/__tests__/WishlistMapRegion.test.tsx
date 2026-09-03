@@ -154,4 +154,30 @@ describe('Places map region restoration', () => {
         act(() => jest.advanceTimersByTime(260));
         expect(mockFitToCoordinates).toHaveBeenCalledTimes(1);
     });
+
+    it('renders an overlap count in upright type', () => {
+        const screen = render(
+            <WishlistMapView
+                items={[{
+                    ...ITEMS[0],
+                    overlap: {
+                        count: 2,
+                        tableId: 'table-a',
+                        tableName: 'sunday lunch',
+                        members: [],
+                    },
+                }]}
+                unmappableCount={0}
+                userCoords={null}
+                locationStatus="denied"
+                onRequestLocation={jest.fn()}
+                onOpenRestaurant={jest.fn()}
+                palette={Colors.light}
+            />,
+        );
+
+        const style = screen.getByText('2').props.style as { fontFamily?: string };
+        expect(style.fontFamily).toBe('Manrope_700Bold');
+        expect(style.fontFamily).not.toMatch(/Italic/);
+    });
 });

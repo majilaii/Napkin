@@ -12,6 +12,8 @@ export interface Table {
     owner_id: string;
     created_at: string;
     updated_at: string;
+    /** Optional on richer cached table-list projections; omit UI count when absent. */
+    member_count?: number;
 }
 
 export interface TableMembership {

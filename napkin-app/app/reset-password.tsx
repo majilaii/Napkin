@@ -27,6 +27,7 @@ import * as Linking from 'expo-linking';
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
+import { PINNED_PLACES_ROUTE } from '@/lib/handoffNavigation';
 
 /** Recovery links carry tokens in the hash fragment (implicit flow) or a
  * ?code= param (pkce). Merge both so either link shape works. */
@@ -125,7 +126,7 @@ export default function ResetPasswordScreen() {
             Alert.alert("Couldn't update password", error.message);
             return;
         }
-        router.replace('/wishlist');
+        router.replace(PINNED_PLACES_ROUTE);
     };
 
     return (

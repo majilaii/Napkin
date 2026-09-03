@@ -1,7 +1,7 @@
 /**
  * importSlotUtils — the pure derivation behind the "one import card, ever".
  *
- * Extracted from app/wishlist.tsx (TICKET-185) so the map-tab chip AND the
+ * Extracted from the retired wishlist screen (TICKET-185) so the map-tab chip AND the
  * profile Imports strip read the exact same live state. No React / native
  * imports (unit-testable, same pattern as mapPinsUtils / listsSectionUtils).
  *

@@ -50,6 +50,7 @@ import {
     NotifAction,
     I,
 } from '@/components/notifications';
+import { PINNED_PLACES_ROUTE } from '@/lib/handoffNavigation';
 
 const BUCKET_ORDER: NotifBucket[] = ['today', 'yesterday', 'thisWeek', 'earlier'];
 
@@ -254,7 +255,7 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
         case 'friend_pinned':
             // Tap → shared wishlist with the fresh pin lifted; v1: open the
             // viewer's own wishlist as a stand-in until shared lists land.
-            router.push('/wishlist');
+            router.push(PINNED_PLACES_ROUTE);
             return;
         case 'top_four_swap':
             router.push({ pathname: '/u/[identifier]', params: { identifier: n.actor.id } });

@@ -2,7 +2,7 @@
  * WishlistMapView — full-bleed warm map of spots, "what's near me right now."
  *
  * TICKET-131 (rec'd-shaped chrome): one map surface grammar shared by the
- * wishlist tab's map mode and the table-map gathered surface:
+ * Places tab's map mode and scoped collection surfaces:
  *   - source pills float top-LEFT on the glass (frosted segmented)
  *   - optional Filter chip top-RIGHT (opens the screen-owned FilterTabsSheet)
  *   - locate FAB stacked above the List pill, both bottom-RIGHT (corner law v2,
@@ -68,7 +68,7 @@ import MapView, {
 import type MapViewType from 'react-native-maps';
 import { useQueryClient } from '@tanstack/react-query';
 
-import { Colors, Radius, Shadow } from '@/constants/theme';
+import { Colors, Radius, Shadow, Type } from '@/constants/theme';
 import { heirloomMapStyle } from '@/constants/mapStyle';
 import { tileUrlTemplate, MAPTILER_ATTRIBUTION, MAP_TILE_MODE } from '@/lib/maptiler';
 import { haversineMiles, type LatLng as GeoLatLng } from '@/lib/geo';
@@ -153,11 +153,6 @@ interface Props {
      * instead of to the restaurant page. Mine-mode consumers omit it.
      */
     onOpenReview?: (entryId: string) => void;
-    /** Switch back to the list view — frosted List pill, bottom-RIGHT (below the
-     * locate FAB; corner law v2, TICKET-137). Optional — screens with their own
-     * chrome (dining map, TICKET-092) omit it: the pill hides AND the FAB drops
-     * to the corner position (no stack offset over a pill that isn't there). */
-    onSwitchToList?: () => void;
     /** Optional bottom-left Lists scope control on Your map. */
     listChip?: {
         label: string;
@@ -180,7 +175,7 @@ interface Props {
     unmappableLabel?: string;
     /** Import entry point — frosted chip top-RIGHT under the filter chip
      * (chrome diet, TICKET-163: replaces the workspace header's Import button).
-     * Optional — dining-map / table-map omit it. */
+     * Optional — standalone map surfaces omit it. */
     onImport?: () => void;
     /** Pending-import state, shrunk to a corner chip (the old full-width inbox
      * card no longer squats over the pins). `count` renders next to the icon
@@ -246,10 +241,6 @@ interface Props {
 
 /** Clearance so bottom chrome + peek sit above the floating nav pill (TICKET-130). */
 const NAV_CLEARANCE = 92;
-/** Corner law v2 (TICKET-137): the locate FAB stacks directly ABOVE the List
- * pill in the bottom-RIGHT corner. Offset = List-pill height (~42) + gap (~10),
- * so the FAB's bottom edge clears the pill's top edge by the gap. */
-const RIGHT_STACK_OFFSET = 52;
 /** Vertical rhythm of the top-RIGHT chip stack (filter → import → status). */
 const TOP_STACK_OFFSET = 46;
 /** Dark-scheme frost pair for the floating chrome (light uses palette.scrimFrost).
@@ -372,10 +363,10 @@ function BubblePin({
                 ]}
             >
                 {isCountBubble ? (
-                    // Brand numerals — Newsreader italic, amber (138 overlap count).
+                    // Overlap counts are upright; italic Newsreader is reserved for ratings/quotes.
                     <Text
                         style={{
-                            fontFamily: 'Newsreader_500Medium_Italic',
+                            ...Type.ledgerValue,
                             fontSize: selected ? 18 : 15,
                             color: palette.tertiary,
                             includeFontPadding: false,
@@ -588,7 +579,6 @@ export function WishlistMapView({
     onRegionChangeComplete,
     bottomInset,
     onOpenReview,
-    onSwitchToList,
     listChip,
     preserveItemOrder = false,
     collectionScopeKey,
@@ -1021,25 +1011,6 @@ export function WishlistMapView({
             </Pressable>
         ) : null;
 
-    // ── Places pill — bottom-right, frosted (corner law v2). Also in both branches
-    // (same review finding: an empty layer must not strand you on the map).
-    const renderListPill = (visible: boolean) =>
-        visible && onSwitchToList ? (
-            <Pressable
-                onPress={onSwitchToList}
-                style={[
-                    styles.listToggle,
-                    { backgroundColor: frostBg, bottom: bottomChromeInset },
-                    Shadow.ambient,
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Places view"
-            >
-                <Ionicons name="list" size={15} color={palette.primary} />
-                <Text style={[styles.listToggleText, { color: palette.primary }]}>Places</Text>
-            </Pressable>
-        ) : null;
-
     // ── Import chip — top-right under the filter chip; the map's import entry
     // point now that the workspace header is gone (chrome diet, TICKET-163).
     // Below it, an optional status chip carries the pending-review count
@@ -1267,11 +1238,8 @@ export function WishlistMapView({
                 </View>
             ) : null}
 
-            {/* Locate FAB — bottom-RIGHT, stacked directly ABOVE the List pill
-                (corner law v2, TICKET-137). The stack offset applies only when the
-                pill actually renders (onSwitchToList) — dining-map omits it, so
-                its FAB sits at the corner, not 52px above an empty gap. Clear of
-                the floating nav pill; hidden once a peek card is up. */}
+            {/* Locate FAB — bottom-RIGHT, clear of the floating nav pill; hidden
+                once a peek card is up. */}
             {!selected ? (
                 <Pressable
                     onPress={handleRecenter}
@@ -1279,13 +1247,7 @@ export function WishlistMapView({
                         styles.fab,
                         {
                             backgroundColor: frostBg,
-                            bottom: bottomChromeInset + (
-                                onSwitchToList
-                                    ? RIGHT_STACK_OFFSET
-                                    : usesExternalBottomInset
-                                      ? 12
-                                      : 0
-                            ),
+                            bottom: bottomChromeInset + (usesExternalBottomInset ? 12 : 0),
                         },
                         Shadow.ambient,
                     ]}
@@ -1304,10 +1266,6 @@ export function WishlistMapView({
                     )}
                 </Pressable>
             ) : null}
-
-            {/* List pill — bottom-RIGHT below the locate FAB, frosted (corner law
-                v2). Hidden while a peek card is up (shared with the empty branch). */}
-            {renderListPill(!selected)}
 
             {/* Lists chip — Your map only, bottom-LEFT. It scopes the same map
                 instead of opening a second map implementation. */}
@@ -1652,7 +1610,7 @@ function PeekCardBody({
             onContextPress = () => openProfile(who.tapUserId);
         }
     } else if (who.variant === 'saved-by') {
-        detailContext = `saved by ${who.name}`;
+        detailContext = `pinned by ${who.name}`;
         if (who.tapUserId) {
             contextActionLabel = `Open ${who.name}'s profile`;
             onContextPress = () => openProfile(who.tapUserId);
@@ -1674,14 +1632,14 @@ function PeekCardBody({
     } else if (isListSpot && note) {
         detailContext = `— ${note}`;
     } else if (context.layer === 'saved' && saved === true) {
-        detailContext = 'saved by you';
+        detailContext = 'pinned by you';
     } else if (context.layer === 'been' && (item.visitCount ?? 0) > 1) {
         detailContext = `${item.visitCount} visits`;
     } else if (
         enrichment?.visible_saves_count != null
         && enrichment.visible_saves_count >= 3
     ) {
-        detailContext = `saved by ${enrichment.visible_saves_count}`;
+        detailContext = `pinned by ${enrichment.visible_saves_count}`;
     }
 
     const toggleWishlist = useCallback(() => {
@@ -1881,23 +1839,6 @@ const styles = StyleSheet.create({
         borderRadius: 23,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    // List pill (map → list) — bottom-RIGHT, stacked below the locate FAB (corner
-    // law v2, TICKET-137). Same frost family + elevation (⑨ h42·13/800).
-    listToggle: {
-        position: 'absolute',
-        right: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 7,
-        borderRadius: 999,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-    },
-    listToggleText: {
-        fontFamily: 'Manrope_800ExtraBold',
-        fontSize: 13,
-        letterSpacing: 0.4,
     },
     // People chip — Discover only, bottom-LEFT (corner law v2, TICKET-137).
     // Frosted people-outline + state label; opens the picker sheet.

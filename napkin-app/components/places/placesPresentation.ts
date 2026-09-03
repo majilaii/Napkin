@@ -5,7 +5,13 @@ import type { SearchLocality } from '@/hooks/search/searchLocalityStore';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
 import type { WishlistMapItem } from '@/components/wishlist/mapShared';
 import type { SearchMode } from '@/components/search/searchModeTabsGate';
-import type { PlacesLayerFilter, PlacesViewMode } from '@/hooks/search/placesScreenState';
+import type {
+    PlacesLayerFilter,
+    PlacesScope,
+    PlacesViewMode,
+} from '@/hooks/search/placesScreenState';
+import type { TableMapPin } from '@/hooks/tables/useTableMapPins';
+import type { TableWishlistItem } from '@/hooks/wishlist/useTableWishlist';
 import { formatDistance, haversineMiles, type LatLng } from '@/lib/geo';
 
 export type PlacesRating = NonNullable<SearchResultRow['rating']>;
@@ -26,6 +32,14 @@ export interface PlacesDisplayRow {
     friendsBeenCount: number;
     searchRow?: SearchResultRow;
     been?: boolean;
+    tableScope?:
+        | {
+            kind: 'pinned';
+            item: TableWishlistItem;
+            tableId: string;
+            tableName: string;
+        }
+        | { kind: 'been'; item: TableMapPin };
     network?: {
         author: NetworkMapItem['author'];
         entryId: string;
@@ -47,7 +61,14 @@ export interface PlacesRatingPresentation {
     tone: 'tertiary' | 'muted';
 }
 
-export type PlacesSource = 'places' | 'persisted' | 'wishlist' | 'spots' | 'network';
+export type PlacesSource =
+    | 'places'
+    | 'persisted'
+    | 'wishlist'
+    | 'spots'
+    | 'network'
+    | 'tableWishlist'
+    | 'tableMap';
 export type PlacesFailurePresentation = {
     kind: 'none' | 'broken' | 'inline';
     sources: PlacesSource[];
@@ -61,21 +82,29 @@ export type PlacesFailurePresentation = {
 export function resolvePlacesFailurePresentation(args: {
     queryActive: boolean;
     layerFilter: PlacesLayerFilter;
+    scope?: PlacesScope;
     hasCachedRows: boolean;
     placesFailed: boolean;
     persistedFailed: boolean;
     wishlistFailed: boolean;
     spotsFailed: boolean;
     networkFailed: boolean;
+    tableWishlistFailed?: boolean;
+    tableMapFailed?: boolean;
 }): PlacesFailurePresentation {
+    const scope = args.scope ?? { kind: 'you' };
     const sources: PlacesSource[] = args.queryActive
         ? [
             ...(args.placesFailed ? ['places' as const] : []),
             ...(args.persistedFailed ? ['persisted' as const] : []),
         ]
-        : args.layerFilter === 'friends'
+        : scope.kind === 'friends'
           ? (args.networkFailed ? ['network' as const] : [])
-          : [
+          : scope.kind === 'table'
+            ? args.layerFilter === 'been'
+              ? (args.tableMapFailed ? ['tableMap' as const] : [])
+              : (args.tableWishlistFailed ? ['tableWishlist' as const] : [])
+            : [
               ...(args.layerFilter !== 'been' && args.wishlistFailed
                   ? ['wishlist' as const]
                   : []),
@@ -219,6 +248,48 @@ export function networkRowsToDisplayRows(
     }));
 }
 
+export function tableWishlistRowsToDisplayRows(
+    rows: readonly TableWishlistItem[],
+    context: { tableId: string; tableName: string },
+): PlacesDisplayRow[] {
+    return rows.flatMap((item) => {
+        const restaurant = item.restaurant;
+        if (!restaurant) return [];
+        return [{
+            id: restaurant.id,
+            name: restaurant.name,
+            city: restaurant.city,
+            cuisine: restaurant.cuisine,
+            lat: restaurant.lat ?? null,
+            lng: restaurant.lng ?? null,
+            priceLevel: restaurant.price_level,
+            rating: null,
+            isPinned: true,
+            friendsBeenCount: 0,
+            tableScope: { kind: 'pinned', item, ...context },
+        }];
+    });
+}
+
+export function tableMapPinsToDisplayRows(
+    rows: readonly TableMapPin[],
+): PlacesDisplayRow[] {
+    return rows.map((item) => ({
+        id: item.restaurant_id,
+        name: item.name,
+        city: item.city,
+        cuisine: item.cuisine,
+        lat: item.lat,
+        lng: item.lng,
+        priceLevel: null,
+        rating: null,
+        isPinned: false,
+        friendsBeenCount: 0,
+        been: true,
+        tableScope: { kind: 'been', item },
+    }));
+}
+
 /** Pinned order leads the union; a duplicate inherits the richer been signal. */
 export function mergePlacesLayerRows(
     pinnedRows: readonly PlacesDisplayRow[],
@@ -256,12 +327,30 @@ export function filterPlacesLayerRows(
     layerFilter: PlacesLayerFilter,
     pinnedRows: readonly PlacesDisplayRow[],
     beenRows: readonly PlacesDisplayRow[],
-    friendsRows: readonly PlacesDisplayRow[] = [],
 ): PlacesDisplayRow[] {
     if (layerFilter === 'pinned') return [...pinnedRows];
     if (layerFilter === 'been') return [...beenRows];
-    if (layerFilter === 'friends') return [...friendsRows];
     return mergePlacesLayerRows(pinnedRows, beenRows);
+}
+
+export function filterPlacesRowsForScope(args: {
+    scope: PlacesScope;
+    layerFilter: PlacesLayerFilter;
+    pinnedRows: readonly PlacesDisplayRow[];
+    beenRows: readonly PlacesDisplayRow[];
+    friendsRows: readonly PlacesDisplayRow[];
+    tablePinnedRows: readonly PlacesDisplayRow[];
+    tableBeenRows: readonly PlacesDisplayRow[];
+}): PlacesDisplayRow[] {
+    if (args.scope.kind === 'friends') {
+        return args.layerFilter === 'pinned' ? [] : [...args.friendsRows];
+    }
+    if (args.scope.kind === 'table') {
+        return args.layerFilter === 'been'
+            ? [...args.tableBeenRows]
+            : [...args.tablePinnedRows];
+    }
+    return filterPlacesLayerRows(args.layerFilter, args.pinnedRows, args.beenRows);
 }
 
 export function decorateAndSortRows(
@@ -508,6 +597,7 @@ export function projectPlacesPins(rows: readonly PlacesDisplayRow[]): WishlistMa
     return rows.flatMap((row) => {
         if (row.lat == null || row.lng == null) return [];
         const network = row.network;
+        const tableScope = row.tableScope;
         return [{
             id: row.id,
             name: row.name,
@@ -519,6 +609,22 @@ export function projectPlacesPins(rows: readonly PlacesDisplayRow[]): WishlistMa
             myRating: row.rating?.tier === 'you' ? row.rating.value : null,
             been: row.been,
             searchRow: row.searchRow,
+            ...(tableScope?.kind === 'pinned' ? {
+                overlap: {
+                    count: tableScope.item.count,
+                    tableId: tableScope.tableId,
+                    tableName: tableScope.tableName,
+                    members: tableScope.item.members,
+                },
+            } : {}),
+            ...(tableScope?.kind === 'been' ? {
+                gathered: {
+                    tableId: tableScope.item.table_id,
+                    on: tableScope.item.gathered_on,
+                    participants: tableScope.item.participants,
+                    suppersCount: tableScope.item.suppers_count,
+                },
+            } : {}),
             ...(network ? {
                 author: network.author,
                 entryId: network.entryId,

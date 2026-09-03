@@ -12,10 +12,25 @@ import PlacesScreen from '@/app/(tabs)/places';
 const mockSetParams = jest.fn();
 const mockPush = jest.fn();
 const mockRequestIfGranted = jest.fn().mockResolvedValue(undefined);
-let mockRouteParams: { mode?: string; q?: string } = { mode: 'people' };
+let mockRouteParams: {
+    mode?: string;
+    q?: string;
+    view?: string;
+    layer?: string;
+    scope?: string;
+} = { mode: 'people' };
 const mockWishlistRefetch = jest.fn();
 const mockFetchNextPage = jest.fn();
 const mockUseMyLists = jest.fn();
+const mockUseTableMembers = jest.fn((tableId: string | null | undefined) => ({
+    data: tableId ? [{
+        member_id: 'member-a',
+        role: 'member',
+        joined_at: '2026-01-01T00:00:00Z',
+        profiles: { display_name: 'Clara', avatar_url: null },
+    }] : undefined,
+    isLoading: false,
+}));
 let mockCoords: { latitude: number; longitude: number } | null = null;
 let mockSpots: unknown[] = [];
 let mockFollowing: unknown[] = [];
@@ -29,6 +44,13 @@ let mockWishlistState = {
     isFetchingNextPage: false,
 };
 
+jest.mock('expo-haptics', () => ({
+    selectionAsync: jest.fn(),
+    impactAsync: jest.fn(),
+    notificationAsync: jest.fn(),
+    ImpactFeedbackStyle: { Light: 'light', Medium: 'medium' },
+    NotificationFeedbackType: { Success: 'success' },
+}));
 jest.mock('react-native', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ReactModule = require('react') as typeof React;
@@ -40,10 +62,15 @@ jest.mock('react-native', () => {
         Image: host('Image'),
         Keyboard: { dismiss: jest.fn() },
         Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios },
+        Modal: ({ visible, children, ...props }: {
+            visible?: boolean;
+            children?: React.ReactNode;
+        }) => visible ? ReactModule.createElement('Modal', props, children) : null,
         Pressable: host('Pressable'),
         ScrollView: host('ScrollView'),
         StyleSheet: {
             absoluteFill: { position: 'absolute', inset: 0 },
+            absoluteFillObject: { position: 'absolute', inset: 0 },
             create: (styles: unknown) => styles,
             flatten: (style: unknown) => style,
             hairlineWidth: 1,
@@ -159,6 +186,28 @@ jest.mock('@/hooks/lists/useMyLists', () => ({
 }));
 jest.mock('@/hooks/wishlist/useMyWishlist', () => ({
     useMyWishlist: () => mockWishlistState,
+}));
+jest.mock('@/hooks/tables/useTables', () => ({
+    useTables: () => ({
+        data: [{
+            role: 'admin',
+            joined_at: '2026-01-01T00:00:00Z',
+            tables: {
+                id: 'table-a',
+                name: 'sunday lunch',
+                avatar_url: null,
+                owner_id: 'viewer',
+                created_at: '2026-01-01T00:00:00Z',
+                updated_at: '2026-01-01T00:00:00Z',
+                member_count: 3,
+            },
+        }],
+        isLoading: false,
+        isError: false,
+    }),
+}));
+jest.mock('@/hooks/tables/useTableMembers', () => ({
+    useTableMembers: (tableId: string | null | undefined) => mockUseTableMembers(tableId),
 }));
 jest.mock('@/components/search', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -308,6 +357,7 @@ describe('Places People-segment paid-call gate', () => {
     beforeEach(() => {
         jest.useFakeTimers();
         jest.clearAllMocks();
+        mockCallEdgeFn.mockReset();
         mockRouteParams = { mode: 'people' };
         mockCoords = null;
         mockSpots = [];
@@ -522,7 +572,7 @@ describe('Places People-segment paid-call gate', () => {
         expect(screen.getByText('tabs:places')).toBeTruthy();
         expect(screen.getByLabelText('pinned').props.accessibilityState.selected).toBe(false);
         expect(screen.getByLabelText('been').props.accessibilityState.selected).toBe(false);
-        expect(screen.getByLabelText('friends').props.accessibilityState.selected).toBe(false);
+        expect(screen.getByLabelText('who, you').props.accessibilityState.selected).toBe(false);
         expect(mockCallEdgeFn.mock.calls.filter(([, options]) => (
             options?.action === 'saved_mine'
         ))).toHaveLength(0);
@@ -566,6 +616,7 @@ describe('Places People-segment paid-call gate', () => {
                 others_count: 2,
             }],
         });
+        fireEvent.press(screen.getByLabelText('who, you'));
         fireEvent.press(screen.getByLabelText('friends'));
         await waitFor(() => expect(screen.getByText('1 place')).toBeTruthy());
         expect(mockCallEdgeFn.mock.calls.filter(([, options]) => (
@@ -590,9 +641,175 @@ describe('Places People-segment paid-call gate', () => {
             pathname: '/restaurant/[id]',
             params: { id: 'friend-only' },
         });
-        fireEvent.press(screen.getByLabelText('friends'));
+        fireEvent.press(screen.getByLabelText('who, friends'));
+        fireEvent.press(screen.getByLabelText('you'));
         expect(screen.getByText('3 places')).toBeTruthy();
         expect(placesScreenState.get('viewer').layerFilter).toBe('all');
+    });
+
+    it('gates network, table overlap, and active-table members by scope and picker state', async () => {
+        mockRouteParams = {};
+        mockCallEdgeFn.mockImplementation(async (name, options) => {
+            if (options?.action === 'network_map_pins') return { pins: [] } as never;
+            if (name === 'wishlist' && options?.action === 'list_table') {
+                return [{
+                    restaurant: {
+                        id: 'table-pinned',
+                        name: 'Brutto',
+                        city: 'London',
+                        cuisine: 'Italian',
+                        lat: 51.5,
+                        lng: -0.1,
+                        price_level: 2,
+                    },
+                    count: 2,
+                    members: [
+                        { user_id: 'member-a', display_name: 'Clara', avatar_url: null },
+                        { user_id: 'member-b', display_name: 'Thomas', avatar_url: null },
+                    ],
+                    viewer_item_id: null,
+                }] as never;
+            }
+            return [] as never;
+        });
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+        const networkCalls = () => mockCallEdgeFn.mock.calls.filter(([, options]) => (
+            options?.action === 'network_map_pins'
+        ));
+        const tableCalls = () => mockCallEdgeFn.mock.calls.filter(([name, options]) => (
+            name === 'wishlist' && options?.action === 'list_table'
+        ));
+        const mapPinsCalls = () => mockCallEdgeFn.mock.calls.filter(([name, options]) => (
+            name === 'table-atlas' && options?.action === 'map_pins'
+        ));
+
+        expect(networkCalls()).toHaveLength(0);
+        expect(tableCalls()).toHaveLength(0);
+        expect(mapPinsCalls()).toHaveLength(0);
+        expect(mockUseTableMembers).toHaveBeenCalledTimes(0);
+
+        fireEvent.press(screen.getByLabelText('who, you'));
+        fireEvent.press(screen.getByLabelText('friends'));
+        await waitFor(() => expect(networkCalls()).toHaveLength(1));
+        expect(tableCalls()).toHaveLength(0);
+        expect(mapPinsCalls()).toHaveLength(0);
+        expect(mockUseTableMembers).toHaveBeenCalledTimes(0);
+
+        fireEvent.press(screen.getByLabelText('who, friends'));
+        fireEvent.press(screen.getByLabelText('sunday lunch'));
+        await waitFor(() => expect(tableCalls()).toHaveLength(1));
+        expect(networkCalls()).toHaveLength(1);
+        expect(mapPinsCalls()).toHaveLength(0);
+        expect(mockUseTableMembers).toHaveBeenCalledWith('table-a');
+        expect(mockUseTableMembers).toHaveBeenCalledTimes(1);
+        expect(screen.getByLabelText('who, sunday lunch').props.accessibilityState.selected).toBe(true);
+        await waitFor(() => expect(screen.getByText('Italian · London · 2 of you pinned')).toBeTruthy());
+        expect(screen.getByTestId('wishlist-map').props.items[0]).toMatchObject({
+            id: 'table-pinned',
+            been: undefined,
+            overlap: { count: 2, tableId: 'table-a', tableName: 'sunday lunch' },
+        });
+
+        // Been-together pins are lazy-armed: only the table scope's `been`
+        // layer requests `table-atlas/map_pins`.
+        fireEvent.press(screen.getByLabelText('been'));
+        await waitFor(() => expect(mapPinsCalls()).toHaveLength(1));
+        expect(networkCalls()).toHaveLength(1);
+        expect(tableCalls()).toHaveLength(1);
+
+        mockUseTableMembers.mockClear();
+        fireEvent.press(screen.getByLabelText('who, sunday lunch'));
+        expect(mockUseTableMembers).toHaveBeenCalledTimes(0);
+        expect(screen.getByText('WHO')).toBeTruthy();
+    });
+
+    it('applies validated view, layer, and friends route params once', async () => {
+        mockRouteParams = { view: 'list', layer: 'pinned', scope: 'friends' };
+        mockCallEdgeFn.mockResolvedValue({ pins: [] });
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+
+        await waitFor(() => expect(placesScreenState.get('viewer')).toMatchObject({
+            viewMode: 'list',
+            layerFilter: 'pinned',
+            scope: { kind: 'friends' },
+        }));
+        expect(mockSetParams).toHaveBeenCalledWith({
+            q: undefined,
+            mode: undefined,
+            view: undefined,
+            layer: undefined,
+            scope: undefined,
+        });
+    });
+
+    it('ignores unsupported view, layer, and scope route params', async () => {
+        mockRouteParams = { view: 'grid', layer: 'friends', scope: 'table' };
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+
+        await waitFor(() => expect(mockSetParams).toHaveBeenCalled());
+        expect(placesScreenState.get('viewer')).toMatchObject({
+            viewMode: 'map',
+            layerFilter: 'all',
+            scope: { kind: 'you' },
+        });
+    });
+
+    it('keeps a locked table scope through the route-param effect instead of clearing it', () => {
+        // Regression for TICKET-237 fix pass 1 P1: a locked instance's own
+        // `scope=table` route param must never be treated as a route
+        // request — doing so calls `router.setParams({ scope: undefined })`,
+        // which also clears the parent (app/places-scope.tsx) wrapper's read
+        // of that param and collapses `lockedScope` back to `{ kind: 'you' }`.
+        mockRouteParams = { scope: 'table' };
+        mockCallEdgeFn.mockResolvedValue({ pins: [] });
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen lockedScope={{ kind: 'table', tableId: 'table-a' }} />
+            </QueryClientProvider>,
+        );
+
+        expect(screen.getByLabelText('who, sunday lunch')).toBeTruthy();
+        expect(mockSetParams).not.toHaveBeenCalled();
+    });
+
+    it('lands a retired-wishlist arrival on places/list/pinned out of Lists and search', async () => {
+        mockRouteParams = { view: 'list', layer: 'pinned' };
+        placesScreenState.patch('viewer', {
+            activeSegment: 'lists',
+            query: 'ramen',
+            previousNonSearchSnap: 0,
+        });
+        mockCallEdgeFn.mockResolvedValue({ pins: [] });
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+
+        await waitFor(() => expect(placesScreenState.get('viewer')).toMatchObject({
+            activeSegment: 'places',
+            viewMode: 'list',
+            layerFilter: 'pinned',
+            query: '',
+            previousNonSearchSnap: null,
+        }));
     });
 
     it('paginates the full browse ledger with an honest plus count until exhaustion', () => {
@@ -710,6 +927,7 @@ describe('Places People-segment paid-call gate', () => {
         fireEvent.press(screen.getByLabelText('been'));
         expect(screen.getByTestId('wishlist-map').props.unmappableCount).toBe(0);
         mockCallEdgeFn.mockResolvedValueOnce({ pins: [] });
+        fireEvent.press(screen.getByLabelText('who, you'));
         fireEvent.press(screen.getByLabelText('friends'));
         await waitFor(() => expect(screen.getByText('nothing from friends yet')).toBeTruthy());
         expect(screen.getByTestId('wishlist-map').props.unmappableCount).toBe(0);
@@ -757,6 +975,72 @@ describe('Places People-segment paid-call gate', () => {
         });
     });
 
+    it('resets facet filters on a scope change and on a layer switch to been', async () => {
+        mockRouteParams = {};
+        mockWishlistState = {
+            data: { pages: [{ data: ['British', 'Japanese'].map((cuisine, index) => ({
+                restaurant: {
+                    id: `pinned-${index}`,
+                    name: `Pinned ${index}`,
+                    city: 'London',
+                    cuisine,
+                    lat: 51.5,
+                    lng: -0.1,
+                    price_level: 2,
+                    google_rating: 4.2,
+                },
+            })) }] },
+            isLoading: false,
+            isError: false,
+            refetch: mockWishlistRefetch,
+            fetchNextPage: mockFetchNextPage,
+            hasNextPage: false,
+            isFetchingNextPage: false,
+        };
+        mockCallEdgeFn.mockImplementation(async (name, options) => {
+            if (options?.action === 'network_map_pins') return { pins: [] } as never;
+            if (name === 'wishlist' && options?.action === 'list_table') {
+                return [{
+                    restaurant: {
+                        id: 'table-pinned',
+                        name: 'Brutto',
+                        city: 'London',
+                        cuisine: 'Italian',
+                        lat: 51.5,
+                        lng: -0.1,
+                        price_level: 2,
+                    },
+                    count: 2,
+                    members: [],
+                    viewer_item_id: null,
+                }] as never;
+            }
+            return [] as never;
+        });
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+
+        act(() => screen.getByTestId('filter-sheet').props.cuisine.onSelect('Japanese'));
+        expect(screen.getByTestId('filter-sheet').props.cuisine.selected).toBe('Japanese');
+
+        fireEvent.press(screen.getByLabelText('who, you'));
+        fireEvent.press(screen.getByLabelText('sunday lunch'));
+        await waitFor(() => expect(
+            screen.getByLabelText('who, sunday lunch').props.accessibilityState.selected,
+        ).toBe(true));
+        expect(screen.getByTestId('filter-sheet').props.cuisine.selected).toBeNull();
+
+        act(() => screen.getByTestId('filter-sheet').props.price.onSelect('2'));
+        expect(screen.getByTestId('filter-sheet').props.price.selected).toBe('2');
+
+        fireEvent.press(screen.getByLabelText('been'));
+        expect(screen.getByTestId('filter-sheet').props.price.selected).toBeNull();
+    });
+
     it('renders network cold and warm failures with network-only retries', async () => {
         mockRouteParams = {};
         mockCallEdgeFn.mockRejectedValueOnce(new Error('network unavailable'));
@@ -766,6 +1050,7 @@ describe('Places People-segment paid-call gate', () => {
                 <PlacesScreen />
             </QueryClientProvider>,
         );
+        fireEvent.press(cold.getByLabelText('who, you'));
         fireEvent.press(cold.getByLabelText('friends'));
         await waitFor(() => expect(cold.getByText("couldn't load places")).toBeTruthy());
         mockCallEdgeFn.mockResolvedValueOnce({ pins: [] });
@@ -799,6 +1084,7 @@ describe('Places People-segment paid-call gate', () => {
                 <PlacesScreen />
             </QueryClientProvider>,
         );
+        fireEvent.press(warm.getByLabelText('who, you'));
         fireEvent.press(warm.getByLabelText('friends'));
         await waitFor(() => expect(warm.getByText('1 place')).toBeTruthy());
         mockCallEdgeFn.mockRejectedValueOnce(new Error('refresh unavailable'));

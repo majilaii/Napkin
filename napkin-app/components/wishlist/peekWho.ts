@@ -7,9 +7,9 @@
  *
  *  - network   — a followee's LOG (entryId present): "«Name»  +N others".
  *                Verb stays a log; the name is the affordance (bold, tappable).
- *  - saved-by  — a single-member table save (overlap.count === 1):
- *                "saved by «Name»" — bold name, tap → that person.
- *  - overlap-many — 2+ members saved it (overlap.count >= 2): "N of you saved
+ *  - saved-by  — a single-member table pin (overlap.count === 1):
+ *                "pinned by «Name»" — bold name, tap → that person.
+ *  - overlap-many — 2+ members pinned it (overlap.count >= 2): "N of you pinned
  *                this". No single person → not tappable.
  *
  * `gathered` (group-meal) rows keep their date wording and are rendered by the
@@ -55,7 +55,7 @@ export function describePeekWho(item: PeekWhoInput): PeekWho {
     if (item.overlap != null) {
         const count = item.overlap.count ?? 0;
         if (count >= 2) {
-            return { variant: 'overlap-many', label: `${count} of you saved this` };
+            return { variant: 'overlap-many', label: `${count} of you pinned this` };
         }
         const first = item.overlap.members[0];
         return {

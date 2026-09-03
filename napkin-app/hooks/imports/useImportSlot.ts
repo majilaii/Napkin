@@ -1,7 +1,7 @@
 /**
  * useImportSlot — the live "one import card, ever" state (TICKET-185).
  *
- * A pure move of the derivation that used to live inline in app/wishlist.tsx, so
+ * A pure move of the derivation that used to live inline in the retired wishlist screen, so
  * the map-tab status chip and the profile Explore "Imports" row share one source
  * of truth. Behaviour is identical, including the sacred via-hub routing.
  */

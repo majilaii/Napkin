@@ -42,6 +42,7 @@ import { useUserSpots, deriveTaste } from '@/hooks/users/useUserSpots';
 import { useReportContent, useBlockUser, useUnblockUser } from '@/hooks/account';
 import { useImportSlot } from '@/hooks/imports/useImportSlot';
 import { deviceTimeZone, ledgerMonthFor, useLedger } from '@/hooks/users/useLedger';
+import { PINNED_PLACES_ROUTE } from '@/lib/handoffNavigation';
 
 import { ProfileHeader } from './ProfileHeader';
 import { ImportAttentionCard } from './ImportAttentionCard';
@@ -306,10 +307,10 @@ export function ProfileScreenBody({ identifier, inTab = false }: Props) {
 
     if (isSelf) {
         indexSections.push({
-            title: 'Wishlist',
+            title: 'Pinned',
             count: null,
-            hint: 'Places saving for later',
-            route: '/wishlist',
+            hint: 'Places for later',
+            route: PINNED_PLACES_ROUTE,
         });
     }
 

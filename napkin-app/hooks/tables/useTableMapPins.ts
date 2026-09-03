@@ -1,7 +1,7 @@
 /**
  * useTableMapPins — the table's been-together map pins (TICKET-139).
  *
- * Backs the /table-map "Been together" layer: the table's group meals (suppers +
+ * Backs the Places table scope's "been" layer: the table's group meals (suppers +
  * legacy rounds) with coordinates, one row per restaurant (most-recent group meal
  * wins; `suppers_count` for "×N"), member-gated by table-atlas's existing
  * `checkMembership`. Lazy-armed on the first "Been together" select.

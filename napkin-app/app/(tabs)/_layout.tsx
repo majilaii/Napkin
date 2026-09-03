@@ -11,7 +11,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
  * TICKET-070: IA update — Profile replaces Journal in the nav.
  *   - profile: activated (href: null removed)
  *   - journal: demoted to hidden (deep-link safe; no longer a tab button)
- *   - wishlist: still a reachable Stack route and marks Places active
+ *   - wishlist: retired; pinned places live in Places
  *
  * The built-in tab bar is HIDDEN (`display: 'none'`) — navigation is handled
  * entirely by the custom BottomNavBar in `app/_layout.tsx`.

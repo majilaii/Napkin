@@ -44,7 +44,7 @@ import { LEGAL_URLS } from '@/constants/links';
  * pending share/handoff by routing to it and returning `true` so the caller
  * bails before RootLayoutNav's session-flip redirect. Returns `false` when there
  * is nothing to resume — the caller lets RootLayoutNav route (onboarding for a
- * new user, /wishlist for a returning one, both keyed off profiles.onboarded_at).
+ * new user, Places pinned-list for a returning one, both keyed off profiles.onboarded_at).
  * Shared by all three entry points so the subtle resume-vs-redirect race stays
  * correct in one place.
  */
@@ -188,7 +188,7 @@ export default function AuthScreen() {
     // dance, hand the ID token to signInWithIdToken, then reuse the SAME
     // consume→auth→resume sequence as the password path. New OAuth user →
     // handle_new_user leaves onboarded_at NULL → RootLayoutNav routes /onboarding;
-    // returning → /wishlist. A pending share/handoff resumes via resumeAfterAuth.
+    // returning → Places pinned-list. A pending share/handoff resumes via resumeAfterAuth.
     const signInWithProvider = async (provider: 'apple' | 'google') => {
         // Apple Authentication has no Android native implementation. The button
         // is hidden below, and this guard keeps a future programmatic caller from

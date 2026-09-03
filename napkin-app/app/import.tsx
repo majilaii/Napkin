@@ -29,6 +29,7 @@ import * as pendingImport from '@/lib/pendingImport';
 import { enqueueVideoImport } from '@/lib/importQueue';
 import { useToast } from '@/providers/ToastProvider';
 import { ImportLinkSheet } from '@/components/wishlist';
+import { PINNED_PLACES_ROUTE } from '@/lib/handoffNavigation';
 
 export default function ImportScreen() {
     const { url, video, nonce } = useLocalSearchParams<{ url?: string; video?: string; nonce?: string }>();
@@ -69,7 +70,7 @@ export default function ImportScreen() {
             // Group queue can reach the missing Apple-only native module.
             if (Platform.OS !== 'ios') {
                 toast.show("video imports aren't available on this device");
-                router.replace(signedIn ? ('/wishlist' as any) : '/auth');
+                router.replace(signedIn ? PINNED_PLACES_ROUTE : '/auth');
                 return;
             }
             enqueueVideoImport(rawVideoParam, session?.user.id ?? null)
@@ -80,7 +81,7 @@ export default function ImportScreen() {
                 .catch(() => {
                     toast.show("couldn't add that video — try sharing again");
                 });
-            router.replace(signedIn ? ('/wishlist' as any) : '/auth');
+            router.replace(signedIn ? PINNED_PLACES_ROUTE : '/auth');
             return;
         }
 
@@ -114,11 +115,11 @@ export default function ImportScreen() {
 
     const handleDismiss = () => {
         setSheetVisible(false);
-        router.replace('/wishlist' as any);
+        router.replace(PINNED_PLACES_ROUTE);
     };
 
     const handleErrorTap = () => {
-        router.replace('/wishlist' as any);
+        router.replace(PINNED_PLACES_ROUTE);
     };
 
     return (
