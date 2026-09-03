@@ -1,16 +1,19 @@
 /**
  * TableHeader — masthead for the Tables tab.
  *
- * TICKET-141 layout (locked):
+ * TICKET-238 layout (locked):
  *   Top row:
- *     Left  — "TABLE" kicker + italic serif name + ▾ caret (the switcher).
+ *     Left  — upright serif name (28/34) + ▾ caret (the switcher). No kicker:
+ *             the name IS the masthead, and 10pt sat below the legibility floor.
+ *             Italic stays reserved for ratings and quotes.
  *     Right — ONLY the NotifBell + settings gear (22px, matched pair). No other
  *             icons up top; the masthead stays editorial (Heirloom: structure
  *             from spacing, not icon rows).
  *   Members row (under the name, one line):
- *     overlapping avatar stack (max 4) · "N members" · ghost `invite` chip ·
- *     ghost `map` chip. Actions sit with the content they act on. Manrope 13,
- *     frosted ghost pills (the map's chip grammar).
+ *     overlapping avatar stack (max 4) · "N members" · ghost `invite` chip
+ *     (owner only). Actions sit with the content they act on. Manrope 13,
+ *     frosted ghost pills. The `map` chip retired with TICKET-238 — the table's
+ *     map is one doorway row on the Activity pane, not a masthead chip.
  *
  * Purely presentational — no hook calls inside. All handlers are supplied by
  * the Tables screen (re-plumbing, not new features).
@@ -19,7 +22,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { Avatar } from '@/components/feed/Avatar';
 import { NotifBell } from '@/components/notifications';
 
@@ -43,9 +46,6 @@ export interface TableHeaderProps {
     /** TICKET-133: bell on the Tables header — same dot/source as Profile. */
     onBellPress?: () => void;
     bellUnread?: boolean;
-    /** TICKET-139/141: the table's territory map — a `map` chip in the members
-     * row (any member may open it; the map is member-gated server-side). */
-    onMapPress?: () => void;
 }
 
 const MAX_STACK_AVATARS = 4;
@@ -62,7 +62,6 @@ export function TableHeader({
     onInvitePress,
     onBellPress,
     bellUnread,
-    onMapPress,
 }: TableHeaderProps) {
     const visibleAvatars = memberNames.slice(0, MAX_STACK_AVATARS);
     const overflow = Math.max(memberNames.length - MAX_STACK_AVATARS, 0);
@@ -85,7 +84,6 @@ export function TableHeader({
                     accessibilityRole="button"
                     accessibilityLabel={`Switch table, currently ${tableName}`}
                 >
-                    <Text style={[styles.kicker, { color: palette.textMuted }]}>TABLE</Text>
                     <View style={styles.nameRow}>
                         <Text
                             style={[styles.tableName, { color: palette.text }]}
@@ -121,7 +119,7 @@ export function TableHeader({
                 </View>
             </View>
 
-            {/* Members row: avatars · count · invite chip · map chip. */}
+            {/* Members row: avatars · count · invite chip. */}
             <View style={styles.membersRow}>
                 {stackCells > 0 && (
                     <View style={[styles.avatarStack, { width: stackWidth }]}>
@@ -181,22 +179,6 @@ export function TableHeader({
                         </Text>
                     </Pressable>
                 )}
-
-                {onMapPress && (
-                    <Pressable
-                        onPress={onMapPress}
-                        hitSlop={8}
-                        accessibilityRole="button"
-                        accessibilityLabel="table map"
-                        style={({ pressed }) => [
-                            styles.ghostChip,
-                            { backgroundColor: palette.surfaceContainerHigh, opacity: pressed ? 0.6 : 1 },
-                        ]}
-                    >
-                        <Ionicons name="map-outline" size={14} color={palette.textSecondary} />
-                        <Text style={[styles.ghostChipLabel, { color: palette.textSecondary }]}>map</Text>
-                    </Pressable>
-                )}
             </View>
         </View>
     );
@@ -219,22 +201,15 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
     },
-    kicker: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 10,
-        letterSpacing: 0.8,
-        textTransform: 'uppercase',
-        marginBottom: 3,
-    },
     nameRow: {
         flexDirection: 'row',
         alignItems: 'baseline',
         gap: 6,
     },
     tableName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 24,
-        lineHeight: 26,
+        ...Type.headlineLarge,
+        fontFamily: 'Newsreader_600SemiBold',
+        fontWeight: '600',
         letterSpacing: -0.3,
         flexShrink: 1,
     },

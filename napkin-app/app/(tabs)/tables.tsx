@@ -20,7 +20,6 @@ import {
     ActivityIndicator,
     Share,
 } from 'react-native';
-import { WishlistGrid } from '@/components/wishlist';
 import { AtlasCityIndex } from '@/components/atlas';
 import { useTableAtlas } from '@/hooks/tables/useTableAtlas';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -74,6 +73,9 @@ import {
     AddMemberSheet,
     TableListsBlock,
     TableLedgerModule,
+    TableSegments,
+    OnTheMapRow,
+    type TableSegment,
 } from '@/components/tables';
 import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
@@ -162,7 +164,7 @@ export default function TablesScreen() {
         refetch: tablesRefetch,
     } = useTables(user?.id);
     const [selectedIndex, setSelectedIndex] = useState(0);
-    const [activeTab, setActiveTab] = useState<'activity' | 'wishlist' | 'lists' | 'atlas'>('activity');
+    const [activeTab, setActiveTab] = useState<TableSegment>('activity');
 
     // Deep links may select a Table and optionally force its Activity pane. Track
     // the params object instance, not scalar equality: delivering the same id a
@@ -235,8 +237,7 @@ export default function TablesScreen() {
     };
 
     // Atlas data — only fetched when the active table is a social table
-    // is_personal is a runtime DB field not reflected in the Table type
-    const isSocialTable = activeTable && !(activeTable as any).is_personal;
+    const isSocialTable = !!activeTable && !activeTable.is_personal;
 
     // Lists/Atlas segments only exist on social tables — clamp back to
     // Activity when the active table can't show the current segment, so the
@@ -255,7 +256,7 @@ export default function TablesScreen() {
 
     // Welcome banner: show when caller_welcomed_at IS NULL and role !== 'admin'
     const showWelcomeBanner =
-        !(activeTable as any)?.is_personal &&
+        isSocialTable &&
         tableDetail?.caller_welcomed_at === null &&
         tableDetail?.caller_role !== 'admin' &&
         tableDetail?.caller_role != null;
@@ -414,8 +415,7 @@ export default function TablesScreen() {
     //   - no Round is currently in progress (ActiveGatherBanner covers that state)
     //   - the Activity tab is active (pill is masthead chrome for the activity surface only)
     const showStartRoundPill =
-        !!activeTable &&
-        !(activeTable as any).is_personal &&
+        isSocialTable &&
         (members?.length ?? 0) >= 2 &&
         activeRounds.length === 0 &&
         activeTab === 'activity';
@@ -431,7 +431,7 @@ export default function TablesScreen() {
                 memberNames={memberNames}
                 onSwitcherPress={() => setShowTablePicker(true)}
                 palette={palette}
-                onSettingsPress={!(activeTable as any).is_personal ? handleSettingsPress : undefined}
+                onSettingsPress={isSocialTable ? handleSettingsPress : undefined}
                 // Designated + — the invite path no longer hides behind the gear
                 // (founder, 2026-07-03). Owner-only: add_member is owner-gated
                 // server-side; showing it to members would be a dead button.
@@ -442,11 +442,6 @@ export default function TablesScreen() {
                 }
                 onBellPress={() => router.push('/notifications')}
                 bellUnread={hasUnread}
-                // TICKET-139: the table's territory map (member-gated server-side).
-                onMapPress={() => router.push({
-                    pathname: '/places-scope',
-                    params: { scope: 'table', tableId: activeTable.id },
-                })}
             />
 
             {/* Welcome banner — shown once when a user is added to a table (TICKET-029) */}
@@ -469,65 +464,22 @@ export default function TablesScreen() {
                 />
             )}
 
-            {/* Activity | Wishlist | Lists | Atlas — editorial section-label style.
-                Atlas hidden during friend-test. */}
-            <View style={styles.tabRow}>
-                {(['activity', 'wishlist', ...(isSocialTable ? ['lists'] : []), ...(!FRIEND_TEST.hideAtlas && isSocialTable ? ['atlas'] : [])] as ('activity' | 'wishlist' | 'lists' | 'atlas')[]).map((tab) => {
-                    const isActive = activeTab === tab;
-                    const tabLabel =
-                        tab === 'activity'
-                            ? 'Activity'
-                            : tab === 'wishlist'
-                            ? 'Wishlist'
-                            : tab === 'lists'
-                            ? 'Lists'
-                            : 'Atlas';
-                    return (
-                        <Pressable
-                            key={tab}
-                            onPress={() => setActiveTab(tab)}
-                            style={styles.tabButton}
-                        >
-                            <Text
-                                style={[
-                                    styles.tabLabel,
-                                    {
-                                        color: isActive
-                                            ? palette.text
-                                            : palette.textMuted,
-                                    },
-                                ]}
-                            >
-                                {tabLabel}
-                            </Text>
-                            <View
-                                style={[
-                                    styles.tabUnderline,
-                                    {
-                                        backgroundColor: isActive
-                                            ? palette.primary
-                                            : 'transparent',
-                                    },
-                                ]}
-                            />
-                        </Pressable>
-                    );
-                })}
-            </View>
+            {/* activity · lists — one segment control across the app.
+                Wishlist retired (TICKET-238): the Table's saved places live in
+                Places under the table scope. Atlas stays flag-hidden. */}
+            <TableSegments
+                active={activeTab}
+                onChange={setActiveTab}
+                showLists={isSocialTable}
+                showAtlas={!FRIEND_TEST.hideAtlas && isSocialTable}
+                palette={palette}
+            />
         </>
     );
 
     return (
         <View style={{ flex: 1, backgroundColor: palette.background }}>
-            {/* Wishlist tab — FlatList owns its own scrolling, so render outside ScrollView */}
-            {activeTab === 'wishlist' ? (
-                <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
-                    {headerAndControl}
-                    {activeTable && (
-                        <WishlistGrid mode="table" tableId={activeTable.id} />
-                    )}
-                </View>
-            ) : activeTab === 'lists' && activeTable && isSocialTable ? (
+            {activeTab === 'lists' && activeTable && isSocialTable ? (
                 /* Lists tab — TICKET-115 shared Table lists. Social tables only;
                    switching to a personal table falls through to activity. */
                 <View style={{ flex: 1, paddingTop: insets.top + Spacing.sm }}>
@@ -589,6 +541,22 @@ export default function TablesScreen() {
                     }
                 >
                     {headerAndControl}
+
+                    {/* TICKET-238: the Table's one doorway to the map — pushes the
+                        scoped Places screen; back lands here. Count-free by design:
+                        a meta line would mount the wishlist and map-pins queries on
+                        a pane that renders neither. Social tables only. */}
+                    {isSocialTable && activeTable && (
+                        <OnTheMapRow
+                            palette={palette}
+                            onPress={() =>
+                                router.push({
+                                    pathname: '/places-scope',
+                                    params: { scope: 'table', tableId: activeTable.id },
+                                })
+                            }
+                        />
+                    )}
 
                     {/* TICKET-128: upcoming strip — what's booked/brewing for this
                         table, under the masthead. Renders null when there's nothing
@@ -1194,29 +1162,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingTop: Spacing.sm,
         gap: 20,
-    },
-    tabRow: {
-        flexDirection: 'row',
-        gap: Spacing.lg,
-        paddingHorizontal: 22,
-        paddingTop: Spacing.sm,
-        paddingBottom: Spacing.xs,
-        alignItems: 'center',
-    },
-    tabButton: {
-        alignItems: 'flex-start',
-    },
-    tabLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 10,
-        letterSpacing: 0.8,
-        textTransform: 'uppercase',
-        paddingVertical: 4,
-    },
-    tabUnderline: {
-        height: 2,
-        alignSelf: 'stretch',
-        marginTop: 2,
     },
     sectionLabel: {
         fontFamily: 'Manrope_600SemiBold',

@@ -1,5 +1,4 @@
 export { WishlistHeartButton } from './WishlistHeartButton';
-export { WishlistGrid } from './WishlistGrid';
 export { WishlistCard } from './WishlistCard';
 export { RemoveConfirmationSheet } from './RemoveConfirmationSheet';
 export { WishlistEmpty } from './WishlistEmpty';
