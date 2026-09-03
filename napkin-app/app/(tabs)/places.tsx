@@ -548,6 +548,10 @@ export default function PlacesScreen() {
         [cityGroups, placesHaveMore],
     );
     const viewToggle = placesViewToggle(screenState.viewMode);
+    const listModeBottomPadding = insets.bottom
+        + NAV_CLEARANCE
+        + VIEW_TOGGLE_HEIGHT
+        + Spacing.md;
     const currentPins = useMemo(() => projectPlacesPins(filteredRows), [filteredRows]);
     const currentScopeKey = queryActive
         ? `search:${locality === 'auto' ? 'auto' : locality.city.trim().toLowerCase()}:${debouncedQuery.trim().toLowerCase()}`
@@ -813,7 +817,9 @@ export default function PlacesScreen() {
                         onNewList={() => router.push('/list/new')}
                         onRetryMyLists={() => { void myListsQuery.refetch(); }}
                         onRetrySavedLists={() => { void savedListsQuery.refetch(); }}
-                        bottomPadding={insets.bottom + NAV_CLEARANCE}
+                        bottomPadding={listMode
+                            ? listModeBottomPadding
+                            : insets.bottom + NAV_CLEARANCE}
                     />
                 );
             }
@@ -841,6 +847,7 @@ export default function PlacesScreen() {
                 <PeopleSearchPane
                     query={immediateQuery}
                     debouncedQuery={debouncedQuery}
+                    bottomPadding={listMode ? listModeBottomPadding : 0}
                 />
             );
         }
@@ -935,12 +942,7 @@ export default function PlacesScreen() {
                     onEndReachedThreshold={0.4}
                     contentContainerStyle={[
                         styles.cityLedgerContent,
-                        {
-                            paddingBottom: insets.bottom
-                                + NAV_CLEARANCE
-                                + VIEW_TOGGLE_HEIGHT
-                                + Spacing.md,
-                        },
+                        { paddingBottom: listModeBottomPadding },
                     ]}
                     ListHeaderComponent={failurePresentation.kind === 'inline'
                         ? (

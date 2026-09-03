@@ -170,7 +170,13 @@ jest.mock('@/components/search', () => {
                 {query.trim().length < 2 ? 'guidance' : `results:${query}`}
             </ReactNative.Text>
         ),
-        PeopleSearchPane: Stub,
+        PeopleSearchPane: ({ bottomPadding }: { bottomPadding?: number }) => (
+            <ReactNative.View
+                {...({ testID: 'people-pane-state', bottomPadding } as React.ComponentProps<
+                    typeof ReactNative.View
+                >)}
+            />
+        ),
         ListRow: ({ list, meta }: { list: { title: string }; meta?: string }) => (
             <ReactNative.View>
                 <ReactNative.Text>{list.title}</ReactNative.Text>
@@ -213,6 +219,7 @@ jest.mock('@/components/places/PlacesListsPane', () => {
             onScroll,
             onOpenList,
             onNewList,
+            bottomPadding,
         }: {
             branch: string;
             myLists: { id: string; title: string }[];
@@ -221,12 +228,14 @@ jest.mock('@/components/places/PlacesListsPane', () => {
             onScroll: unknown;
             onOpenList: (id: string) => void;
             onNewList: () => void;
+            bottomPadding: number;
         }) => (
             <ReactNative.View {...({
                 testID: 'places-lists-pane',
                 branch,
                 scrollEnabled,
                 onScroll,
+                bottomPadding,
             } as React.ComponentProps<typeof ReactNative.View>)}>
                 <ReactNative.Text>Your lists</ReactNative.Text>
                 {myLists.map((list) => (
@@ -446,6 +455,24 @@ describe('Places People-segment paid-call gate', () => {
                 }),
             ]),
         );
+    });
+
+    it('clears the Lists and People panes above the list-mode map pill', () => {
+        mockRouteParams = {};
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+        const expectedPadding = 92 + Spacing.hitTarget + Spacing.md;
+
+        fireEvent.press(screen.getByLabelText('list places'));
+        fireEvent.press(screen.getByLabelText('segment lists'));
+        expect(screen.getByTestId('places-lists-pane').props.bottomPadding).toBe(expectedPadding);
+
+        fireEvent.press(screen.getByLabelText('segment people'));
+        expect(screen.getByTestId('people-pane-state').props.bottomPadding).toBe(expectedPadding);
     });
 
     it('renders the default union and requests network pins only for friends', async () => {

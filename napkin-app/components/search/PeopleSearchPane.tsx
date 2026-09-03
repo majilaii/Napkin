@@ -38,6 +38,7 @@ interface Props {
     /** Optional sheet adapter; legacy callers stay independently scrollable. */
     scrollEnabled?: boolean;
     onScroll?: SnapSheetContentContext['onScroll'];
+    bottomPadding?: number;
 }
 
 const INVITE_LINK = 'https://napkinapp.com/i/';
@@ -85,6 +86,7 @@ export function PeopleSearchPane({
     debouncedQuery,
     scrollEnabled = true,
     onScroll,
+    bottomPadding = 0,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -162,6 +164,7 @@ export function PeopleSearchPane({
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             style={styles.list}
+            contentContainerStyle={{ paddingBottom: bottomPadding }}
             scrollEnabled={scrollEnabled}
             onScroll={onScroll}
             scrollEventThrottle={16}

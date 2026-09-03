@@ -66,6 +66,7 @@ export function PlacesRow({ item, onPress, showThumbnail = false }: Props) {
         item.row.photoUrl,
         showThumbnail,
     ]);
+    const credit = photo?.credit?.redundant ? null : photo?.credit;
 
     return (
         <Pressable
@@ -99,15 +100,22 @@ export function PlacesRow({ item, onPress, showThumbnail = false }: Props) {
                     </Text>
                     <PlacesRatingLabel row={item.row} />
                 </View>
-                {meta || photo?.credit ? (
-                    <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
+                {meta ? (
+                    <Text
+                        testID="places-row-meta"
+                        style={[styles.meta, { color: palette.textMuted }]}
+                        numberOfLines={1}
+                    >
                         {meta}
-                        {meta && photo?.credit ? ' · ' : null}
-                        {photo?.credit ? (
-                            <Text testID="places-row-photo-credit" style={styles.credit}>
-                                photo by {photo.credit.label}
-                            </Text>
-                        ) : null}
+                    </Text>
+                ) : null}
+                {credit ? (
+                    <Text
+                        testID="places-row-photo-credit"
+                        style={[styles.credit, { color: palette.textMuted }]}
+                        numberOfLines={1}
+                    >
+                        photo by {credit.label}
                     </Text>
                 ) : null}
             </View>

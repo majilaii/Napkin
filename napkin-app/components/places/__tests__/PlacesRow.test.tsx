@@ -72,8 +72,30 @@ describe('PlacesRow', () => {
             />,
         );
         expect(attributedPlaces.getByTestId('places-row-thumbnail-brawn')).toBeTruthy();
-        expect(attributedPlaces.getByTestId('places-row-photo-credit')).toBeTruthy();
+        const meta = attributedPlaces.getByTestId('places-row-meta');
+        const credit = attributedPlaces.getByTestId('places-row-photo-credit');
+        expect(meta.findAllByProps({ testID: 'places-row-photo-credit' })).toHaveLength(0);
+        expect(meta.props.children).toBe('british · 0.4 mi · pinned');
+        expect(credit.props.numberOfLines).toBe(1);
         expect(attributedPlaces.getByText('photo by Jane Doe')).toBeTruthy();
+
+        const redundantCredit = render(
+            <PlacesRow
+                item={{
+                    ...base,
+                    row: {
+                        ...base.row,
+                        photoUrl: 'https://cdn.example/redundant.jpg',
+                        photoSource: 'places',
+                        photoAttributionHtml: 'Brawn',
+                    },
+                }}
+                onPress={jest.fn()}
+                showThumbnail
+            />,
+        );
+        expect(redundantCredit.getByTestId('places-row-thumbnail-brawn')).toBeTruthy();
+        expect(redundantCredit.queryByTestId('places-row-photo-credit')).toBeNull();
 
         const uncreditedPlaces = render(
             <PlacesRow
