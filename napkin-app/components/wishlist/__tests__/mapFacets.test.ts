@@ -1,5 +1,5 @@
 /**
- * mapFacets unit tests — TICKET-143 table-map filter chip + list ledger.
+ * mapFacets unit tests — TICKET-143 scoped-map filter chip + list ledger.
  *
  * Pins the load-bearing rules:
  *  - facets are frequency-ranked (ties → alpha); price ascending; only present

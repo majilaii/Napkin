@@ -76,7 +76,7 @@ export function SearchLocalityBar({
             >
                 <Ionicons
                     name="location-outline"
-                    size={compact ? 15 : IconSize.lg}
+                    size={compact ? IconSize.sm + Spacing.xs / 2 : IconSize.lg}
                     color={palette.textMuted}
                 />
                 <Text
@@ -218,18 +218,18 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     compactBar: {
-        minHeight: 34,
+        minHeight: Spacing.hitTarget - Spacing.xs,
         marginHorizontal: 0,
-        paddingHorizontal: 11,
+        paddingHorizontal: Spacing.sm + Spacing.xs + Spacing.xs / 2,
         borderRadius: Radius.full,
-        gap: 6,
+        gap: Spacing.sm - Spacing.xs / 2,
         flex: 0,
         maxWidth: 160,
     },
     compactLabel: {
         flex: 0,
         maxWidth: 102,
-        ...Type.metadata,
+        ...Type.feedLedger,
         fontFamily: 'Manrope_600SemiBold',
     },
     modalRoot: {

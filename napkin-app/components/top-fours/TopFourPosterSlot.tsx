@@ -5,7 +5,7 @@
  * Empty + owner:  Pressable → calls onOpenEdit()
  * Empty + viewer: inert (no press handler)
  *
- * Aspect ratio 3:4, Radius.sm, ambient Shadow.clip. Matches WishlistByCity poster.
+ * Aspect ratio 3:4, Radius.sm, ambient Shadow.clip. Matches the collection-poster grammar.
  */
 
 import React from 'react';

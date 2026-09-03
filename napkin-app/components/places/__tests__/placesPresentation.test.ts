@@ -5,6 +5,7 @@ import {
     decorateAndSortRows,
     deriveDistanceOrigin,
     filterPlacesLayerRows,
+    filterPlacesRowsForScope,
     flattenPlacesCityGroups,
     groupRowsByCity,
     networkRowsToDisplayRows,
@@ -22,6 +23,8 @@ import {
     selectNearbyPlaces,
     shouldShowPlacesFollowingRail,
     shouldFetchNextPlacesPage,
+    tableMapPinsToDisplayRows,
+    tableWishlistRowsToDisplayRows,
     wishlistRowsToDisplayRows,
 } from '../placesPresentation';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
@@ -96,7 +99,7 @@ describe('Places projection', () => {
         ]).map((row) => ({ ...row, been: true }));
         const friends = networkRowsToDisplayRows([networkPin]);
 
-        const all = filterPlacesLayerRows('all', pinned, been, friends);
+        const all = filterPlacesLayerRows('all', pinned, been);
         expect(all.map((row) => row.id)).toEqual(['shared', 'pinned-only', 'been-only']);
         expect(all).toHaveLength(3);
         expect(projectPlacesPins(all).find((pin) => pin.id === 'shared')?.been).toBe(true);
@@ -110,7 +113,15 @@ describe('Places projection', () => {
         expect(filterPlacesLayerRows('pinned', pinned, been)).toHaveLength(2);
         expect(filterPlacesLayerRows('been', pinned, been)).toHaveLength(2);
         expect(all.some((row) => row.id === 'friend-only')).toBe(false);
-        expect(filterPlacesLayerRows('friends', pinned, been, friends)).toEqual(friends);
+        expect(filterPlacesRowsForScope({
+            scope: { kind: 'friends' },
+            layerFilter: 'all',
+            pinnedRows: pinned,
+            beenRows: been,
+            friendsRows: friends,
+            tablePinnedRows: [],
+            tableBeenRows: [],
+        })).toEqual(friends);
     });
 
     it('commits pins only in Places, never from disabled Lists or People', () => {
@@ -252,6 +263,66 @@ describe('Places projection', () => {
         expect(restaurantRouteForRow(row)).toEqual({
             pathname: '/restaurant/[id]',
             params: { id: 'friend-only' },
+        });
+    });
+
+    it('projects table overlap for all/pinned and gathered pins only for been', () => {
+        const pinnedRows = tableWishlistRowsToDisplayRows([{
+            restaurant: {
+                id: 'table-pinned',
+                name: 'Brutto',
+                address: null,
+                city: 'London',
+                country: 'GB',
+                photo_url: null,
+                cuisine: 'Italian',
+                google_rating: null,
+                price_level: 2,
+                external_id: null,
+                lat: 51.5,
+                lng: -0.1,
+            },
+            count: 2,
+            members: [{
+                user_id: 'member-a',
+                display_name: 'Thomas',
+                avatar_url: null,
+            }],
+            viewer_item_id: null,
+        }], { tableId: 'table-a', tableName: 'sunday lunch' });
+        const beenRows = tableMapPinsToDisplayRows([{
+            table_id: 'table-a',
+            restaurant_id: 'table-been',
+            name: 'Brawn',
+            city: 'London',
+            cuisine: 'British',
+            lat: 51.53,
+            lng: -0.07,
+            supper_id: 'supper-a',
+            gathered_on: '2026-08-31T19:00:00Z',
+            participants: [],
+            suppers_count: 1,
+        }]);
+        const scoped = (layerFilter: 'all' | 'pinned' | 'been') => filterPlacesRowsForScope({
+            scope: { kind: 'table', tableId: 'table-a' },
+            layerFilter,
+            pinnedRows: [],
+            beenRows: [],
+            friendsRows: [],
+            tablePinnedRows: pinnedRows,
+            tableBeenRows: beenRows,
+        });
+
+        expect(projectPlacesPins(scoped('all'))[0]).toMatchObject({
+            id: 'table-pinned',
+            been: undefined,
+            overlap: { count: 2, tableId: 'table-a', tableName: 'sunday lunch' },
+        });
+        expect(projectPlacesPins(scoped('pinned'))).toEqual(projectPlacesPins(scoped('all')));
+        expect(projectPlacesPins(scoped('been'))[0]).toMatchObject({
+            id: 'table-been',
+            been: true,
+            gathered: { tableId: 'table-a', on: '2026-08-31T19:00:00Z' },
         });
     });
 
@@ -448,7 +519,6 @@ describe('Places projection', () => {
         expect(shouldFetchNextPlacesPage(base)).toBe(true);
         expect(shouldFetchNextPlacesPage({ ...base, layerFilter: 'pinned' })).toBe(true);
         expect(shouldFetchNextPlacesPage({ ...base, layerFilter: 'been' })).toBe(false);
-        expect(shouldFetchNextPlacesPage({ ...base, layerFilter: 'friends' })).toBe(false);
         expect(shouldFetchNextPlacesPage({ ...base, searchMode: true })).toBe(false);
         expect(shouldFetchNextPlacesPage({ ...base, activeSegment: 'lists' })).toBe(false);
         expect(shouldFetchNextPlacesPage({ ...base, isFetchingNextPage: true })).toBe(false);
@@ -505,10 +575,11 @@ describe('Places projection', () => {
         })).toEqual({ kind: 'inline', sources: ['wishlist', 'spots'] });
     });
 
-    it('uses only the network failure source for the friends layer', () => {
+    it('uses only the network failure source for the friends scope', () => {
         const base = {
             queryActive: false,
-            layerFilter: 'friends' as const,
+            layerFilter: 'all' as const,
+            scope: { kind: 'friends' } as const,
             placesFailed: false,
             persistedFailed: false,
             wishlistFailed: true,

@@ -56,8 +56,8 @@ describe('describePeekWho — network (followee log)', () => {
     });
 });
 
-describe('describePeekWho — overlap (table saves)', () => {
-    it('reads "saved by «Name»" with a tap target for a single-member save', () => {
+describe('describePeekWho — overlap (table pins)', () => {
+    it('reads "pinned by «Name»" with a tap target for a single-member pin', () => {
         expect(
             describePeekWho({
                 overlap: {
@@ -68,7 +68,7 @@ describe('describePeekWho — overlap (table saves)', () => {
         ).toEqual({ variant: 'saved-by', name: 'Clara', tapUserId: 'u2' });
     });
 
-    it('is a flat "N of you saved this" (no tap) for 2+ members', () => {
+    it('is a flat "N of you pinned this" (no tap) for 2+ members', () => {
         expect(
             describePeekWho({
                 overlap: {
@@ -79,10 +79,10 @@ describe('describePeekWho — overlap (table saves)', () => {
                     ],
                 },
             }),
-        ).toEqual({ variant: 'overlap-many', label: '3 of you saved this' });
+        ).toEqual({ variant: 'overlap-many', label: '3 of you pinned this' });
     });
 
-    it('degrades a single save with no member to Someone / null tap', () => {
+    it('degrades a single pin with no member to Someone / null tap', () => {
         expect(describePeekWho({ overlap: { count: 1, members: [] } })).toEqual({
             variant: 'saved-by',
             name: 'Someone',

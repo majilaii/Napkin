@@ -12,7 +12,7 @@ interface AuthContextType {
     isLoading: boolean;
     /**
      * TICKET-107 onboarding gate — TRI-STATE so RootLayoutNav never flashes
-     * /wishlist then bounces to /onboarding:
+     * the default signed-in route then bounces to /onboarding:
      *   undefined → not yet known (still loading the profile column; DON'T route)
      *   null      → needs onboarding (route to /onboarding)
      *   string    → already onboarded (the timestamp)

@@ -1,4 +1,5 @@
-export const HANDOFF_FALLBACK_ROUTE = '/wishlist' as const;
+export const PINNED_PLACES_ROUTE = '/(tabs)/places?view=list&layer=pinned' as const;
+export const HANDOFF_FALLBACK_ROUTE = PINNED_PLACES_ROUTE;
 
 interface HandoffRouter {
     canGoBack: () => boolean;

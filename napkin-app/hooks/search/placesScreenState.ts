@@ -4,6 +4,10 @@ import type { SearchMode } from '@/components/search/searchModeTabsGate';
 import type { Region } from 'react-native-maps';
 
 export type PlacesViewMode = 'map' | 'list';
+export type PlacesScope =
+    | { kind: 'you' }
+    | { kind: 'friends' }
+    | { kind: 'table'; tableId: string };
 
 export interface PlacesScreenSnapshot {
     query: string;
@@ -12,13 +16,14 @@ export interface PlacesScreenSnapshot {
     scrollOffset: number;
     activeSegment: SearchMode;
     layerFilter: PlacesLayerFilter;
+    scope: PlacesScope;
     viewMode: PlacesViewMode;
     region: Region | null;
     previousNonPeopleSnap: Snap | null;
     previousNonSearchSnap: Snap | null;
 }
 
-export type PlacesLayerFilter = 'all' | 'pinned' | 'been' | 'friends';
+export type PlacesLayerFilter = 'all' | 'pinned' | 'been';
 
 const INITIAL_STATE: PlacesScreenSnapshot = Object.freeze({
     query: '',
@@ -27,15 +32,12 @@ const INITIAL_STATE: PlacesScreenSnapshot = Object.freeze({
     scrollOffset: 0,
     activeSegment: 'places',
     layerFilter: 'all',
+    scope: { kind: 'you' } as PlacesScope,
     viewMode: 'map',
     region: null,
     previousNonPeopleSnap: null,
     previousNonSearchSnap: null,
 });
-
-let activeUserId: string | null = null;
-let snapshot: PlacesScreenSnapshot = INITIAL_STATE;
-const listeners = new Set<() => void>();
 
 export function togglePlacesLayerFilter(
     current: PlacesLayerFilter,
@@ -116,57 +118,82 @@ function cleanUserId(userId: string | null | undefined): string | null {
     return userId?.trim() || null;
 }
 
-function emit(): void {
-    for (const listener of listeners) listener();
-}
-
-export const placesScreenState = {
-    setActiveUser(userId: string | null | undefined): void {
-        const next = cleanUserId(userId);
-        if (next === activeUserId) return;
-        activeUserId = next;
-        snapshot = INITIAL_STATE;
-        emit();
-    },
-
-    get(userId: string | null | undefined): PlacesScreenSnapshot {
-        return cleanUserId(userId) === activeUserId ? snapshot : INITIAL_STATE;
-    },
-
-    patch(
+export interface PlacesScreenStateStore {
+    setActiveUser: (userId: string | null | undefined) => void;
+    get: (userId: string | null | undefined) => PlacesScreenSnapshot;
+    patch: (
         userId: string | null | undefined,
         value: Partial<PlacesScreenSnapshot>,
-    ): void {
-        const key = cleanUserId(userId);
-        if (!key) return;
-        if (activeUserId !== key) this.setActiveUser(key);
-        const next = { ...snapshot, ...value };
-        if (Object.keys(value).every((field) => (
-            next[field as keyof PlacesScreenSnapshot]
-            === snapshot[field as keyof PlacesScreenSnapshot]
-        ))) return;
-        snapshot = next;
-        emit();
-    },
+    ) => void;
+    subscribe: (listener: () => void) => () => void;
+}
 
-    subscribe(listener: () => void): () => void {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-    },
-};
+/** Each mounted Places surface owns one auth-fenced snapshot and listener set. */
+export function createPlacesScreenState(
+    initial: Partial<PlacesScreenSnapshot> = {},
+): PlacesScreenStateStore {
+    const initialSnapshot: PlacesScreenSnapshot = Object.freeze({
+        ...INITIAL_STATE,
+        ...initial,
+    });
+    let activeUserId: string | null = null;
+    let snapshot: PlacesScreenSnapshot = initialSnapshot;
+    const listeners = new Set<() => void>();
+    const emit = () => {
+        for (const listener of listeners) listener();
+    };
 
-export function usePlacesScreenState(userId: string | null | undefined) {
+    const store: PlacesScreenStateStore = {
+        setActiveUser(userId): void {
+            const next = cleanUserId(userId);
+            if (next === activeUserId) return;
+            activeUserId = next;
+            snapshot = initialSnapshot;
+            emit();
+        },
+
+        get(userId): PlacesScreenSnapshot {
+            return cleanUserId(userId) === activeUserId ? snapshot : initialSnapshot;
+        },
+
+        patch(userId, value): void {
+            const key = cleanUserId(userId);
+            if (!key) return;
+            if (activeUserId !== key) store.setActiveUser(key);
+            const next = { ...snapshot, ...value };
+            if (Object.keys(value).every((field) => (
+                next[field as keyof PlacesScreenSnapshot]
+                === snapshot[field as keyof PlacesScreenSnapshot]
+            ))) return;
+            snapshot = next;
+            emit();
+        },
+
+        subscribe(listener): () => void {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+        },
+    };
+    return store;
+}
+
+export const placesScreenState = createPlacesScreenState();
+
+export function usePlacesScreenState(
+    userId: string | null | undefined,
+    store: PlacesScreenStateStore = placesScreenState,
+) {
     const identity = userId ?? null;
-    useEffect(() => placesScreenState.setActiveUser(identity), [identity]);
-    const getSnapshot = useCallback(() => placesScreenState.get(identity), [identity]);
+    useEffect(() => store.setActiveUser(identity), [identity, store]);
+    const getSnapshot = useCallback(() => store.get(identity), [identity, store]);
     const value = useSyncExternalStore(
-        placesScreenState.subscribe,
+        store.subscribe,
         getSnapshot,
         getSnapshot,
     );
     const patch = useCallback(
-        (next: Partial<PlacesScreenSnapshot>) => placesScreenState.patch(identity, next),
-        [identity],
+        (next: Partial<PlacesScreenSnapshot>) => store.patch(identity, next),
+        [identity, store],
     );
     return { value, patch };
 }

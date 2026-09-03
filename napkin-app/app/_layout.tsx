@@ -89,8 +89,7 @@ if (!(globalThis as { __napkinFatalHook?: boolean }).__napkinFatalHook) {
  *
  * No floating `+`; LogSheet on restaurant detail remains the write doorway.
  *
- * The existing `/wishlist` Stack route remains deep-link safe. inTabs includes
- * it so the bar remains visible and marks PLACES active there.
+ * Scoped Places screens sit above this nav and preserve hierarchical back.
  */
 // TICKET-130 pill background — mock literals (surfaceNote/card at 0.94).
 const PILL_BG = {
@@ -105,20 +104,18 @@ function BottomNavBar() {
   const palette = Colors[scheme];
   const insets = useSafeAreaInsets();
 
-  // Show on (tabs) screens AND on the wishlist Stack screen
-  const inTabs = segments[0] === '(tabs)' || segments[0] === 'wishlist';
+  // The floating nav belongs only to tab routes; scoped Places is a pushed screen.
+  const inTabs = segments[0] === '(tabs)';
   if (!inTabs) return null;
 
   // Active tab detection. Widen first: without generated .expo/types,
   // useSegments() is the tuple [string] and segments[1] is a TS2493.
   const seg1 = (segments as string[])[1] as string | undefined;
-  // Wishlist and the legacy Search redirect both mark Places active.
+  // The legacy Search redirect and Places both mark Places active.
   const activeTab =
-    segments[0] === 'wishlist'
+    seg1 === 'search' || seg1 === 'places'
       ? 'places'
-      : seg1 === 'search' || seg1 === 'places'
-        ? 'places'
-        : seg1 ?? 'tables';
+      : seg1 ?? 'tables';
 
   // Active terracotta, inactive textSecondary (TICKET-130 pill spec).
   const tabColor = (name: string) =>
@@ -291,7 +288,7 @@ function RootLayoutNav() {
     const inAuthGroup = segments[0] === 'auth';
     // TICKET-090: the password-recovery deep link must survive both redirects —
     // it starts signed-out (would bounce to /auth) and setSession() flips to
-    // signed-in mid-form (would bounce to /wishlist before the new password).
+    // signed-in mid-form (would bounce to Places before the new password).
     const inRecovery = segments[0] === 'reset-password';
     // TICKET-107: a pending share/handoff resume (auth.tsx redirects to these)
     // must finish BEFORE onboarding — "import resume wins."
@@ -305,7 +302,7 @@ function RootLayoutNav() {
 
     // TICKET-107: onboardedAt is TRI-STATE (undefined = still loading). Wait
     // for it to resolve before redirecting so a fresh signup routes straight
-    // to /onboarding instead of flashing /wishlist then bouncing. AuthProvider
+    // to /onboarding instead of flashing Places then bouncing. AuthProvider
     // resolves it only from a real profile read. Read errors remain undefined
     // after bounded retry, deliberately keeping this route gate fail-closed.
     if (onboardedAt === undefined) return;
@@ -446,7 +443,7 @@ function RootLayoutNav() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
-            name="wishlist"
+            name="places-scope"
             options={{ headerShown: false }}
           />
           <Stack.Screen

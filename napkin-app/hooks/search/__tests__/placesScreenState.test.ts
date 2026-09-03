@@ -1,7 +1,7 @@
 import { FULL, HALF, PEEK } from '@/components/sheets/snapSheetMath';
 
 describe('placesScreenState auth isolation', () => {
-    it('resets query, selection, detent, segment, layer, view, region, and restoration state on identity change', () => {
+    it('resets query, selection, detent, segment, layer, scope, view, region, and restoration state on identity change', () => {
         jest.resetModules();
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { placesScreenState } = require('../placesScreenState');
@@ -12,7 +12,8 @@ describe('placesScreenState auth isolation', () => {
             selectedPinId: 'place:abc',
             scrollOffset: 88,
             activeSegment: 'lists',
-            layerFilter: 'friends',
+            layerFilter: 'been',
+            scope: { kind: 'friends' },
             viewMode: 'list',
             region: {
                 latitude: 51.5,
@@ -32,6 +33,7 @@ describe('placesScreenState auth isolation', () => {
             scrollOffset: 0,
             activeSegment: 'places',
             layerFilter: 'all',
+            scope: { kind: 'you' },
             viewMode: 'map',
             region: null,
             previousNonPeopleSnap: null,
@@ -49,6 +51,7 @@ describe('transitionPlacesSegment', () => {
         scrollOffset: 0,
         activeSegment: 'places' as const,
         layerFilter: 'all' as const,
+        scope: { kind: 'you' } as const,
         viewMode: 'map' as const,
         region: null,
         previousNonPeopleSnap: null,
@@ -99,9 +102,52 @@ describe('places layer filters', () => {
         expect(togglePlacesLayerFilter('pinned', 'pinned')).toBe('all');
         expect(togglePlacesLayerFilter('pinned', 'been')).toBe('been');
         expect(togglePlacesLayerFilter('been', 'been')).toBe('all');
-        expect(togglePlacesLayerFilter('all', 'friends')).toBe('friends');
-        expect(togglePlacesLayerFilter('friends', 'friends')).toBe('all');
-        expect(togglePlacesLayerFilter('friends', 'pinned')).toBe('pinned');
+    });
+});
+
+describe('places screen instance isolation', () => {
+    it('keeps a locked table round-trip from changing the tab scope, view, or region', () => {
+        jest.resetModules();
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { createPlacesScreenState, placesScreenState } = require('../placesScreenState');
+        placesScreenState.setActiveUser('viewer');
+        placesScreenState.patch('viewer', {
+            scope: { kind: 'friends' },
+            viewMode: 'map',
+            region: {
+                latitude: 51.5,
+                longitude: -0.1,
+                latitudeDelta: 0.04,
+                longitudeDelta: 0.04,
+            },
+        });
+        const before = placesScreenState.get('viewer');
+        const locked = createPlacesScreenState({
+            scope: { kind: 'table', tableId: 'table-a' },
+        });
+        locked.setActiveUser('viewer');
+        locked.patch('viewer', {
+            layerFilter: 'been',
+            viewMode: 'list',
+            region: {
+                latitude: 48.86,
+                longitude: 2.35,
+                latitudeDelta: 0.03,
+                longitudeDelta: 0.03,
+            },
+        });
+
+        expect(locked.get('viewer')).toMatchObject({
+            scope: { kind: 'table', tableId: 'table-a' },
+            layerFilter: 'been',
+            viewMode: 'list',
+        });
+        expect(placesScreenState.get('viewer')).toBe(before);
+        expect(placesScreenState.get('viewer')).toMatchObject({
+            scope: { kind: 'friends' },
+            viewMode: 'map',
+            region: { latitude: 51.5, longitude: -0.1 },
+        });
     });
 });
 
@@ -113,6 +159,7 @@ describe('focused Places search transitions', () => {
         scrollOffset: 42,
         activeSegment: 'lists' as const,
         layerFilter: 'pinned' as const,
+        scope: { kind: 'you' } as const,
         viewMode: 'list' as const,
         region: {
             latitude: 48.86,

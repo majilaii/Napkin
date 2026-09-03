@@ -12,6 +12,7 @@ import { useCompleteOnboarding } from '@/hooks/onboarding/useCompleteOnboarding'
 import { getPreviewOnboardingOnLaunchCached } from '@/lib/devPrefs';
 import { useAuth } from '@/providers/AuthProvider';
 import { type OnboardingDraft, useOnboardingDraft } from '@/app/onboarding/OnboardingDraftContext';
+import { PINNED_PLACES_ROUTE } from '@/lib/handoffNavigation';
 
 const COMPLETION_ERROR =
     "We couldn't finish setup. Check your connection and try again.";
@@ -27,7 +28,7 @@ export function useFinishOnboarding() {
             typeof onboardedAt === 'string' &&
             getPreviewOnboardingOnLaunchCached()
         ) {
-            router.replace('/wishlist');
+            router.replace(PINNED_PLACES_ROUTE);
             return;
         }
         if (isPending) return;
@@ -52,7 +53,7 @@ export function useFinishOnboarding() {
                 // Navigate only after the server confirms onboarding. Using
                 // onSettled here also navigates on failure and races the route
                 // gate rollback, which can strand the user between screens.
-                onSuccess: () => router.replace('/wishlist'),
+                onSuccess: () => router.replace(PINNED_PLACES_ROUTE),
             },
         );
     }, [draft, isPending, mutate, onboardedAt, router, user?.user_metadata?.display_name]);

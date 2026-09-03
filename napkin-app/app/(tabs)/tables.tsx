@@ -443,7 +443,10 @@ export default function TablesScreen() {
                 onBellPress={() => router.push('/notifications')}
                 bellUnread={hasUnread}
                 // TICKET-139: the table's territory map (member-gated server-side).
-                onMapPress={() => router.push({ pathname: '/table-map', params: { tableId: activeTable.id } })}
+                onMapPress={() => router.push({
+                    pathname: '/places-scope',
+                    params: { scope: 'table', tableId: activeTable.id },
+                })}
             />
 
             {/* Welcome banner — shown once when a user is added to a table (TICKET-029) */}

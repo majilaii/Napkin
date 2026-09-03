@@ -1,6 +1,6 @@
 /**
  * mapFacets — filter facets + filtering + ledger ordering for a map's chrome
- * (TICKET-143, table-map parity).
+ * (TICKET-143, scoped-map parity).
  *
  * Facets operate on a minimal structural row so source rows without coordinates
  * remain selectable before they are projected into map pins.
