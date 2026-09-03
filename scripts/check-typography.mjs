@@ -631,10 +631,9 @@ const TYPE_FLOORS = {
     rating: 24,
     ratingLarge: 36,
     restaurantName: 34,
-    restaurantKicker: 11,
     restaurantPrimaryAction: 13,
     restaurantUtilityAction: 13,
-    restaurantDoorway: 16,
+    restaurantLedgerRating: 22,
     restaurantSectionAction: 13,
     restaurantQuote: 16,
     restaurantQuoteName: 13,
@@ -660,6 +659,8 @@ const ALLOWED_ITALIC_TYPE_TOKENS = new Set([
     // TICKET-227 founder-approved restaurant quotes and inline rating numerals.
     'restaurantQuote',
     'restaurantRatingInline',
+    // TICKET-235 founder-approved ledger-line rating numerals.
+    'restaurantLedgerRating',
 ]);
 
 function italicTypeTokens(themeSource) {

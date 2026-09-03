@@ -57,7 +57,7 @@ export function buildFriendsSpread(cohort: FriendsCohortMember[]): {
     };
 }
 
-function compactGoogleCount(count: number | null): string {
+export function formatGoogleRatingCount(count: number | null): string {
     if (!count) return 'no ratings';
     if (count >= 1000) {
         const compact = (count / 1000).toFixed(1).replace(/\.0$/, '');
@@ -68,7 +68,6 @@ function compactGoogleCount(count: number | null): string {
 
 export function deriveNumberTiers(
     page: RestaurantPageData | undefined,
-    restaurant: RestaurantPageRestaurant,
     viewerUserId: string | null | undefined,
 ) {
     const friends = deriveFriendsCohort(page?.public_reviews ?? [], viewerUserId);
@@ -82,12 +81,6 @@ export function deriveNumberTiers(
         friends: {
             value: meanRating(friends.map((friend) => friend.rating)),
             meta: `${friends.length} been`,
-        },
-        google: {
-            value: restaurant.google_rating == null
-                ? null
-                : Math.max(0, Math.min(5, restaurant.google_rating)),
-            meta: compactGoogleCount(restaurant.google_rating_count),
         },
         friendsCohort: friends,
     };
@@ -112,19 +105,29 @@ export function restaurantClosingTime(
     return `${String(hour).padStart(2, '0')}:${minute}`;
 }
 
+export function buildRestaurantPhotoMeta(
+    restaurant: RestaurantPageRestaurant,
+): string {
+    const price = restaurant.price_level == null
+        ? null
+        : '£'.repeat(Math.max(1, Math.min(4, restaurant.price_level)));
+    return [
+        restaurant.cuisine?.toLowerCase() || null,
+        restaurant.city?.toLowerCase() || null,
+        price,
+    ].filter((part): part is string => !!part).join(' · ');
+}
+
+/** The no-photo masthead keeps its pre-TICKET-235 open-status copy unchanged. */
 export function buildRestaurantMeta(
     restaurant: RestaurantPageRestaurant,
     date: Date = new Date(),
     openNow?: boolean | null,
 ): string {
-    const price = restaurant.price_level == null
-        ? null
-        : '£'.repeat(Math.max(1, Math.min(4, restaurant.price_level)));
+    const core = buildRestaurantPhotoMeta(restaurant);
     const closes = restaurantClosingTime(restaurant.hours, date);
     return [
-        restaurant.cuisine?.toLowerCase() || null,
-        restaurant.city?.toLowerCase() || null,
-        price,
+        core || null,
         closes && openNow === true ? `open until ${closes}` : null,
     ].filter((part): part is string => !!part).join(' · ');
 }

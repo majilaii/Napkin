@@ -45,11 +45,15 @@ function selfRow(overrides: Partial<SelfLogRow>): SelfLogRow {
     };
 }
 
-function renderStrip(payload: any) {
+function renderStrip(payload: any, excludedUrls: string[] = []) {
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(
-            <MemoriesStrip restaurantId="restaurant-1" payload={payload} />,
+            <MemoriesStrip
+                restaurantId="restaurant-1"
+                payload={payload}
+                excludedUrls={excludedUrls}
+            />,
         );
     });
     return renderer;
@@ -124,6 +128,25 @@ describe('MemoriesStrip', () => {
         });
         expect(legacy.toJSON()).toBeNull();
         act(() => legacy.unmount());
+    });
+
+    it('does not repeat entry photos already promoted into the masthead', () => {
+        const renderer = renderStrip({
+            self_log: [selfRow({
+                photos: [
+                    { id: 'hero', url: 'https://photos.test/hero.jpg' },
+                    { id: 'memory', url: 'https://photos.test/memory.jpg' },
+                ],
+            })],
+            photos: { from_your_table: [], from_others: [] },
+            public_reviews: [],
+        }, ['https://photos.test/hero.jpg']);
+
+        const images = renderer.root.findAllByType('ExpoImage');
+        expect(images.map((image: any) => image.props.source.uri)).toEqual([
+            'https://photos.test/memory.jpg',
+        ]);
+        act(() => renderer.unmount());
     });
 
     it('routes own and public entry photos with the correct scope and leaves unbacked photos inert', () => {

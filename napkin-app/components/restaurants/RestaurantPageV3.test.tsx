@@ -10,7 +10,9 @@ jest.mock('react-native', () => {
             select: (options: Record<string, unknown>) => options.ios ?? options.default,
         },
         Pressable: host('Pressable'),
+        ScrollView: host('ScrollView'),
         StyleSheet: {
+            absoluteFill: { position: 'absolute', inset: 0 },
             create: (styles: unknown) => styles,
             flatten: (style: unknown) => Array.isArray(style)
                 ? Object.assign({}, ...style.filter(Boolean))
@@ -18,10 +20,13 @@ jest.mock('react-native', () => {
             hairlineWidth: 1,
         },
         Text: host('Text'),
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
         View: host('View'),
     };
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+jest.mock('expo-image', () => ({ Image: 'ExpoImage' }));
+jest.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
 
 import React from 'react';
 import { fireEvent, render } from '@testing-library/react-native';

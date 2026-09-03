@@ -25,11 +25,14 @@ export type MemoryTile = {
     viewAs: 'public' | null;
 };
 
-export function buildMemoryTiles(payload: MemoriesPayload): MemoryTile[] {
+export function buildMemoryTiles(
+    payload: MemoriesPayload,
+    excludedUrls: readonly string[] = [],
+): MemoryTile[] {
     if (!payload.photos) return [];
 
     const tiles: MemoryTile[] = [];
-    const seen = new Set<string>();
+    const seen = new Set(excludedUrls.map((url) => url.trim()).filter(Boolean));
     const add = (
         url: string | null | undefined,
         entryId?: string | null,
@@ -62,14 +65,19 @@ export function buildMemoryTiles(payload: MemoriesPayload): MemoryTile[] {
 export function MemoriesStrip({
     restaurantId,
     payload,
+    excludedUrls = [],
 }: {
     restaurantId: string;
     payload: MemoriesPayload;
+    excludedUrls?: readonly string[];
 }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
-    const tiles = useMemo(() => buildMemoryTiles(payload), [payload]);
+    const tiles = useMemo(
+        () => buildMemoryTiles(payload, excludedUrls),
+        [excludedUrls, payload],
+    );
 
     if (tiles.length === 0) return null;
 
