@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { FULL, PEEK, type Snap } from '@/components/sheets/snapSheetMath';
 import type { SearchMode } from '@/components/search/searchModeTabsGate';
+import type { Region } from 'react-native-maps';
+
+export type PlacesViewMode = 'map' | 'list';
 
 export interface PlacesScreenSnapshot {
     query: string;
@@ -9,6 +12,8 @@ export interface PlacesScreenSnapshot {
     scrollOffset: number;
     activeSegment: SearchMode;
     layerFilter: PlacesLayerFilter;
+    viewMode: PlacesViewMode;
+    region: Region | null;
     previousNonPeopleSnap: Snap | null;
     previousNonSearchSnap: Snap | null;
 }
@@ -22,6 +27,8 @@ const INITIAL_STATE: PlacesScreenSnapshot = Object.freeze({
     scrollOffset: 0,
     activeSegment: 'places',
     layerFilter: 'all',
+    viewMode: 'map',
+    region: null,
     previousNonPeopleSnap: null,
     previousNonSearchSnap: null,
 });
@@ -37,11 +44,12 @@ export function togglePlacesLayerFilter(
     return current === requested ? 'all' : requested;
 }
 
-/** Search owns full height and remembers the last browse detent exactly once. */
+/** Search owns the paper page, exits list mode, and remembers the map detent exactly once. */
 export function enterPlacesSearch(current: PlacesScreenSnapshot): PlacesScreenSnapshot {
     if (current.previousNonSearchSnap !== null) return current;
     return {
         ...current,
+        viewMode: 'map',
         sheetSnap: FULL,
         previousNonSearchSnap: current.sheetSnap,
     };
@@ -56,6 +64,7 @@ export function leavePlacesSearch(current: PlacesScreenSnapshot): PlacesScreenSn
         sheetSnap: current.previousNonSearchSnap,
         selectedPinId: null,
         scrollOffset: 0,
+        viewMode: 'map',
         previousNonPeopleSnap: null,
         previousNonSearchSnap: null,
     };

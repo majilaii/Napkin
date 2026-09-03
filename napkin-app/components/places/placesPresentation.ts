@@ -5,9 +5,8 @@ import type { SearchLocality } from '@/hooks/search/searchLocalityStore';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
 import type { WishlistMapItem } from '@/components/wishlist/mapShared';
 import type { SearchMode } from '@/components/search/searchModeTabsGate';
-import type { PlacesLayerFilter } from '@/hooks/search/placesScreenState';
+import type { PlacesLayerFilter, PlacesViewMode } from '@/hooks/search/placesScreenState';
 import { formatDistance, haversineMiles, type LatLng } from '@/lib/geo';
-import { FULL, PEEK, type Snap } from '@/components/sheets/snapSheetMath';
 
 export type PlacesRating = NonNullable<SearchResultRow['rating']>;
 
@@ -20,6 +19,9 @@ export interface PlacesDisplayRow {
     lng: number | null;
     priceLevel: number | null;
     rating: PlacesRating | null;
+    photoUrl?: string | null;
+    photoSource?: string | null;
+    photoAttributionHtml?: string | null;
     isPinned: boolean;
     friendsBeenCount: number;
     searchRow?: SearchResultRow;
@@ -36,12 +38,13 @@ export interface PlacesDisplayRow {
 export interface DecoratedPlacesRow {
     row: PlacesDisplayRow;
     distanceLabel: string | null;
+    distanceMiles: number | null;
 }
 
 export interface PlacesRatingPresentation {
     value: string | null;
     suffix: string | null;
-    tone: 'amber' | 'muted' | 'faint';
+    tone: 'tertiary' | 'muted';
 }
 
 export type PlacesSource = 'places' | 'persisted' | 'wishlist' | 'spots' | 'network';
@@ -96,13 +99,31 @@ export function resolvePlacesProjection<T>(
 }
 
 export function presentPlacesRating(
-    rating: PlacesRating | null,
+    row: PlacesDisplayRow,
 ): PlacesRatingPresentation {
-    if (!rating) return { value: null, suffix: 'not yet rated', tone: 'faint' };
-    if (rating.tier === 'google') {
-        return { value: rating.value.toFixed(1), suffix: ' · google', tone: 'muted' };
+    if (row.rating?.tier === 'you') {
+        return { value: row.rating.value.toFixed(1), suffix: null, tone: 'tertiary' };
     }
-    return { value: rating.value.toFixed(1), suffix: null, tone: 'amber' };
+    if (row.rating?.tier === 'friends') {
+        return {
+            value: row.rating.value.toFixed(1),
+            suffix: ' · friends',
+            tone: 'tertiary',
+        };
+    }
+    if (typeof row.network?.rating === 'number') {
+        const firstName = row.network.author.name.trim().split(/\s+/)[0] || row.network.author.name;
+        return {
+            value: row.network.rating.toFixed(1),
+            suffix: ` · ${firstName}`,
+            tone: 'tertiary',
+        };
+    }
+    if (row.network) {
+        const firstName = row.network.author.name.trim().split(/\s+/)[0] || row.network.author.name;
+        return { value: null, suffix: firstName, tone: 'muted' };
+    }
+    return { value: null, suffix: null, tone: 'muted' };
 }
 
 export function deriveDistanceOrigin(
@@ -122,6 +143,9 @@ export function searchRowsToDisplayRows(rows: readonly SearchResultRow[]): Place
         lng: row.lng ?? null,
         priceLevel: row.priceLevel ?? null,
         rating: row.rating ?? null,
+        photoUrl: row.photoUrl ?? null,
+        photoSource: row.photoSource ?? null,
+        photoAttributionHtml: row.photoAttributionHtml ?? null,
         isPinned: row.isPinned ?? false,
         friendsBeenCount: row.friendsBeenCount ?? 0,
         searchRow: row,
@@ -142,9 +166,10 @@ export function wishlistRowsToDisplayRows(
             lat: restaurant.lat ?? null,
             lng: restaurant.lng ?? null,
             priceLevel: restaurant.price_level,
-            rating: typeof restaurant.google_rating === 'number'
-                ? { tier: 'google' as const, value: restaurant.google_rating, scale: 5 as const }
-                : null,
+            rating: null,
+            photoUrl: restaurant.photo_url,
+            photoSource: restaurant.photo_source ?? null,
+            photoAttributionHtml: restaurant.places_photo_attribution_html ?? null,
             isPinned: true,
             friendsBeenCount: 0,
         }];
@@ -163,6 +188,7 @@ export function spotRowsToDisplayRows(rows: readonly SpotSummary[]): PlacesDispl
         rating: typeof spot.avg_rating === 'number'
             ? { tier: 'you', value: spot.avg_rating, scale: 5 }
             : null,
+        photoUrl: spot.photo_url,
         isPinned: false,
         friendsBeenCount: 0,
         been: true,
@@ -202,18 +228,26 @@ export function mergePlacesLayerRows(
     for (const row of pinnedRows) merged.set(row.id, row);
     for (const row of beenRows) {
         const pinned = merged.get(row.id);
-        merged.set(row.id, pinned ? {
-            ...pinned,
-            ...row,
-            city: row.city ?? pinned.city,
-            cuisine: row.cuisine ?? pinned.cuisine,
-            lat: row.lat ?? pinned.lat,
-            lng: row.lng ?? pinned.lng,
-            priceLevel: row.priceLevel ?? pinned.priceLevel,
-            rating: row.rating ?? pinned.rating,
-            isPinned: pinned.isPinned || row.isPinned,
-            been: true,
-        } : row);
+        const useBeenPhoto = !!row.photoUrl && !!row.photoSource;
+        merged.set(row.id, pinned
+            ? {
+                ...pinned,
+                ...row,
+                city: row.city ?? pinned.city,
+                cuisine: row.cuisine ?? pinned.cuisine,
+                lat: row.lat ?? pinned.lat,
+                lng: row.lng ?? pinned.lng,
+                priceLevel: row.priceLevel ?? pinned.priceLevel,
+                rating: row.rating ?? pinned.rating,
+                photoUrl: useBeenPhoto ? row.photoUrl : pinned.photoUrl,
+                photoSource: useBeenPhoto ? row.photoSource : pinned.photoSource,
+                photoAttributionHtml: useBeenPhoto
+                    ? row.photoAttributionHtml
+                    : pinned.photoAttributionHtml,
+                isPinned: pinned.isPinned || row.isPinned,
+                been: true,
+            }
+            : row);
     }
     return [...merged.values()];
 }
@@ -240,17 +274,122 @@ export function decorateAndSortRows(
             : null;
         return {
             row,
-            distance,
+            distanceMiles: distance,
             distanceLabel: distance == null ? null : formatDistance(distance),
             index,
         };
     });
     if (distanceOrigin) {
         decorated.sort((a, b) => (
-            (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.index - b.index
+            (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity) || a.index - b.index
         ));
     }
-    return decorated.map(({ row, distanceLabel }) => ({ row, distanceLabel }));
+    return decorated.map(({ row, distanceLabel, distanceMiles }) => ({
+        row,
+        distanceLabel,
+        distanceMiles,
+    }));
+}
+
+export interface PlacesCityGroup {
+    key: string;
+    label: string;
+    rows: DecoratedPlacesRow[];
+}
+
+export type PlacesCityLedgerItem =
+    | {
+        kind: 'header';
+        key: string;
+        label: string;
+        count: number;
+        hasMore: boolean;
+        isFirst: boolean;
+    }
+    | {
+        kind: 'row';
+        key: string;
+        item: DecoratedPlacesRow;
+    };
+
+function normalizeCity(value: string | null | undefined): string | null {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed.toLocaleLowerCase() : null;
+}
+
+/** City ledger order follows the Places locality law: city, then coords, then home city. */
+export function groupRowsByCity(
+    rows: readonly DecoratedPlacesRow[],
+    options: {
+        locality: SearchLocality;
+        distanceOrigin: LatLng | null;
+        homeCity: string | null;
+    },
+): PlacesCityGroup[] {
+    const groups = new Map<string, PlacesCityGroup>();
+    for (const item of rows) {
+        const city = item.row.city?.trim() || null;
+        const key = normalizeCity(city) ?? '__elsewhere__';
+        const group = groups.get(key) ?? {
+            key,
+            label: city ?? 'ELSEWHERE',
+            rows: [],
+        };
+        group.rows.push(item);
+        groups.set(key, group);
+    }
+
+    for (const group of groups.values()) {
+        group.rows.sort((a, b) => {
+            if (a.distanceMiles != null || b.distanceMiles != null) {
+                return (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity)
+                    || a.row.name.localeCompare(b.row.name);
+            }
+            return a.row.name.localeCompare(b.row.name);
+        });
+    }
+
+    const explicitCity = options.locality === 'auto'
+        ? null
+        : normalizeCity(options.locality.city);
+    const nearestCity = options.locality === 'auto' && options.distanceOrigin
+        ? rows.find((item) => normalizeCity(item.row.city) != null)?.row.city
+        : null;
+    const preferredCity = explicitCity
+        ?? normalizeCity(nearestCity)
+        ?? (options.locality === 'auto' ? normalizeCity(options.homeCity) : null);
+
+    return [...groups.values()].sort((a, b) => {
+        if (a.key === '__elsewhere__') return 1;
+        if (b.key === '__elsewhere__') return -1;
+        if (preferredCity) {
+            if (a.key === preferredCity && b.key !== preferredCity) return -1;
+            if (b.key === preferredCity && a.key !== preferredCity) return 1;
+        }
+        return b.rows.length - a.rows.length || a.label.localeCompare(b.label);
+    });
+}
+
+/** One FlatList item per visible header or row keeps the city ledger virtualized. */
+export function flattenPlacesCityGroups(
+    groups: readonly PlacesCityGroup[],
+    hasMore: boolean,
+): PlacesCityLedgerItem[] {
+    return groups.flatMap((group, groupIndex) => [
+        {
+            kind: 'header' as const,
+            key: `header:${group.key}`,
+            label: group.label,
+            count: group.rows.length,
+            hasMore: hasMore && groupIndex === groups.length - 1,
+            isFirst: groupIndex === 0,
+        },
+        ...group.rows.map((item) => ({
+            kind: 'row' as const,
+            key: `row:${group.key}:${item.row.id}`,
+            item,
+        })),
+    ]);
 }
 
 /** Focused-search guidance exists only for a real, auto-locality origin. */
@@ -264,6 +403,13 @@ export function selectNearbyPlaces(
         rows.filter((row) => row.lat != null && row.lng != null),
         distanceOrigin,
     ).slice(0, limit);
+}
+
+export function shouldShowPlacesFollowingRail(
+    hidePeopleSearch: boolean,
+    followingCount: number,
+): boolean {
+    return !hidePeopleSearch && followingCount > 0;
 }
 
 export type PlacesSearchBranch = 'sections' | 'minimum' | 'results';
@@ -330,14 +476,14 @@ export function composeFriendCaptionMeta(row: PlacesDisplayRow): string {
     return `${row.network.author.name} · ${headcount}`;
 }
 
-export function placesViewToggle(snap: Snap): {
+export function placesViewToggle(mode: PlacesViewMode): {
     label: 'list' | 'map';
     icon: 'list-outline' | 'map-outline';
-    target: Snap;
+    target: PlacesViewMode;
 } {
-    return snap === FULL
-        ? { label: 'map', icon: 'map-outline', target: PEEK }
-        : { label: 'list', icon: 'list-outline', target: FULL };
+    return mode === 'list'
+        ? { label: 'map', icon: 'map-outline', target: 'map' }
+        : { label: 'list', icon: 'list-outline', target: 'list' };
 }
 
 export function placesCountLabel(count: number, hasMore: boolean): string {
