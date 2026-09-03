@@ -14,6 +14,7 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
+    useWindowDimensions,
     View,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -21,7 +22,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, IconSize, Spacing } from '@/constants/theme';
+import { Colors, IconSize, Radius, Spacing } from '@/constants/theme';
 import { ErrorState, InlineErrorState } from '@/components/ErrorState';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -47,17 +48,16 @@ import {
     FeaturedListsSection,
     FriendsNotesSection,
     FriendsSpread,
+    LedgerLine,
     MemoriesStrip,
     OnSocialsRail,
     RestaurantActions,
     RestaurantDetails,
-    RestaurantNumbersBand,
     RestaurantRegularRow,
     RestaurantTop,
     SavedFromTikTokPanel,
     TableNotesSection,
-    YourHistoryDoorway,
-    shouldShowHistoryDoorway,
+    formatLedgerLine,
 } from '@/components/restaurants';
 import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippings';
 import { useRestaurantFeaturedLists } from '@/hooks/restaurants/useRestaurantFeaturedLists';
@@ -70,11 +70,13 @@ import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 import { shouldShowRestaurantErrorShell } from '@/lib/screenLoadState';
 import {
     buildFriendsSpread,
+    buildRestaurantPhotoMeta,
     buildRestaurantMeta,
     chooseTableNotesGroup,
     deriveNumberTiers,
 } from '@/lib/restaurantPageV3';
 import { findBookingUrl } from '@/lib/reserveLink';
+import { resolveMastheadPhotos } from '@/lib/restaurantPhoto';
 
 function placePayloadToWishlistPayload(place: any): RestaurantPayload {
     return {
@@ -136,6 +138,7 @@ export default function RestaurantScreen() {
     const palette = Colors[scheme];
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const { height: windowHeight } = useWindowDimensions();
     const { user } = useAuth();
     const { id, tableId, placeId, placePayload } = useLocalSearchParams<{
         id?: string;
@@ -232,8 +235,11 @@ export default function RestaurantScreen() {
         persistedRestaurantId,
         user?.id,
     );
-    const { data: clippingsData } = useRestaurantClippings(persistedRestaurantId, user?.id);
-    const clippings = clippingsData?.rows ?? [];
+    const {
+        data: clippingsData,
+        isFetched: clippingsSettled,
+    } = useRestaurantClippings(persistedRestaurantId, user?.id);
+    const clippings = useMemo(() => clippingsData?.rows ?? [], [clippingsData?.rows]);
     const bookmarked = useIsWishlisted(
         persistedRestaurantId ?? restaurant?.external_id,
         user?.id,
@@ -248,6 +254,7 @@ export default function RestaurantScreen() {
     const isSaved = bookmarked === true || containingListIds.length > 0;
     const [saveSheetOpen, setSaveSheetOpen] = useState(false);
     const [gatherSheetOpen, setGatherSheetOpen] = useState(false);
+    const [photoUnderStatusBar, setPhotoUnderStatusBar] = useState(true);
 
     const savePayload = useMemo<RestaurantPayload | null>(() => {
         if (ghostWishlistPayload) return ghostWishlistPayload;
@@ -326,9 +333,7 @@ export default function RestaurantScreen() {
     }, [router, logSheetRestaurant, id, tableId]);
 
     const numberTiers = useMemo(
-        () => restaurant
-            ? deriveNumberTiers(page.data, restaurant, user?.id)
-            : null,
+        () => restaurant ? deriveNumberTiers(page.data, user?.id) : null,
         [page.data, restaurant, user?.id],
     );
     const spread = useMemo(
@@ -344,6 +349,30 @@ export default function RestaurantScreen() {
         : '';
     const gatherVisible = !FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId;
     const visitCount = page.data?.self_log?.length ?? page.data?.personal.visit_count ?? 0;
+    const mastheadPhotos = useMemo(
+        () => resolveMastheadPhotos(
+            page.data ?? (restaurant ? { restaurant } : null),
+            { clippings, settled: clippingsSettled },
+        ),
+        [clippings, clippingsSettled, page.data, restaurant],
+    );
+    const mastheadPhotoUrls = useMemo(
+        () => mastheadPhotos.map((photo) => photo.url),
+        [mastheadPhotos],
+    );
+    const mastheadHeight = Math.min(
+        Spacing.restaurant.photoMastheadHeight,
+        windowHeight * Spacing.restaurant.photoMastheadMaxWindowRatio,
+    );
+    const ledgerLine = useMemo(
+        () => formatLedgerLine({
+            youRating: numberTiers?.you.value,
+            visitCount,
+            friendsRating: numberTiers?.friends.value,
+            friendsCount: numberTiers?.friendsCohort.length ?? 0,
+        }),
+        [numberTiers, visitCount],
+    );
     const reserveUrl = persistedRow?.reserve_url
         ?? reserveLink.data?.reserve_url
         ?? findBookingUrl(restaurant?.website);
@@ -377,10 +406,20 @@ export default function RestaurantScreen() {
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
-            <StatusBar style="dark" />
+            <StatusBar
+                style={mastheadPhotos.length > 0 && photoUnderStatusBar ? 'light' : 'dark'}
+            />
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xxl }}
+                onScroll={(event) => {
+                    const underPhoto = event.nativeEvent.contentOffset.y
+                        <= mastheadHeight - insets.top;
+                    setPhotoUnderStatusBar((current) => current === underPhoto
+                        ? current
+                        : underPhoto);
+                }}
+                scrollEventThrottle={16}
             >
                 {(isPageLoading || (needsPlaceLookup && placeLookup.isLoading)) && !restaurant ? (
                     <View style={[styles.loading, { paddingTop: insets.top + 100 }]}>
@@ -392,69 +431,79 @@ export default function RestaurantScreen() {
                     <>
                         <RestaurantTop
                             restaurant={restaurant}
-                            meta={buildRestaurantMeta(
-                                restaurant,
-                                new Date(),
-                                page.data?.place_details.open_now,
-                            )}
+                            meta={mastheadPhotos.length > 0
+                                ? buildRestaurantPhotoMeta(restaurant)
+                                : buildRestaurantMeta(
+                                    restaurant,
+                                    new Date(),
+                                    page.data?.place_details.open_now,
+                                )}
                             saved={isSaved}
                             saveDisabled={bookmarkDisabled}
                             onBack={() => router.back()}
                             onSave={() => setSaveSheetOpen(true)}
+                            onPhotoPress={(photo) => {
+                                if (!photo.entryId) return;
+                                router.push({
+                                    pathname: '/entry-detail',
+                                    params: { entryId: photo.entryId },
+                                });
+                            }}
                             topInset={insets.top}
+                            photos={mastheadPhotos}
                             palette={palette}
                         />
-                        {!isGhost && persistedRestaurantId && page.data ? (
-                            <MemoriesStrip
-                                restaurantId={persistedRestaurantId}
-                                payload={page.data}
-                            />
-                        ) : null}
-                        <RestaurantNumbersBand
-                            you={numberTiers.you}
-                            friends={numberTiers.friends}
-                            google={numberTiers.google}
-                            palette={palette}
-                        />
-                        <RestaurantActions
-                            saved={isSaved}
-                            onLog={handleLogPress}
-                            onPin={() => setSaveSheetOpen(true)}
-                            onDirections={() => quietOpen(directionsUrl)}
-                            onWebsite={restaurant.website
-                                ? () => quietOpen(
-                                    restaurant.website!.startsWith('http')
-                                        ? restaurant.website!
-                                        : `https://${restaurant.website}`,
-                                )
-                                : undefined}
-                            onReserve={reserveUrl ? () => quietOpen(reserveUrl) : undefined}
-                            onGather={gatherVisible ? () => setGatherSheetOpen(true) : undefined}
-                            palette={palette}
-                        />
-
-                        {page.error && page.data ? (
-                            <InlineErrorState
-                                message="could not load visit history"
-                                onRetry={() => void page.refetch()}
-                            />
-                        ) : null}
-
-                        {shouldShowHistoryDoorway(visitCount, persistedRestaurantId) ? (
-                            <YourHistoryDoorway
-                                restaurantName={restaurant.name}
-                                visitCount={visitCount}
-                                onPress={() => router.push({
-                                    pathname: '/restaurant-history',
-                                    params: {
-                                        id: persistedRestaurantId!,
-                                        name: restaurant.name,
-                                        ...(tableId ? { tableId } : {}),
-                                    },
-                                })}
+                        <View style={mastheadPhotos.length > 0 ? [
+                            styles.photoPaper,
+                            { backgroundColor: palette.background },
+                        ] : undefined}>
+                            <LedgerLine
+                                line={ledgerLine}
+                                onPress={visitCount > 0 && persistedRestaurantId
+                                    ? () => router.push({
+                                        pathname: '/restaurant-history',
+                                        params: {
+                                            id: persistedRestaurantId,
+                                            name: restaurant.name,
+                                            ...(tableId ? { tableId } : {}),
+                                        },
+                                    })
+                                    : undefined}
+                                flushTop={mastheadPhotos.length > 0}
                                 palette={palette}
                             />
-                        ) : null}
+                            <RestaurantActions
+                                saved={isSaved}
+                                onLog={handleLogPress}
+                                onPin={() => setSaveSheetOpen(true)}
+                                onDirections={() => quietOpen(directionsUrl)}
+                                onWebsite={restaurant.website
+                                    ? () => quietOpen(
+                                        restaurant.website!.startsWith('http')
+                                            ? restaurant.website!
+                                            : `https://${restaurant.website}`,
+                                    )
+                                    : undefined}
+                                onReserve={reserveUrl ? () => quietOpen(reserveUrl) : undefined}
+                                onGather={gatherVisible ? () => setGatherSheetOpen(true) : undefined}
+                                flushTop={mastheadPhotos.length > 0 && !ledgerLine}
+                                palette={palette}
+                            />
+
+                            {!isGhost && persistedRestaurantId && page.data ? (
+                                <MemoriesStrip
+                                    restaurantId={persistedRestaurantId}
+                                    payload={page.data}
+                                    excludedUrls={mastheadPhotoUrls}
+                                />
+                            ) : null}
+
+                            {page.error && page.data ? (
+                                <InlineErrorState
+                                    message="could not load visit history"
+                                    onRetry={() => void page.refetch()}
+                                />
+                            ) : null}
 
                         <RestaurantRegularRow
                             detail={page.data?.regular_detail}
@@ -528,6 +577,7 @@ export default function RestaurantScreen() {
                             openNow={page.data?.place_details.open_now}
                             palette={palette}
                         />
+                        </View>
                     </>
                 ) : null}
             </ScrollView>
@@ -565,6 +615,13 @@ export default function RestaurantScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     loading: { alignItems: 'center' },
+    photoPaper: {
+        position: 'relative',
+        marginTop: -Spacing.restaurant.photoPaperOverlap,
+        paddingTop: Spacing.restaurant.photoPaperTop,
+        borderTopLeftRadius: Radius.xl,
+        borderTopRightRadius: Radius.xl,
+    },
     errorBack: {
         width: Spacing.restaurant.quietActionHeight,
         height: Spacing.restaurant.quietActionHeight,

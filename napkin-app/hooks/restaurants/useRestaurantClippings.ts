@@ -1,8 +1,8 @@
 /**
  * useRestaurantClippings — the ON SOCIALS rail's data (TICKET-156).
  *
- * Its OWN query, independent of useRestaurantPage: the page's loading gate, hero,
- * score band, and LOG THIS MEAL CTA render and are interactive without waiting on
+ * Its OWN query, independent of useRestaurantPage: the page's loading gate, masthead,
+ * ledger line, and LOG THIS MEAL CTA render and are interactive without waiting on
  * it. No skeleton — the rail mounts silently and appears only once resolved with
  * ≥1 card.
  *

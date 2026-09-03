@@ -20,9 +20,15 @@ export { SavedFromTikTokPanel } from './SavedFromTikTokPanel';
 // TICKET-156: On Socials rail — social clippings
 export { OnSocialsRail } from './OnSocialsRail';
 export { ClippingCard, type ClippingCardData } from './ClippingCard';
-export { YourHistoryDoorway, shouldShowHistoryDoorway } from './YourHistoryDoorway';
 export { RestaurantRegularRow } from './RestaurantRegularRow';
 export { MemoriesStrip, buildMemoryTiles, type MemoryTile } from './MemoriesStrip';
+export { LedgerLine } from './LedgerLine';
+export {
+    formatLedgerLine,
+    type LedgerLineInput,
+    type LedgerLineModel,
+    type LedgerLinePart,
+} from './ledgerLineFormatter';
 export {
     formatHistoryDate,
     RestaurantHistoryMasthead,
@@ -30,7 +36,6 @@ export {
 } from './RestaurantHistoryRows';
 export {
     RestaurantTop,
-    RestaurantNumbersBand,
     RestaurantActions,
     FriendsNotesSection,
     TableNotesSection,
