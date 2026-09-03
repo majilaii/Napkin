@@ -88,6 +88,7 @@ export const Colors = {
     // Overlay variants
     overlayPhoto: 'rgba(0, 0, 0, 0.35)',
     overlayHeavy: 'rgba(0, 0, 0, 0.6)',
+    overlayClear: 'rgba(0, 0, 0, 0)',
     scrimFrost: 'rgba(252, 249, 244, 0.92)',
     scrimCream: 'rgba(246, 236, 217, 0.85)',
 
@@ -123,6 +124,7 @@ export const Colors = {
     // textOnImage: light text rendered over photo tiles.
     scrimDark: 'rgba(28, 28, 25, 0.35)',  // on-surface at 35% — warmer than pure black
     textOnImage: '#FFFEF8',               // warm near-white for text on photo tiles
+    textOnImageMuted: 'rgba(255, 254, 248, 0.86)',
   },
   dark: {
     background: '#1a1816',
@@ -182,6 +184,7 @@ export const Colors = {
 
     overlayPhoto: 'rgba(0, 0, 0, 0.5)',
     overlayHeavy: 'rgba(0, 0, 0, 0.75)',
+    overlayClear: 'rgba(0, 0, 0, 0)',
     scrimFrost: 'rgba(26, 24, 22, 0.92)',
     scrimCream: 'rgba(37, 34, 32, 0.85)',
 
@@ -212,6 +215,7 @@ export const Colors = {
     // TICKET-046 — image overlay tokens for Top 4 tile labels (dark mode).
     scrimDark: 'rgba(0, 0, 0, 0.50)',  // darker scrim over dark-mode photos
     textOnImage: '#F3F0EB',            // warm off-white — matches dark `text` token
+    textOnImageMuted: 'rgba(243, 240, 235, 0.86)',
   },
 };
 
@@ -250,14 +254,24 @@ export const Spacing = {
     topBarGutter: 10,
     topBarHeight: 52,
     sectionGap: 26,
-    doorwaySectionGap: 22,
     mastheadTop: 4,
-    numbersTop: 18,
-    numbersVertical: 14,
+    photoMastheadHeight: 440,
+    photoMastheadMaxWindowRatio: 0.52,
+    photoGradientTopEnd: 0.3,
+    photoGradientMiddleEnd: 0.52,
+    photoChromeGutter: 14,
+    photoControlSize: 40,
+    photoTitleBottom: 46,
+    photoChipMinHeight: 26,
+    photoChipMaxWidth: 260,
+    photoPaperOverlap: 24,
+    photoPaperTop: 24,
+    ledgerTop: 18,
+    ledgerMinHeight: 30,
+    flushTop: 0,
     actionTop: 18,
     actionGap: 10,
     compactGap: 6,
-    hairlineGap: 1,
     cardHorizontal: 14,
     cardVertical: 13,
     sectionHeadingHeight: 40,
@@ -579,14 +593,6 @@ export const Type = {
     letterSpacing: -0.4,
     lineHeight: 38,
   } as TextStyle,
-  restaurantKicker: {
-    fontSize: 11,
-    fontWeight: '700' as const,
-    fontFamily: 'Manrope_700Bold',
-    letterSpacing: 1.2,
-    lineHeight: 15,
-    textTransform: 'uppercase' as const,
-  } as TextStyle,
   restaurantPrimaryAction: {
     fontSize: 13,
     fontWeight: '800' as const,
@@ -600,11 +606,12 @@ export const Type = {
     fontFamily: 'Manrope_700Bold',
     lineHeight: 19,
   } as TextStyle,
-  restaurantDoorway: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    fontFamily: 'Manrope_600SemiBold',
-    lineHeight: 22,
+  restaurantLedgerRating: {
+    fontSize: 22,
+    fontWeight: '400' as const,
+    fontFamily: 'Newsreader_400Regular_Italic',
+    lineHeight: 26,
+    fontVariant: ['tabular-nums'],
   } as TextStyle,
   restaurantSectionAction: {
     fontSize: 13,

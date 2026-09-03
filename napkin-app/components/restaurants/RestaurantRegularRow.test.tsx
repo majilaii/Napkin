@@ -20,32 +20,26 @@ jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 import React from 'react';
 import { render } from '@testing-library/react-native';
-import { View } from 'react-native';
 
 import { Colors } from '@/constants/theme';
-import { shouldShowHistoryDoorway } from './YourHistoryDoorway';
 import { RestaurantRegularRow } from './RestaurantRegularRow';
 
 describe('RestaurantRegularRow', () => {
     it('renders a followee crown independently when the viewer has zero visits', () => {
         const screen = render(
-            <View>
-                {shouldShowHistoryDoorway(0, 'restaurant-id') ? <View testID="doorway" /> : null}
-                <RestaurantRegularRow
-                    detail={{
-                        user_id: 'friend',
-                        display_name: 'Clara',
-                        avatar_url: null,
-                        visits: 4,
-                        is_viewer: false,
-                        runner_up: { display_name: 'Thomas', gap: 1 },
-                    }}
-                    palette={Colors.light}
-                />
-            </View>,
+            <RestaurantRegularRow
+                detail={{
+                    user_id: 'friend',
+                    display_name: 'Clara',
+                    avatar_url: null,
+                    visits: 4,
+                    is_viewer: false,
+                    runner_up: { display_name: 'Thomas', gap: 1 },
+                }}
+                palette={Colors.light}
+            />,
         );
 
-        expect(screen.queryByTestId('doorway')).toBeNull();
         expect(screen.getByText('Clara is the regular here · Thomas is 1 behind')).toBeTruthy();
     });
 

@@ -1,5 +1,6 @@
 import {
     buildFriendsSpread,
+    buildRestaurantPhotoMeta,
     buildRestaurantMeta,
     chooseTableNotesGroup,
     deriveFriendsCohort,
@@ -98,23 +99,26 @@ describe('restaurant page v3 derivations', () => {
             price_level: null,
             hours: { weekdayDescriptions: ['Tuesday: 12:00\u2009PM – 10:00\u202fPM'] },
         }), new Date('2026-09-01T12:00:00.000Z'), true)).toBe('thai grill · open until 22:00');
+        expect(buildRestaurantPhotoMeta(restaurant({
+            city: null,
+            price_level: null,
+            hours: { weekdayDescriptions: ['Tuesday: 12:00\u2009PM – 10:00\u202fPM'] },
+        }))).toBe('thai grill');
     });
 
-    it('keeps YOU, FRIENDS, and GOOGLE separate and counts every self-log row', () => {
+    it('derives the self and friend ledger signals and counts every self-log row', () => {
         const page = {
             personal: { average: 4.25, visit_count: 3 },
             self_log: Array.from({ length: 5 }, (_, index) => ({ id: `self-${index}` })),
             public_reviews: [review('friend-a', 4, true), review('friend-b', 5, true)],
         } as unknown as RestaurantPageData;
-        const tiers = deriveNumberTiers(page, restaurant(), 'viewer');
+        const tiers = deriveNumberTiers(page, 'viewer');
 
         expect(tiers.you).toEqual({ value: 4.25, meta: '5 visits' });
         expect(tiers.friends).toEqual({ value: 4.5, meta: '2 been' });
-        expect(tiers.google).toEqual({ value: 4.6, meta: '2.1k ratings' });
         expect(Math.max(
             tiers.you.value!,
             tiers.friends.value!,
-            tiers.google.value!,
         )).toBeLessThanOrEqual(5);
     });
 
@@ -129,8 +133,8 @@ describe('restaurant page v3 derivations', () => {
             public_reviews: [],
         } as unknown as RestaurantPageData;
 
-        expect(deriveNumberTiers(legacyPage, restaurant(), 'viewer').you.meta).toBe('7 visits');
-        expect(deriveNumberTiers(emptyPage, restaurant(), 'viewer').you.meta).toBe('0 visits');
+        expect(deriveNumberTiers(legacyPage, 'viewer').you.meta).toBe('7 visits');
+        expect(deriveNumberTiers(emptyPage, 'viewer').you.meta).toBe('0 visits');
     });
 });
 

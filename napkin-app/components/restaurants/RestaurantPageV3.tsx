@@ -1,5 +1,15 @@
-import React, { useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+    Linking,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    useWindowDimensions,
+    View,
+} from 'react-native';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, IconSize, Radius, Shadow, Spacing, Type } from '@/constants/theme';
@@ -10,8 +20,13 @@ import type {
 } from '@/hooks/restaurants/useRestaurantPage';
 import type { RestaurantFeaturedList } from '@/hooks/restaurants/useRestaurantFeaturedLists';
 import type { FriendsCohortMember, TableNotesGroup } from '@/lib/restaurantPageV3';
-import { monthLabel, restaurantClosingTime } from '@/lib/restaurantPageV3';
+import {
+    formatGoogleRatingCount,
+    monthLabel,
+    restaurantClosingTime,
+} from '@/lib/restaurantPageV3';
 import { hasHours, todaysHoursLine, weekHoursLines } from '@/lib/restaurantHours';
+import type { MastheadPhoto } from '@/lib/restaurantPhoto';
 
 type Palette = typeof Colors.light;
 
@@ -59,7 +74,9 @@ export function RestaurantTop({
     saveDisabled,
     onBack,
     onSave,
+    onPhotoPress,
     topInset,
+    photos = [],
     palette,
 }: {
     restaurant: RestaurantPageRestaurant;
@@ -68,9 +85,185 @@ export function RestaurantTop({
     saveDisabled: boolean;
     onBack: () => void;
     onSave: () => void;
+    onPhotoPress?: (photo: MastheadPhoto) => void;
     topInset: number;
+    photos?: readonly MastheadPhoto[];
     palette: Palette;
 }) {
+    const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+    const pagerRef = useRef<ScrollView>(null);
+    const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+    const photoSignature = photos.map((photo) => photo.url).join('|');
+    const mastheadHeight = Math.min(
+        Spacing.restaurant.photoMastheadHeight,
+        windowHeight * Spacing.restaurant.photoMastheadMaxWindowRatio,
+    );
+
+    useEffect(() => {
+        setCurrentPhotoIndex(0);
+        pagerRef.current?.scrollTo({ x: 0, animated: false });
+    }, [photoSignature]);
+
+    if (photos.length > 0) {
+        const currentPhoto = photos[Math.min(currentPhotoIndex, photos.length - 1)];
+        const entryChip = currentPhoto.kind === 'entry' && currentPhoto.label
+            ? `${currentPhoto.label} · ${currentPhotoIndex + 1} / ${photos.length}`
+            : null;
+        return (
+            <View
+                testID="restaurant-photo-masthead"
+                style={[
+                    styles.photoMasthead,
+                    { height: mastheadHeight, backgroundColor: palette.plateSlate },
+                ]}
+            >
+                <ScrollView
+                    ref={pagerRef}
+                    testID="masthead-photo-pager"
+                    horizontal
+                    pagingEnabled
+                    bounces={false}
+                    showsHorizontalScrollIndicator={false}
+                    onMomentumScrollEnd={(event) => {
+                        const index = Math.round(event.nativeEvent.contentOffset.x / windowWidth);
+                        setCurrentPhotoIndex(Math.max(0, Math.min(photos.length - 1, index)));
+                    }}
+                >
+                    {photos.map((photo, index) => {
+                        const image = (
+                            <Image
+                                testID={`masthead-photo-${index}`}
+                                source={{ uri: photo.url }}
+                                style={{ width: windowWidth, height: mastheadHeight }}
+                                contentFit="cover"
+                                transition={200}
+                                accessible={false}
+                            />
+                        );
+                        if (photo.kind !== 'entry' || !photo.entryId || !onPhotoPress) {
+                            return (
+                                <React.Fragment key={`masthead-photo-${index}`}>
+                                    {image}
+                                </React.Fragment>
+                            );
+                        }
+                        return (
+                            <Pressable
+                                key={`masthead-photo-${index}`}
+                                testID={`masthead-photo-link-${index}`}
+                                onPress={() => onPhotoPress(photo)}
+                                accessibilityRole="imagebutton"
+                                accessibilityLabel="photo from a visit"
+                                style={({ pressed }) => [
+                                    { width: windowWidth, height: mastheadHeight },
+                                    pressed && styles.pressed,
+                                ]}
+                            >
+                                {image}
+                            </Pressable>
+                        );
+                    })}
+                </ScrollView>
+                <LinearGradient
+                    colors={[
+                        palette.overlayPhoto,
+                        palette.overlayClear,
+                        palette.overlayClear,
+                        palette.overlayHeavy,
+                    ]}
+                    locations={[
+                        0,
+                        Spacing.restaurant.photoGradientTopEnd,
+                        Spacing.restaurant.photoGradientMiddleEnd,
+                        1,
+                    ]}
+                    style={StyleSheet.absoluteFill}
+                    pointerEvents="none"
+                />
+                <View style={[styles.photoTopBar, { top: topInset + Spacing.sm }]}>
+                    <Pressable
+                        onPress={onBack}
+                        accessibilityRole="button"
+                        accessibilityLabel="back"
+                        style={({ pressed }) => [
+                            styles.photoTopButton,
+                            { backgroundColor: palette.scrimFrost },
+                            Shadow.ambient,
+                            pressed && styles.pressed,
+                        ]}
+                    >
+                        <Ionicons name="chevron-back" size={IconSize.lg} color={palette.text} />
+                    </Pressable>
+                    <Pressable
+                        onPress={onSave}
+                        disabled={saveDisabled}
+                        accessibilityRole="button"
+                        accessibilityLabel={saved ? 'edit saved lists' : 'save restaurant'}
+                        style={({ pressed }) => [
+                            styles.photoTopButton,
+                            { backgroundColor: palette.scrimFrost },
+                            Shadow.ambient,
+                            saveDisabled && styles.disabled,
+                            pressed && styles.pressed,
+                        ]}
+                    >
+                        <Ionicons
+                            name={saved ? 'bookmark' : 'bookmark-outline'}
+                            size={IconSize.lg}
+                            color={palette.primary}
+                        />
+                    </Pressable>
+                </View>
+                {entryChip || currentPhoto.kind === 'places' ? (
+                    <View
+                        style={[
+                            styles.photoSourceChip,
+                            {
+                                top: topInset
+                                    + Spacing.sm
+                                    + Spacing.restaurant.photoControlSize
+                                    + Spacing.sm,
+                                backgroundColor: palette.scrimDark,
+                            },
+                        ]}
+                    >
+                        <Text style={[Type.sectionKicker, { color: palette.textOnImage }]}>
+                            {entryChip ?? currentPhoto.label}
+                        </Text>
+                        {currentPhoto.attribution ? (
+                            <Text
+                                style={[Type.metadata, { color: palette.textOnImageMuted }]}
+                                numberOfLines={1}
+                            >
+                                {currentPhoto.attribution}
+                            </Text>
+                        ) : null}
+                    </View>
+                ) : null}
+                <View style={styles.photoTitleBlock} pointerEvents="none">
+                    <Text
+                        style={[Type.restaurantName, { color: palette.textOnImage }]}
+                        numberOfLines={3}
+                    >
+                        {restaurant.name}
+                    </Text>
+                    {meta ? (
+                        <Text
+                            style={[
+                                Type.metadata,
+                                styles.mastheadMeta,
+                                { color: palette.textOnImageMuted },
+                            ]}
+                            numberOfLines={2}
+                        >
+                            {meta}
+                        </Text>
+                    ) : null}
+                </View>
+            </View>
+        );
+    }
+
     return (
         <>
             <View style={[styles.topBar, { paddingTop: topInset + Spacing.sm }]}>
@@ -114,39 +307,6 @@ export function RestaurantTop({
     );
 }
 
-type NumberTier = { value: number | null; meta: string };
-
-export function RestaurantNumbersBand({
-    you,
-    friends,
-    google,
-    palette,
-}: {
-    you: NumberTier;
-    friends: NumberTier;
-    google: NumberTier;
-    palette: Palette;
-}) {
-    const cells = [
-        { label: 'YOU', tier: you, color: palette.amberBright, kicker: palette.textMuted },
-        { label: 'FRIENDS', tier: friends, color: palette.amberBright, kicker: palette.textMuted },
-        { label: 'GOOGLE', tier: google, color: palette.textMuted, kicker: palette.textFaint },
-    ];
-    return (
-        <View style={[styles.numbersBand, { backgroundColor: palette.surfaceJournalLow }]}>
-            {cells.map((cell) => (
-                <View key={cell.label} style={styles.numberCell}>
-                    <Text style={[styles.numberKicker, { color: cell.kicker }]}>{cell.label}</Text>
-                    <Text style={[Type.rating, { color: cell.color }]}>
-                        {cell.tier.value == null ? '—' : cell.tier.value.toFixed(1)}
-                    </Text>
-                    <Text style={[Type.metadata, { color: palette.textFaint }]}>{cell.tier.meta}</Text>
-                </View>
-            ))}
-        </View>
-    );
-}
-
 type UtilityAction = {
     key: string;
     label: string;
@@ -162,6 +322,7 @@ export function RestaurantActions({
     onWebsite,
     onReserve,
     onGather,
+    flushTop = false,
     palette,
 }: {
     saved: boolean;
@@ -171,6 +332,7 @@ export function RestaurantActions({
     onWebsite?: () => void;
     onReserve?: () => void;
     onGather?: () => void;
+    flushTop?: boolean;
     palette: Palette;
 }) {
     const utilities: UtilityAction[] = [
@@ -192,7 +354,7 @@ export function RestaurantActions({
             ? [utilities.slice(0, 2), utilities.slice(2)]
             : [utilities];
     return (
-        <View style={styles.actions}>
+        <View style={[styles.actions, flushTop && styles.actionsFlushTop]}>
             <Pressable
                 onPress={onLog}
                 accessibilityRole="button"
@@ -473,6 +635,7 @@ function DetailRow({
     action,
     onPress,
     last,
+    faint,
     palette,
 }: {
     icon: keyof typeof Ionicons.glyphMap;
@@ -480,12 +643,15 @@ function DetailRow({
     action?: string;
     onPress?: () => void;
     last?: boolean;
+    faint?: boolean;
     palette: Palette;
 }) {
+    const contentColor = faint ? palette.textFaint : palette.text;
+    const iconColor = faint ? palette.textFaint : palette.textSecondary;
     const row = (
         <View style={styles.detailRow}>
-            <Ionicons name={icon} size={18} color={palette.textSecondary} />
-            <Text style={[styles.detailCopy, { color: palette.text }]}>{copy}</Text>
+            <Ionicons name={icon} size={IconSize.md} color={iconColor} />
+            <Text style={[styles.detailCopy, { color: contentColor }]}>{copy}</Text>
             {action ? <Text style={[styles.detailAction, { color: palette.primary }]}>{action}</Text> : null}
         </View>
     );
@@ -529,9 +695,14 @@ export function RestaurantDetails({
         hasHours(restaurant.hours) ? 'hours' : null,
         restaurant.phone ? 'phone' : null,
         restaurant.website ? 'website' : null,
+        restaurant.google_rating != null ? 'google' : null,
     ].filter(Boolean);
     if (rows.length === 0) return null;
     const lastRow = rows.at(-1);
+    const googleCount = restaurant.google_rating_count != null
+        && restaurant.google_rating_count > 0
+        ? formatGoogleRatingCount(restaurant.google_rating_count)
+        : null;
     return (
         <View style={[styles.section, styles.detailsSection]}>
             <SectionHeading label="DETAILS" palette={palette} />
@@ -592,7 +763,16 @@ export function RestaurantDetails({
                             ? restaurant.website!
                             : `https://${restaurant.website}`,
                     )}
+                    last={lastRow === 'website'}
+                    palette={palette}
+                />
+            ) : null}
+            {restaurant.google_rating != null ? (
+                <DetailRow
+                    icon="star-outline"
+                    copy={`${Math.max(0, Math.min(5, restaurant.google_rating)).toFixed(1)} on google${googleCount ? ` · ${googleCount}` : ''}`}
                     last
+                    faint
                     palette={palette}
                 />
             ) : null}
@@ -617,28 +797,54 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    photoMasthead: {
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    photoTopBar: {
+        position: 'absolute',
+        left: Spacing.restaurant.photoChromeGutter,
+        right: Spacing.restaurant.photoChromeGutter,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    photoTopButton: {
+        width: Spacing.restaurant.photoControlSize,
+        height: Spacing.restaurant.photoControlSize,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    photoSourceChip: {
+        position: 'absolute',
+        right: Spacing.restaurant.photoChromeGutter,
+        minHeight: Spacing.restaurant.photoChipMinHeight,
+        maxWidth: Spacing.restaurant.photoChipMaxWidth,
+        borderRadius: Radius.full,
+        paddingHorizontal: Spacing.restaurant.actionGap,
+        paddingVertical: Spacing.xs,
+        justifyContent: 'center',
+        gap: Spacing.xs,
+    },
+    photoTitleBlock: {
+        position: 'absolute',
+        left: Spacing.restaurant.pageGutter,
+        right: Spacing.restaurant.pageGutter,
+        bottom: Spacing.restaurant.photoTitleBottom,
+    },
     masthead: {
         paddingHorizontal: Spacing.restaurant.pageGutter,
         paddingTop: Spacing.restaurant.mastheadTop,
     },
     restaurantName: Type.restaurantName,
     mastheadMeta: { marginTop: Spacing.xs },
-    numbersBand: {
-        marginHorizontal: Spacing.restaurant.pageGutter,
-        marginTop: Spacing.restaurant.numbersTop,
-        borderRadius: Radius.lg,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.restaurant.numbersVertical,
-        flexDirection: 'row',
-        alignItems: 'baseline',
-    },
-    numberCell: { flex: 1, gap: Spacing.restaurant.hairlineGap },
-    numberKicker: Type.restaurantKicker,
     actions: {
         paddingHorizontal: Spacing.restaurant.pageGutter,
         paddingTop: Spacing.restaurant.actionTop,
         gap: Spacing.restaurant.actionGap,
     },
+    actionsFlushTop: { paddingTop: Spacing.restaurant.flushTop },
     primaryAction: {
         height: Spacing.restaurant.primaryActionHeight,
         borderRadius: Radius.full,
