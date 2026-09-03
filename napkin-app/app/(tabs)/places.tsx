@@ -15,6 +15,7 @@ import {
     Text,
     TextInput,
     View,
+    type LayoutChangeEvent,
     useWindowDimensions,
 } from 'react-native';
 import Animated, {
@@ -29,19 +30,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { Region } from 'react-native-maps';
 
 import {
     ListsSearchPane,
-    ListRow,
     PeopleSearchPane,
-    RecentSearchesList,
     SearchLocalityBar,
     SearchModeTabs,
-    TierHeader,
 } from '@/components/search';
 import type { SearchMode } from '@/components/search';
 import { ErrorState, InlineErrorState } from '@/components/ErrorState';
 import { PlacesListsPane } from '@/components/places/PlacesListsPane';
+import { PlacesRatingLabel, PlacesRow } from '@/components/places/PlacesRow';
+import { PlacesSearchSections } from '@/components/places/PlacesSearchSections';
 import {
     SnapSheet,
     type SnapSheetContentContext,
@@ -74,12 +75,13 @@ import {
     decorateAndSortRows,
     deriveDistanceOrigin,
     filterPlacesLayerRows,
+    flattenPlacesCityGroups,
+    groupRowsByCity,
     networkRowsToDisplayRows,
     placesCountLabel,
     placesListsContentBranch,
     placesSearchBranch,
     placesViewToggle,
-    presentPlacesRating,
     projectPlacesPins,
     resolvePlacesFailurePresentation,
     resolvePlacesListsBranch,
@@ -87,10 +89,12 @@ import {
     restaurantRouteForRow,
     searchRowsToDisplayRows,
     selectNearbyPlaces,
+    shouldShowPlacesFollowingRail,
     shouldFetchNextPlacesPage,
     spotRowsToDisplayRows,
     wishlistRowsToDisplayRows,
     type DecoratedPlacesRow,
+    type PlacesCityLedgerItem,
     type PlacesDisplayRow,
 } from '@/components/places/placesPresentation';
 import { Colors, IconSize, Radius, Shadow, Spacing, Type } from '@/constants/theme';
@@ -114,6 +118,7 @@ import {
 } from '@/hooks/search/useRestaurantSearch';
 import { useUserProfile } from '@/hooks/users';
 import { useNetworkMapPins } from '@/hooks/users/useNetworkMapPins';
+import { useFollowingList } from '@/hooks/users/useFollowingList';
 import { useUserSpots } from '@/hooks/users/useUserSpots';
 import { useMyLists } from '@/hooks/lists/useMyLists';
 import { useSavedLists } from '@/hooks/lists/useSavedLists';
@@ -124,6 +129,7 @@ import { useClipTray } from '@/hooks/imports/useClipTray';
 
 const SEARCH_DEBOUNCE_MS = 250;
 const NAV_CLEARANCE = 92;
+const VIEW_TOGGLE_HEIGHT = Spacing.hitTarget;
 
 type Palette = typeof Colors.light;
 type FrozenProjection = {
@@ -163,28 +169,6 @@ function routeMode(mode: string | undefined): SearchMode | null {
     return mode === 'places' || mode === 'lists' || mode === 'people' ? mode : null;
 }
 
-function RatingLabel({ row, palette }: { row: PlacesDisplayRow; palette: Palette }) {
-    const presentation = presentPlacesRating(row.rating);
-    const color = presentation.tone === 'amber'
-        ? palette.tertiary
-        : presentation.tone === 'muted'
-          ? palette.textMuted
-          : palette.textFaint;
-    if (!presentation.value) {
-        return <Text style={[styles.unrated, { color }]}>{presentation.suffix}</Text>;
-    }
-    return (
-        <Text numberOfLines={1}>
-            <Text style={[styles.ratingValue, { color }]}>{presentation.value}</Text>
-            {presentation.suffix ? (
-                <Text style={[styles.ratingSuffix, { color: palette.textMuted }]}>
-                    {presentation.suffix}
-                </Text>
-            ) : null}
-        </Text>
-    );
-}
-
 function SheetStatePane({
     children,
     scrollEnabled,
@@ -192,7 +176,7 @@ function SheetStatePane({
 }: {
     children: React.ReactNode;
     scrollEnabled: boolean;
-    onScroll: SnapSheetContentContext['onScroll'];
+    onScroll?: SnapSheetContentContext['onScroll'];
 }) {
     return (
         <Animated.FlatList
@@ -207,47 +191,6 @@ function SheetStatePane({
             contentContainerStyle={styles.statePane}
             ListEmptyComponent={<View style={styles.statePaneBody}>{children}</View>}
         />
-    );
-}
-
-function ResultRow({
-    item,
-    palette,
-    onPress,
-}: {
-    item: DecoratedPlacesRow;
-    palette: Palette;
-    onPress: (row: PlacesDisplayRow) => void;
-}) {
-    const meta = composeRowMeta(item.row, item.distanceLabel);
-    return (
-        <Pressable
-            onPress={() => onPress(item.row)}
-            style={({ pressed }) => [styles.resultRow, pressed && { opacity: 0.64 }]}
-            accessibilityRole="button"
-            accessibilityLabel={`open ${item.row.name}`}
-        >
-            <View style={styles.resultCopy}>
-                <View style={styles.nameRatingLine}>
-                    <Text style={[styles.resultName, { color: palette.text }]} numberOfLines={1}>
-                        {item.row.name}
-                    </Text>
-                    {item.row.network ? (
-                        <Text style={[styles.friendCell, { color: palette.textMuted }]} numberOfLines={1}>
-                            {item.row.network.author.name}
-                        </Text>
-                    ) : (
-                        <RatingLabel row={item.row} palette={palette} />
-                    )}
-                </View>
-                {meta ? (
-                    <Text style={[styles.resultMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                        {meta}
-                    </Text>
-                ) : null}
-            </View>
-            <Ionicons name="chevron-forward-outline" size={17} color={palette.textFaint} />
-        </Pressable>
     );
 }
 
@@ -325,6 +268,8 @@ export default function PlacesScreen() {
         ? routeRequestedSegment
         : storedSegment;
     const searchMode = routeWantsSearch || screenState.previousNonSearchSnap !== null;
+    const listMode = !searchMode && screenState.viewMode === 'list';
+    const mapMode = !searchMode && !listMode;
     const initialQuery = queryForPlacesRouteArrival(
         screenState.query,
         incomingQ,
@@ -343,7 +288,7 @@ export default function PlacesScreen() {
     const [bottomInset, setBottomInset] = useState(() => (
         visibleHeight(sheetH, firstSnap, PLACES_SNAP_METRICS)
     ));
-    const [settledSnap, setSettledSnap] = useState(firstSnap);
+    const [paperTopChromeHeight, setPaperTopChromeHeight] = useState<number | null>(null);
     const placesListRef = useRef<FlatList<DecoratedPlacesRow>>(null);
     const restoredScrollRef = useRef(false);
 
@@ -459,6 +404,14 @@ export default function PlacesScreen() {
             : null,
     );
     const savedListsQuery = useSavedLists(user?.id, { enabled: listsShelfVisible });
+    const followingQuery = useFollowingList(
+        searchMode
+            && activeSegment === 'places'
+            && immediateQuery.trim().length === 0
+            && !FRIEND_TEST.hidePeopleSearch
+            ? user?.id
+            : null,
+    );
     const wishlistData = wishlistQuery.data;
     const spotsData = spotsQuery.data;
     const recentQueries = useRecentSearches();
@@ -539,6 +492,10 @@ export default function PlacesScreen() {
         () => decorateAndSortRows(filteredRows, distanceOrigin),
         [distanceOrigin, filteredRows],
     );
+    const cityGroups = useMemo(
+        () => groupRowsByCity(decoratedRows, { locality, distanceOrigin, homeCity }),
+        [decoratedRows, distanceOrigin, homeCity, locality],
+    );
     const nearbySearchRows = useMemo(
         () => selectNearbyPlaces(allLayerRows, distanceOrigin),
         [allLayerRows, distanceOrigin],
@@ -586,7 +543,11 @@ export default function PlacesScreen() {
         && activeSegment === 'places'
         && (screenState.layerFilter === 'all' || screenState.layerFilter === 'pinned');
     const placesHaveMore = paginatedBrowse && !!wishlistQuery.hasNextPage;
-    const viewToggle = placesViewToggle(settledSnap);
+    const cityLedgerItems = useMemo(
+        () => flattenPlacesCityGroups(cityGroups, placesHaveMore),
+        [cityGroups, placesHaveMore],
+    );
+    const viewToggle = placesViewToggle(screenState.viewMode);
     const currentPins = useMemo(() => projectPlacesPins(filteredRows), [filteredRows]);
     const currentScopeKey = queryActive
         ? `search:${locality === 'auto' ? 'auto' : locality.city.trim().toLowerCase()}:${debouncedQuery.trim().toLowerCase()}`
@@ -605,8 +566,8 @@ export default function PlacesScreen() {
         frozenProjectionRef.current = emptyProjection();
     }
 
-    // Guidance freezes the map; results commit their live projection so result
-    // pins remain usable when the sheet is dragged down.
+    // Search unmounts the map, but keeps the last projection available so the
+    // browse map can return without borrowing data from Lists or People.
     useEffect(() => {
         if (activeSegment === 'places' && !guidanceSearchMode) {
             frozenProjectionRef.current = currentProjection;
@@ -625,7 +586,7 @@ export default function PlacesScreen() {
     const selectedDistance = selectedRow
         ? decorateAndSortRows([selectedRow], distanceOrigin)[0]?.distanceLabel ?? null
         : null;
-    const selectedCaptionVisible = !searchMode && activeSegment === 'places' && !!selectedRow;
+    const selectedCaptionVisible = mapMode && activeSegment === 'places' && !!selectedRow;
 
     useEffect(() => {
         const trimmed = debouncedQuery.trim();
@@ -666,6 +627,24 @@ export default function PlacesScreen() {
         patchScreenState({ query: '', scrollOffset: 0 });
     }, [patchScreenState]);
 
+    const handleRegionChangeComplete = useCallback((region: Region) => {
+        patchScreenState({ region });
+    }, [patchScreenState]);
+
+    const handlePaperTopChromeLayout = useCallback((event: LayoutChangeEvent) => {
+        const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+        if (nextHeight <= 0) return;
+        setPaperTopChromeHeight((current) => current === nextHeight ? current : nextHeight);
+    }, []);
+
+    const handleViewToggle = useCallback(() => {
+        patchScreenState({
+            viewMode: viewToggle.target,
+            selectedPinId: null,
+            scrollOffset: 0,
+        });
+    }, [patchScreenState, viewToggle.target]);
+
     const handleRetryFailure = useCallback(() => {
         for (const source of failurePresentation.sources) {
             if (source === 'places') refetchPlaces();
@@ -691,8 +670,8 @@ export default function PlacesScreen() {
             FRIEND_TEST.hidePeopleSearch,
         );
         patchScreenState(transitioned);
-        sheetRef.current?.snapTo(transitioned.sheetSnap);
-    }, [patchScreenState, screenState]);
+        if (mapMode) sheetRef.current?.snapTo(transitioned.sheetSnap);
+    }, [mapMode, patchScreenState, screenState]);
 
     const openRestaurant = useCallback((row: PlacesDisplayRow) => {
         const route = restaurantRouteForRow(row);
@@ -819,51 +798,250 @@ export default function PlacesScreen() {
         });
     }, [screenState.scrollOffset]);
 
+    const renderPaperContent = () => {
+        if (activeSegment === 'lists') {
+            if (immediateQuery.trim().length === 0) {
+                return (
+                    <PlacesListsPane
+                        branch={listsShelfBranch}
+                        myLists={myListsQuery.data ?? []}
+                        savedLists={savedListsQuery.data ?? []}
+                        myError={myListsQuery.isError}
+                        savedError={savedListsQuery.isError}
+                        scrollEnabled
+                        onOpenList={(id) => openList({ id })}
+                        onNewList={() => router.push('/list/new')}
+                        onRetryMyLists={() => { void myListsQuery.refetch(); }}
+                        onRetrySavedLists={() => { void savedListsQuery.refetch(); }}
+                        bottomPadding={insets.bottom + NAV_CLEARANCE}
+                    />
+                );
+            }
+            if (immediateQuery.trim().length === 1) {
+                return (
+                    <SheetStatePane scrollEnabled>
+                        <View style={styles.emptyResults}>
+                            <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
+                                type one more letter
+                            </Text>
+                        </View>
+                    </SheetStatePane>
+                );
+            }
+            return (
+                <ListsSearchPane
+                    query={immediateQuery}
+                    debouncedQuery={debouncedQuery}
+                />
+            );
+        }
+
+        if (activeSegment === 'people') {
+            return (
+                <PeopleSearchPane
+                    query={immediateQuery}
+                    debouncedQuery={debouncedQuery}
+                />
+            );
+        }
+
+        if (searchMode && searchGuidanceBranch === 'sections') {
+            const followingRows = followingQuery.data ?? [];
+            const following = shouldShowPlacesFollowingRail(
+                FRIEND_TEST.hidePeopleSearch,
+                followingRows.length,
+            ) ? followingRows : [];
+            return (
+                <PlacesSearchSections
+                    recentQueries={recentQueries.slice(0, 8)}
+                    nearbyRows={nearbySearchRows}
+                    myLists={(myListsQuery.data ?? []).slice(0, 4)}
+                    following={following}
+                    loading={wishlistQuery.isLoading
+                        || spotsQuery.isLoading
+                        || myListsQuery.isLoading
+                        || followingQuery.isLoading}
+                    onSelectRecent={handleQueryChange}
+                    onClearRecent={searchCache.clearRecents}
+                    onOpenRestaurant={openRestaurant}
+                    onOpenList={openList}
+                    onOpenPerson={(identifier) => router.push({
+                        pathname: '/u/[identifier]',
+                        params: { identifier },
+                    })}
+                    bottomPadding={insets.bottom + NAV_CLEARANCE}
+                />
+            );
+        }
+
+        if (searchMode && searchGuidanceBranch === 'minimum') {
+            return (
+                <SheetStatePane scrollEnabled>
+                    <View style={styles.emptyResults}>
+                        <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
+                            type one more letter
+                        </Text>
+                    </View>
+                </SheetStatePane>
+            );
+        }
+
+        if (isLoading && decoratedRows.length === 0 && queryActive) {
+            return (
+                <SheetStatePane scrollEnabled>
+                    <ActivityIndicator style={styles.loader} color={palette.primary} />
+                </SheetStatePane>
+            );
+        }
+        if (layerLoading && sourceRows.length === 0 && !queryActive) {
+            return (
+                <SheetStatePane scrollEnabled>
+                    <ActivityIndicator style={styles.loader} color={palette.primary} />
+                </SheetStatePane>
+            );
+        }
+        if (failurePresentation.kind === 'broken') {
+            return (
+                <SheetStatePane scrollEnabled>
+                    <ErrorState onRetry={handleRetryFailure} message="couldn't load places" />
+                </SheetStatePane>
+            );
+        }
+
+        if (listMode) {
+            return (
+                <Animated.FlatList<PlacesCityLedgerItem>
+                    testID="places-city-ledger"
+                    data={cityLedgerItems}
+                    keyExtractor={(item) => item.key}
+                    renderItem={({ item }) => item.kind === 'header' ? (
+                        <View style={[
+                            styles.cityGroupHeader,
+                            !item.isFirst && styles.cityGroupHeaderLater,
+                        ]}>
+                            <Text style={[styles.kicker, { color: palette.primary }]}>
+                                {item.label}
+                            </Text>
+                            <Text style={[styles.placeCount, { color: palette.textMuted }]}>
+                                {placesCountLabel(item.count, item.hasMore)}
+                            </Text>
+                        </View>
+                    ) : (
+                        <PlacesRow item={item.item} onPress={openRestaurant} />
+                    )}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    onEndReached={handlePlacesEndReached}
+                    onEndReachedThreshold={0.4}
+                    contentContainerStyle={[
+                        styles.cityLedgerContent,
+                        {
+                            paddingBottom: insets.bottom
+                                + NAV_CLEARANCE
+                                + VIEW_TOGGLE_HEIGHT
+                                + Spacing.md,
+                        },
+                    ]}
+                    ListHeaderComponent={failurePresentation.kind === 'inline'
+                        ? (
+                            <InlineErrorState
+                                onRetry={handleRetryFailure}
+                                message="couldn't refresh places"
+                            />
+                        )
+                        : null}
+                    ListEmptyComponent={(
+                        <View style={styles.emptyResults}>
+                            <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
+                                {screenState.layerFilter === 'pinned'
+                                    ? 'no pinned places yet'
+                                    : screenState.layerFilter === 'been'
+                                      ? 'no logged places yet'
+                                      : screenState.layerFilter === 'friends'
+                                        ? 'nothing from friends yet'
+                                        : 'no places yet'}
+                            </Text>
+                        </View>
+                    )}
+                    ListFooterComponent={paginatedBrowse && wishlistQuery.isFetchingNextPage
+                        ? <ActivityIndicator color={palette.primary} style={styles.pageLoader} />
+                        : null}
+                />
+            );
+        }
+
+        return (
+            <Animated.FlatList
+                testID="places-paper-results"
+                data={decoratedRows}
+                keyExtractor={({ row }) => row.id}
+                renderItem={({ item }) => <PlacesRow item={item} onPress={openRestaurant} />}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                contentContainerStyle={[
+                    styles.resultsContent,
+                    { paddingBottom: insets.bottom + NAV_CLEARANCE },
+                ]}
+                ListHeaderComponent={failurePresentation.kind === 'inline'
+                    ? (
+                        <InlineErrorState
+                            onRetry={handleRetryFailure}
+                            message="couldn't refresh places"
+                        />
+                    )
+                    : null}
+                ListEmptyComponent={(
+                    <View style={styles.emptyResults}>
+                        <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
+                            {queryActive ? 'no places found' : 'no places yet'}
+                        </Text>
+                    </View>
+                )}
+            />
+        );
+    };
+
     return (
         <View style={[styles.screen, { backgroundColor: palette.background }]}>
-            <WishlistMapView
-                items={renderedProjection.pins}
-                unmappableCount={unmappableCount}
-                onUnmappablePress={unmappableCount > 0
-                    ? () => setUnmappedSheetOpen(true)
-                    : undefined}
-                userCoords={deviceCoords}
-                locationStatus={locationStatus}
-                onRequestLocation={() => { void requestLocation(); }}
-                onOpenRestaurant={(id) => {
-                    const row = renderedProjection.rows.find((candidate) => candidate.id === id);
-                    if (row) openRestaurant(row);
-                }}
-                peek="none"
-                selectedId={screenState.selectedPinId}
-                onSelectedChange={(selectedPinId) => patchScreenState({ selectedPinId })}
-                bottomInset={bottomInset}
-                preserveItemOrder={!distanceOrigin}
-                collectionScopeKey={renderedProjection.scopeKey}
-                // Murmur sits below the search pill + chip row (top wash is opaque to ~130pt).
-                chromeTopOffset={insets.top + 108}
-                palette={palette}
-            />
-
-            {guidanceSearchMode ? (
-                <Pressable
-                    testID="places-search-map-scrim"
-                    onPress={handleLeaveSearch}
-                    style={[StyleSheet.absoluteFill, { backgroundColor: palette.overlay }]}
-                    accessibilityRole="button"
-                    accessibilityLabel="return to places map"
+            {mapMode ? (
+                <WishlistMapView
+                    items={renderedProjection.pins}
+                    unmappableCount={unmappableCount}
+                    onUnmappablePress={unmappableCount > 0
+                        ? () => setUnmappedSheetOpen(true)
+                        : undefined}
+                    userCoords={deviceCoords}
+                    locationStatus={locationStatus}
+                    onRequestLocation={() => { void requestLocation(); }}
+                    onOpenRestaurant={(id) => {
+                        const row = renderedProjection.rows.find((candidate) => candidate.id === id);
+                        if (row) openRestaurant(row);
+                    }}
+                    peek="none"
+                    selectedId={screenState.selectedPinId}
+                    onSelectedChange={(selectedPinId) => patchScreenState({ selectedPinId })}
+                    initialRegion={screenState.region ?? undefined}
+                    onRegionChangeComplete={handleRegionChangeComplete}
+                    bottomInset={bottomInset}
+                    preserveItemOrder={!distanceOrigin}
+                    collectionScopeKey={renderedProjection.scopeKey}
+                    // Murmur sits below the search pill + chip row (top wash is opaque to ~130pt).
+                    chromeTopOffset={insets.top + 108}
+                    palette={palette}
                 />
             ) : null}
 
             {!searchMode && !selectedCaptionVisible ? (
                 <Pressable
                     testID="places-view-toggle"
-                    onPress={() => sheetRef.current?.snapTo(viewToggle.target)}
+                    onPress={handleViewToggle}
                     style={({ pressed }) => [
                         styles.viewToggle,
                         Shadow.ambient,
                         {
-                            bottom: bottomInset + Spacing.sm + Spacing.xs,
+                            bottom: mapMode
+                                ? bottomInset + Spacing.sm + Spacing.xs
+                                : insets.bottom + NAV_CLEARANCE,
                             backgroundColor: palette.scrimFrost,
                             opacity: pressed ? 0.72 : 1,
                         },
@@ -871,25 +1049,44 @@ export default function PlacesScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={`${viewToggle.label} places`}
                 >
-                    <Ionicons name={viewToggle.icon} size={IconSize.sm - 1} color={palette.primary} />
+                    <Ionicons name={viewToggle.icon} size={IconSize.md} color={palette.primary} />
                     <Text style={[styles.viewToggleLabel, { color: palette.primary }]}>
                         {viewToggle.label}
                     </Text>
                 </Pressable>
             ) : null}
 
-            <LinearGradient
-                colors={[
-                    palette.background,
-                    `${palette.background}F2`,
-                    `${palette.background}00`,
+            <View
+                testID="places-top-chrome"
+                onLayout={mapMode ? undefined : handlePaperTopChromeLayout}
+                style={[
+                    styles.topChrome,
+                    mapMode && styles.mapTopChrome,
+                    { paddingTop: insets.top + Spacing.sm },
                 ]}
-                locations={[0, 0.7, 1]}
-                style={[styles.topWash, { paddingTop: insets.top + 8 }]}
                 pointerEvents="box-none"
             >
+                <LinearGradient
+                    colors={mapMode
+                        ? [
+                            palette.background,
+                            `${palette.background}F2`,
+                            `${palette.background}00`,
+                        ]
+                        : [palette.background, palette.background, palette.background]}
+                    locations={[0, 0.7, 1]}
+                    style={styles.topWashFill}
+                    pointerEvents="none"
+                />
                 <View style={styles.searchLine}>
-                    <View style={[styles.searchPill, Shadow.ambient, { backgroundColor: palette.surfaceNote }]}>
+                    <View
+                        style={[
+                            styles.searchPill,
+                            searchMode && styles.searchTakeoverPill,
+                            Shadow.ambient,
+                            { backgroundColor: palette.surfaceNote },
+                        ]}
+                    >
                         {searchMode ? (
                             <Pressable
                                 onPress={handleLeaveSearch}
@@ -907,15 +1104,16 @@ export default function PlacesScreen() {
                             value={immediateQuery}
                             onFocus={handleEnterSearch}
                             onChangeText={handleQueryChange}
-                            placeholder="find a place"
+                            placeholder={searchMode ? 'find a place, list or person' : 'find a place'}
                             placeholderTextColor={palette.textFaint}
+                            selectionColor={palette.primary}
                             style={[styles.searchInput, { color: palette.text }]}
                             autoCorrect={false}
                             returnKeyType="search"
                             clearButtonMode="never"
                             accessibilityLabel="find a place, list, or person"
                         />
-                        {immediateQuery ? (
+                        {searchMode || immediateQuery ? (
                             <Pressable
                                 onPress={handleClearQuery}
                                 hitSlop={8}
@@ -1015,7 +1213,38 @@ export default function PlacesScreen() {
                         </>
                     ) : null}
                 </ScrollView>
-            </LinearGradient>
+            </View>
+
+            {!mapMode ? (
+                <View
+                    testID="places-paper-surface"
+                    style={[
+                        styles.paperSurface,
+                        {
+                            backgroundColor: palette.background,
+                            paddingTop: (paperTopChromeHeight ?? 0) + Spacing.sm,
+                            opacity: paperTopChromeHeight == null ? 0 : 1,
+                        },
+                    ]}
+                >
+                    <View style={styles.paperTabs}>
+                        <SearchModeTabs
+                            mode={activeSegment}
+                            onModeChange={handleSegmentChange}
+                            hidePeople={FRIEND_TEST.hidePeopleSearch}
+                        />
+                    </View>
+                    {searchMode && activeSegment === 'places' && queryActive ? (
+                        <View style={styles.sheetLedgerHeader}>
+                            <Text style={[styles.kicker, { color: palette.primary }]}>RESULTS</Text>
+                            <Text style={[styles.placeCount, { color: palette.textMuted }]}>
+                                {placesCountLabel(decoratedRows.length, false)}
+                            </Text>
+                        </View>
+                    ) : null}
+                    <View style={styles.paperBody}>{renderPaperContent()}</View>
+                </View>
+            ) : null}
 
             {selectedCaptionVisible && selectedRow ? (
                 <Pressable
@@ -1029,6 +1258,7 @@ export default function PlacesScreen() {
                         },
                     ]}
                     accessibilityRole="button"
+                    testID="places-selected-caption"
                     accessibilityLabel={`open ${selectedRow.name}`}
                 >
                     <View style={styles.captionCopy}>
@@ -1036,9 +1266,7 @@ export default function PlacesScreen() {
                             <Text style={[styles.captionName, { color: palette.text }]} numberOfLines={1}>
                                 {selectedRow.name}
                             </Text>
-                            {!selectedRow.network ? (
-                                <RatingLabel row={selectedRow} palette={palette} />
-                            ) : null}
+                            <PlacesRatingLabel row={selectedRow} />
                         </View>
                         <Text style={[styles.resultMeta, { color: palette.textMuted }]} numberOfLines={1}>
                             {selectedRow.network
@@ -1053,6 +1281,7 @@ export default function PlacesScreen() {
                 </Pressable>
             ) : null}
 
+            {mapMode ? (
             <SnapSheet
                 H={sheetH}
                 initialSnap={firstSnap}
@@ -1067,7 +1296,6 @@ export default function PlacesScreen() {
                 onPanStart={Keyboard.dismiss}
                 onSettle={(sheetSnap, settledHeight) => {
                     setBottomInset(settledHeight);
-                    setSettledSnap(sheetSnap);
                     patchScreenState({ sheetSnap });
                 }}
                 renderHeader={renderSheetHeader}
@@ -1121,88 +1349,6 @@ export default function PlacesScreen() {
                             />
                         );
                     }
-                    if (searchMode && searchGuidanceBranch === 'sections') {
-                        const recentSearches = recentQueries.slice(0, 8);
-                        const myLists = (myListsQuery.data ?? []).slice(0, 4);
-                        return (
-                            <Animated.FlatList
-                                testID="places-search-sections"
-                                data={[] as string[]}
-                                keyExtractor={(item) => item}
-                                renderItem={() => null}
-                                scrollEnabled={scrollEnabled}
-                                onScroll={onScroll}
-                                scrollEventThrottle={16}
-                                keyboardShouldPersistTaps="handled"
-                                keyboardDismissMode="on-drag"
-                                contentContainerStyle={[
-                                    styles.searchSectionsContent,
-                                    { paddingBottom: insets.bottom + NAV_CLEARANCE },
-                                ]}
-                                ListHeaderComponent={(
-                                    <>
-                                        {recentSearches.length > 0 ? (
-                                            <RecentSearchesList
-                                                queries={recentSearches}
-                                                onSelect={handleQueryChange}
-                                                onClear={searchCache.clearRecents}
-                                            />
-                                        ) : null}
-                                        {nearbySearchRows.length > 0 ? (
-                                            <View>
-                                                <TierHeader label="Near you" />
-                                                {nearbySearchRows.map((item) => (
-                                                    <ResultRow
-                                                        key={item.row.id}
-                                                        item={item}
-                                                        palette={palette}
-                                                        onPress={openRestaurant}
-                                                    />
-                                                ))}
-                                            </View>
-                                        ) : null}
-                                        {myLists.length > 0 ? (
-                                            <View>
-                                                <TierHeader label="Your lists" />
-                                                {myLists.map((list) => (
-                                                    <ListRow
-                                                        key={list.id}
-                                                        list={list}
-                                                        onPress={openList}
-                                                    />
-                                                ))}
-                                            </View>
-                                        ) : null}
-                                        {recentSearches.length === 0
-                                            && nearbySearchRows.length === 0
-                                            && myLists.length === 0 ? (
-                                                <View style={styles.emptyResults}>
-                                                    <Text
-                                                        style={[
-                                                            Type.metadata,
-                                                            { color: palette.textMuted },
-                                                        ]}
-                                                    >
-                                                        search a place, list or person
-                                                    </Text>
-                                                </View>
-                                            ) : null}
-                                    </>
-                                )}
-                            />
-                        );
-                    }
-                    if (searchMode && searchGuidanceBranch === 'minimum') {
-                        return (
-                            <SheetStatePane scrollEnabled={scrollEnabled} onScroll={onScroll}>
-                                <View style={styles.emptyResults}>
-                                    <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
-                                        type one more letter
-                                    </Text>
-                                </View>
-                            </SheetStatePane>
-                        );
-                    }
                     if (isLoading && decoratedRows.length === 0 && queryActive) {
                         return (
                             <SheetStatePane scrollEnabled={scrollEnabled} onScroll={onScroll}>
@@ -1234,7 +1380,7 @@ export default function PlacesScreen() {
                             data={decoratedRows}
                             keyExtractor={({ row }) => row.id}
                             renderItem={({ item }) => (
-                                <ResultRow item={item} palette={palette} onPress={openRestaurant} />
+                                <PlacesRow item={item} onPress={openRestaurant} />
                             )}
                             scrollEnabled={scrollEnabled}
                             onScroll={onScroll}
@@ -1292,6 +1438,7 @@ export default function PlacesScreen() {
                     );
                 }}
             />
+            ) : null}
 
             <FilterTabsSheet
                 visible={filterOpen}
@@ -1333,14 +1480,24 @@ const styles = StyleSheet.create({
         flex: 1,
         overflow: 'hidden',
     },
-    topWash: {
+    topChrome: {
         position: 'absolute',
         top: 0,
         left: 0,
         right: 0,
-        height: 184,
         paddingHorizontal: 14,
         gap: 10,
+        zIndex: 3,
+    },
+    mapTopChrome: {
+        height: 184,
+    },
+    topWashFill: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
     },
     searchLine: {
         flexDirection: 'row',
@@ -1355,6 +1512,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
+    },
+    searchTakeoverPill: {
+        height: Spacing.xxl + Spacing.sm,
     },
     searchInput: {
         ...Type.body,
@@ -1459,7 +1619,6 @@ const styles = StyleSheet.create({
     },
     kicker: {
         ...Type.sectionKicker,
-        letterSpacing: 1.8,
     },
     placeCount: {
         ...Type.metadata,
@@ -1467,16 +1626,16 @@ const styles = StyleSheet.create({
     viewToggle: {
         position: 'absolute',
         left: Spacing.md,
-        minHeight: Spacing.xl + Spacing.sm,
+        minHeight: VIEW_TOGGLE_HEIGHT,
         borderRadius: Radius.full,
         paddingHorizontal: Spacing.md,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: Spacing.xs,
+        gap: Spacing.sm,
+        zIndex: 4,
     },
     viewToggleLabel: {
-        ...Type.metadata,
-        fontFamily: 'Manrope_600SemiBold',
+        ...Type.ledgerValue,
     },
     statePane: {
         flexGrow: 1,
@@ -1488,49 +1647,10 @@ const styles = StyleSheet.create({
         flexGrow: 1,
         paddingHorizontal: 8,
     },
-    searchSectionsContent: {
-        flexGrow: 1,
-        paddingHorizontal: Spacing.sm,
-    },
-    resultRow: {
-        minHeight: 65,
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-    },
-    resultCopy: {
-        flex: 1,
-        gap: 3,
-    },
     nameRatingLine: {
         flexDirection: 'row',
         alignItems: 'baseline',
         gap: 10,
-    },
-    resultName: {
-        flex: 1,
-        fontFamily: 'Newsreader_500Medium',
-        fontSize: 16,
-        lineHeight: 21,
-    },
-    friendCell: {
-        ...Type.metadata,
-        maxWidth: '40%',
-    },
-    ratingValue: {
-        ...Type.feedLedgerRating,
-    },
-    ratingSuffix: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 13,
-        lineHeight: 18,
-    },
-    unrated: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
-        lineHeight: 18,
     },
     resultMeta: {
         fontFamily: 'Manrope_400Regular',
@@ -1575,5 +1695,29 @@ const styles = StyleSheet.create({
     emptyCopy: {
         ...Type.quote,
         textAlign: 'center',
+    },
+    paperSurface: {
+        flex: 1,
+        zIndex: 1,
+    },
+    paperTabs: {
+        paddingHorizontal: Spacing.sm + Spacing.xs,
+    },
+    paperBody: {
+        flex: 1,
+    },
+    cityLedgerContent: {
+        flexGrow: 1,
+    },
+    cityGroupHeader: {
+        paddingHorizontal: Spacing.pageGutter,
+        paddingTop: Spacing.md - Spacing.xs / 2,
+        paddingBottom: Spacing.xs,
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+    },
+    cityGroupHeaderLater: {
+        paddingTop: Spacing.lg - Spacing.xs / 2,
     },
 });

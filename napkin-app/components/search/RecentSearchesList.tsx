@@ -16,9 +16,10 @@ interface Props {
     onSelect: (query: string) => void;
     /** When provided, the kicker row shows a right-aligned `clear` action. */
     onClear?: () => void;
+    accentHeader?: boolean;
 }
 
-export function RecentSearchesList({ queries, onSelect, onClear }: Props) {
+export function RecentSearchesList({ queries, onSelect, onClear, accentHeader = false }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
 
@@ -28,6 +29,8 @@ export function RecentSearchesList({ queries, onSelect, onClear }: Props) {
         <View>
             <TierHeader
                 label="Recent"
+                accent={accentHeader}
+                accentFirst={accentHeader}
                 action={onClear ? { label: 'clear', onPress: onClear } : undefined}
             />
             {queries.map((q) => (
@@ -35,6 +38,7 @@ export function RecentSearchesList({ queries, onSelect, onClear }: Props) {
                     key={q}
                     style={({ pressed }) => [
                         styles.row,
+                        accentHeader && styles.accentRow,
                         pressed && { backgroundColor: palette.surfaceContainer },
                     ]}
                     onPress={() => onSelect(q)}
@@ -62,5 +66,8 @@ const styles = StyleSheet.create({
     },
     queryText: {
         flex: 1,
+    },
+    accentRow: {
+        paddingHorizontal: Spacing.pageGutter,
     },
 });

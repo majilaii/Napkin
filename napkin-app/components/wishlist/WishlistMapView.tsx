@@ -140,6 +140,10 @@ interface Props {
     /** Undefined = legacy uncontrolled mode; null/string = controlled mode. */
     selectedId?: string | null;
     onSelectedChange?: (id: string | null) => void;
+    /** Restored camera supplied by an owner that temporarily unmounts the map. */
+    initialRegion?: Region;
+    /** Reports completed user and programmatic camera moves to the screen owner. */
+    onRegionChangeComplete?: (region: Region) => void;
     /** Settled sheet height only; feeds native map padding and bottom chrome. */
     bottomInset?: number;
     /**
@@ -580,6 +584,8 @@ export function WishlistMapView({
     peek = 'carousel',
     selectedId: controlledSelectedId,
     onSelectedChange,
+    initialRegion: restoredInitialRegion,
+    onRegionChangeComplete,
     bottomInset,
     onOpenReview,
     onSwitchToList,
@@ -671,9 +677,16 @@ export function WishlistMapView({
     // useful; the global wishlist remains near-me and never fit-all zooms.
     const framedCollectionRef = useRef<string | null>(null);
     const handledFocusRef = useRef<string | null>(null);
+    const skipInitialCollectionFrameRef = useRef(restoredInitialRegion !== undefined);
     const collectionFrameKey = listCollectionFrameKey(collectionScopeKey, items);
     useEffect(() => {
         if (!collectionScopeKey || !collectionFrameKey || items.length === 0) return;
+
+        if (skipInitialCollectionFrameRef.current) {
+            skipInitialCollectionFrameRef.current = false;
+            framedCollectionRef.current = collectionFrameKey;
+            return;
+        }
 
         const focusKey = focusItemId ? `${collectionScopeKey}:${focusItemId}` : null;
         const focused = focusItemId ? items.find((item) => item.id === focusItemId) : null;
@@ -749,7 +762,7 @@ export function WishlistMapView({
     // the first saved spot when there's no location. Re-frames only on the next OPEN
     // (the component remounts when you toggle back to map), never on the live location
     // updates you get while walking — so the camera doesn't yank around under you.
-    const framedRef = useRef(false);
+    const framedRef = useRef(restoredInitialRegion !== undefined);
     useEffect(() => {
         if (collectionScopeKey || items.length === 0 || framedRef.current) return;
         const timer = setTimeout(() => {
@@ -857,7 +870,8 @@ export function WishlistMapView({
         return () => clearTimeout(timer);
     }, [sources, items, userCoords]);
 
-    const initialRegion: Region | undefined = useMemo(() => {
+    const mapInitialRegion: Region | undefined = useMemo(() => {
+        if (restoredInitialRegion) return restoredInitialRegion;
         if (items.length === 0) {
             // TICKET-179: an empty layer still shows a REAL map ("the map simply
             // refuses to show" — founder, 2026-07-12). Centre on the user when we
@@ -880,7 +894,7 @@ export function WishlistMapView({
             latitudeDelta: 0.08,
             longitudeDelta: 0.08,
         };
-    }, [items, userCoords]);
+    }, [items, restoredInitialRegion, userCoords]);
 
     // Locate FAB: center on the user AND zoom in to a walkable radius — the
     // founder's explicit ask (centering alone left the map at city zoom).
@@ -1124,7 +1138,8 @@ export function WishlistMapView({
                 // dark mode was swapping grey tiles under the cream chrome.
                 // (#169; still load-bearing for the native map chrome.)
                 userInterfaceStyle="light"
-                initialRegion={initialRegion}
+                initialRegion={mapInitialRegion}
+                onRegionChangeComplete={onRegionChangeComplete}
                 showsPointsOfInterest={false}
                 showsCompass={false}
                 showsMyLocationButton={false}

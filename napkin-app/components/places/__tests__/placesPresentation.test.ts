@@ -5,6 +5,8 @@ import {
     decorateAndSortRows,
     deriveDistanceOrigin,
     filterPlacesLayerRows,
+    flattenPlacesCityGroups,
+    groupRowsByCity,
     networkRowsToDisplayRows,
     placesCountLabel,
     placesListsContentBranch,
@@ -18,11 +20,14 @@ import {
     restaurantRouteForRow,
     searchRowsToDisplayRows,
     selectNearbyPlaces,
+    shouldShowPlacesFollowingRail,
     shouldFetchNextPlacesPage,
+    wishlistRowsToDisplayRows,
 } from '../placesPresentation';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
 import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
-import { FULL, HALF, PEEK } from '@/components/sheets/snapSheetMath';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const ghost: SearchResultRow = {
     placeId: 'ChIJparisik',
@@ -70,11 +75,23 @@ const networkPin: NetworkMapItem = {
 describe('Places projection', () => {
     it('dedupes the all layer by restaurant id and gives overlaps the been glyph', () => {
         const pinned = searchRowsToDisplayRows([
-            { ...ghost, id: 'shared', isPinned: true },
+            {
+                ...ghost,
+                id: 'shared',
+                isPinned: true,
+                photoUrl: 'https://cdn.example/pinned.jpg',
+                photoSource: 'user',
+            },
             { ...ghost, id: 'pinned-only', name: 'Pinned only', isPinned: true },
         ]);
         const been = searchRowsToDisplayRows([
-            { ...ghost, id: 'shared', rating: { tier: 'you', value: 4.5, scale: 5 } },
+            {
+                ...ghost,
+                id: 'shared',
+                rating: { tier: 'you', value: 4.5, scale: 5 },
+                photoUrl: 'https://cdn.example/source-less-spot.jpg',
+                photoSource: null,
+            },
             { ...ghost, id: 'been-only', name: 'Been only' },
         ]).map((row) => ({ ...row, been: true }));
         const friends = networkRowsToDisplayRows([networkPin]);
@@ -87,6 +104,8 @@ describe('Places projection', () => {
             isPinned: true,
             been: true,
             rating: { tier: 'you', value: 4.5, scale: 5 },
+            photoUrl: 'https://cdn.example/pinned.jpg',
+            photoSource: 'user',
         });
         expect(filterPlacesLayerRows('pinned', pinned, been)).toHaveLength(2);
         expect(filterPlacesLayerRows('been', pinned, been)).toHaveLength(2);
@@ -112,18 +131,56 @@ describe('Places projection', () => {
         });
     });
 
-    it('labels Google ratings as muted and reserves amber for Napkin tiers', () => {
-        expect(presentPlacesRating({ tier: 'google', value: 4.6, scale: 5 })).toEqual({
-            value: '4.6',
-            suffix: ' · google',
+    it('presents only you, friends, or the network author and leaves every other cell empty', () => {
+        const base = searchRowsToDisplayRows([ghost])[0];
+        expect(presentPlacesRating({
+            ...base,
+            rating: { tier: 'you', value: 4.5, scale: 5 },
+        })).toEqual({ value: '4.5', suffix: null, tone: 'tertiary' });
+        expect(presentPlacesRating({
+            ...base,
+            rating: { tier: 'friends', value: 3.3, scale: 5 },
+        })).toEqual({ value: '3.3', suffix: ' · friends', tone: 'tertiary' });
+        expect(presentPlacesRating(networkRowsToDisplayRows([networkPin])[0])).toEqual({
+            value: '4.7',
+            suffix: ' · clara',
+            tone: 'tertiary',
+        });
+        expect(presentPlacesRating(networkRowsToDisplayRows([{
+            ...networkPin,
+            rating: null,
+        }])[0])).toEqual({
+            value: null,
+            suffix: 'clara',
             tone: 'muted',
         });
-        expect(presentPlacesRating({ tier: 'friends', value: 3.3, scale: 5 }).tone).toBe('amber');
-        expect(presentPlacesRating(null)).toEqual({
+        expect(presentPlacesRating(base)).toEqual({
             value: null,
-            suffix: 'not yet rated',
-            tone: 'faint',
+            suffix: null,
+            tone: 'muted',
         });
+
+        const [wishlist] = wishlistRowsToDisplayRows([{
+            id: 'save-1',
+            note: null,
+            created_at: '2026-09-02T00:00:00Z',
+            source: null,
+            restaurant: {
+                id: 'saved-1',
+                name: 'Saved',
+                address: null,
+                city: 'London',
+                country: 'GB',
+                photo_url: null,
+                cuisine: null,
+                google_rating: 4.9,
+                price_level: null,
+                external_id: null,
+                lat: 51.5,
+                lng: -0.1,
+            },
+        }]);
+        expect(wishlist.rating).toBeNull();
     });
 
     it('uses synthetic place ids and keeps the full sanitized Place on ghost pins', () => {
@@ -131,6 +188,39 @@ describe('Places projection', () => {
         const [pin] = projectPlacesPins([row]);
         expect(pin.id).toBe('place:ChIJparisik');
         expect(pin.searchRow?.place).toEqual(ghost.place);
+    });
+
+    it('carries photo provenance from search and wishlist projections', () => {
+        const provenance = {
+            photoUrl: 'https://cdn.example/places.jpg',
+            photoSource: 'places' as const,
+            photoAttributionHtml: '<a href="https://maps.example/jane">Jane Doe</a>',
+        };
+        expect(searchRowsToDisplayRows([{ ...ghost, ...provenance }])[0]).toMatchObject(provenance);
+
+        const [wishlist] = wishlistRowsToDisplayRows([{
+            id: 'save-photo',
+            note: null,
+            created_at: '2026-09-03T00:00:00Z',
+            source: null,
+            restaurant: {
+                id: 'saved-photo',
+                name: 'Saved photo',
+                address: null,
+                city: 'London',
+                country: 'GB',
+                photo_url: provenance.photoUrl,
+                photo_source: provenance.photoSource,
+                places_photo_attribution_html: provenance.photoAttributionHtml,
+                cuisine: null,
+                google_rating: null,
+                price_level: null,
+                external_id: null,
+                lat: 51.5,
+                lng: -0.1,
+            },
+        }]);
+        expect(wishlist).toMatchObject(provenance);
     });
 
     it('maps friend rows without a rating tier and forwards the complete network pin face', () => {
@@ -194,6 +284,67 @@ describe('Places projection', () => {
         expect(selectNearbyPlaces(rows, origin)[0].row.id).toBe('row-7');
         expect(selectNearbyPlaces(rows, null)).toEqual([]);
         expect(selectNearbyPlaces(rows, deriveDistanceOrigin({ city: 'Paris' }, origin))).toEqual([]);
+    });
+
+    it('shows followees only when the flag permits it and at least one exists', () => {
+        expect(shouldShowPlacesFollowingRail(false, 1)).toBe(true);
+        expect(shouldShowPlacesFollowingRail(false, 0)).toBe(false);
+        expect(shouldShowPlacesFollowingRail(true, 4)).toBe(false);
+    });
+
+    it('groups the list ledger by locality priority, count, and trailing ELSEWHERE', () => {
+        const make = (
+            id: string,
+            city: string | null,
+            latitude: number | null,
+            name = id,
+        ) => ({
+            ...searchRowsToDisplayRows([{ ...ghost, id, name, city, lat: latitude }])[0],
+            id,
+            name,
+            city,
+            lat: latitude,
+        });
+        const origin = { latitude: 51.5, longitude: -0.1 };
+        const rows = decorateAndSortRows([
+            make('paris-1', 'Paris', 48.86),
+            make('london-1', 'London', 51.51, 'Zulu'),
+            make('london-2', 'London', 51.52, 'Alpha'),
+            make('rome-1', 'Rome', 41.9),
+            make('rome-2', 'Rome', 41.91),
+            make('rome-3', 'Rome', 41.92),
+            make('elsewhere', null, null),
+        ], origin);
+
+        expect(groupRowsByCity(rows, {
+            locality: { city: 'Paris' },
+            distanceOrigin: null,
+            homeCity: 'London',
+        }).map((group) => group.label)).toEqual(['Paris', 'Rome', 'London', 'ELSEWHERE']);
+        expect(groupRowsByCity(rows, {
+            locality: 'auto',
+            distanceOrigin: origin,
+            homeCity: 'Paris',
+        }).map((group) => group.label)).toEqual(['London', 'Rome', 'Paris', 'ELSEWHERE']);
+        expect(groupRowsByCity(rows, {
+            locality: 'auto',
+            distanceOrigin: null,
+            homeCity: 'Paris',
+        }).map((group) => group.label)).toEqual(['Paris', 'Rome', 'London', 'ELSEWHERE']);
+
+        const ledger = flattenPlacesCityGroups(groupRowsByCity(rows, {
+            locality: 'auto',
+            distanceOrigin: origin,
+            homeCity: 'Paris',
+        }), true);
+        const headers = ledger.filter((item) => item.kind === 'header');
+        expect(ledger.filter((item) => item.kind === 'row')).toHaveLength(rows.length);
+        expect(headers.map((item) => placesCountLabel(item.count, item.hasMore))).toEqual([
+            '2 places',
+            '3 places',
+            '1 place',
+            '1+ places',
+        ]);
     });
 
     it('moves focused-empty to results and back with a fresh content identity each time', () => {
@@ -277,15 +428,12 @@ describe('Places projection', () => {
         expect(resolvePlacesListsBranch({ ...base, savedError: true })).toBe('rows');
     });
 
-    it('flips the map/list label from the settled snap and guards wishlist pagination', () => {
-        expect(placesViewToggle(PEEK)).toEqual({
-            label: 'list', icon: 'list-outline', target: FULL,
+    it('flips the map/list label from view mode and guards wishlist pagination', () => {
+        expect(placesViewToggle('map')).toEqual({
+            label: 'list', icon: 'list-outline', target: 'list',
         });
-        expect(placesViewToggle(HALF)).toEqual({
-            label: 'list', icon: 'list-outline', target: FULL,
-        });
-        expect(placesViewToggle(FULL)).toEqual({
-            label: 'map', icon: 'map-outline', target: PEEK,
+        expect(placesViewToggle('list')).toEqual({
+            label: 'map', icon: 'map-outline', target: 'map',
         });
         expect(placesCountLabel(40, true)).toBe('40+ places');
         expect(placesCountLabel(81, false)).toBe('81 places');
@@ -373,5 +521,25 @@ describe('Places projection', () => {
         expect(resolvePlacesFailurePresentation({ ...base, hasCachedRows: true })).toEqual({
             kind: 'inline', sources: ['network'],
         });
+    });
+});
+
+describe('Places external-rating copy guard', () => {
+    it('keeps provider rating language out of every production Places/search surface', () => {
+        const productionFiles = (directory: string): string[] => readdirSync(directory, {
+            withFileTypes: true,
+        }).flatMap((entry) => {
+            if (entry.name === '__tests__') return [];
+            const path = join(directory, entry.name);
+            if (entry.isDirectory()) return productionFiles(path);
+            return /\.[jt]sx?$/.test(entry.name) ? [path] : [];
+        });
+        const files = [
+            ...productionFiles(join(process.cwd(), 'components/places')),
+            ...productionFiles(join(process.cwd(), 'components/search')),
+            join(process.cwd(), 'app/(tabs)/places.tsx'),
+        ];
+        const offenders = files.filter((file) => /\bgoogle\b/i.test(readFileSync(file, 'utf8')));
+        expect(offenders).toEqual([]);
     });
 });

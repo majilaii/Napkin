@@ -26,7 +26,7 @@ interface Props {
     myError: boolean;
     savedError: boolean;
     scrollEnabled: boolean;
-    onScroll: SnapSheetContentContext['onScroll'];
+    onScroll?: SnapSheetContentContext['onScroll'];
     onOpenList: (id: string) => void;
     onNewList: () => void;
     onRetryMyLists: () => void;

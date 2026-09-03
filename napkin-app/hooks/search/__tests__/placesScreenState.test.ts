@@ -1,7 +1,7 @@
 import { FULL, HALF, PEEK } from '@/components/sheets/snapSheetMath';
 
 describe('placesScreenState auth isolation', () => {
-    it('resets query, selection, detent, segment, layer, and restoration state on identity change', () => {
+    it('resets query, selection, detent, segment, layer, view, region, and restoration state on identity change', () => {
         jest.resetModules();
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { placesScreenState } = require('../placesScreenState');
@@ -13,6 +13,13 @@ describe('placesScreenState auth isolation', () => {
             scrollOffset: 88,
             activeSegment: 'lists',
             layerFilter: 'friends',
+            viewMode: 'list',
+            region: {
+                latitude: 51.5,
+                longitude: -0.1,
+                latitudeDelta: 0.04,
+                longitudeDelta: 0.04,
+            },
             previousNonPeopleSnap: HALF,
             previousNonSearchSnap: PEEK,
         });
@@ -25,6 +32,8 @@ describe('placesScreenState auth isolation', () => {
             scrollOffset: 0,
             activeSegment: 'places',
             layerFilter: 'all',
+            viewMode: 'map',
+            region: null,
             previousNonPeopleSnap: null,
             previousNonSearchSnap: null,
         });
@@ -40,6 +49,8 @@ describe('transitionPlacesSegment', () => {
         scrollOffset: 0,
         activeSegment: 'places' as const,
         layerFilter: 'all' as const,
+        viewMode: 'map' as const,
+        region: null,
         previousNonPeopleSnap: null,
         previousNonSearchSnap: null,
     };
@@ -102,6 +113,13 @@ describe('focused Places search transitions', () => {
         scrollOffset: 42,
         activeSegment: 'lists' as const,
         layerFilter: 'pinned' as const,
+        viewMode: 'list' as const,
+        region: {
+            latitude: 48.86,
+            longitude: 2.35,
+            latitudeDelta: 0.03,
+            longitudeDelta: 0.03,
+        },
         previousNonPeopleSnap: null,
         previousNonSearchSnap: null,
     };
@@ -112,7 +130,12 @@ describe('focused Places search transitions', () => {
         const { enterPlacesSearch, leavePlacesSearch } = require('../placesScreenState');
 
         const focused = enterPlacesSearch(base);
-        expect(focused).toMatchObject({ sheetSnap: FULL, previousNonSearchSnap: HALF });
+        expect(focused).toMatchObject({
+            sheetSnap: FULL,
+            previousNonSearchSnap: HALF,
+            viewMode: 'map',
+            region: base.region,
+        });
         expect(enterPlacesSearch(focused)).toBe(focused);
 
         expect(leavePlacesSearch({ ...focused, query: 'parisik' })).toMatchObject({
@@ -120,6 +143,8 @@ describe('focused Places search transitions', () => {
             sheetSnap: HALF,
             activeSegment: 'lists',
             layerFilter: 'pinned',
+            viewMode: 'map',
+            region: base.region,
             previousNonSearchSnap: null,
         });
     });
