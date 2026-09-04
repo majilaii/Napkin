@@ -462,6 +462,40 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-242: this synthetic provider-shaped id cannot match a real external_id,
+    // so it must be rejected after the compatibility lookup rather than reach a uuid
+    // column and turn into a 500. Rejection precedes item lookup; no side effects.
+    {
+        name: 'wishlist?action=repoint malformed restaurant_id → 400 (TICKET-242)',
+        method: 'POST',
+        fn: 'wishlist',
+        body: {
+            action: 'repoint',
+            item_id: '00000000-0000-0000-0000-000000000000',
+            restaurant_id: 'ChIJ-smoke-malformed-place-id',
+        },
+        expectedStatus: 400,
+        shape: (json) =>
+            (json as { error?: string }).error === 'restaurant_id must be a UUID'
+                ? null
+                : 'expected restaurant_id UUID validation error',
+    },
+    // TICKET-242: cover add separately because the originating Sentry event did
+    // not carry an action tag. This sentinel is not a possible provider id.
+    {
+        name: 'wishlist?action=add malformed restaurant_id → 400 (TICKET-242)',
+        method: 'POST',
+        fn: 'wishlist',
+        body: {
+            action: 'add',
+            restaurant_id: 'not-a-provider-id://ticket-242/add',
+        },
+        expectedStatus: 400,
+        shape: (json) =>
+            (json as { error?: string }).error === 'restaurant_id must be a UUID'
+                ? null
+                : 'expected restaurant_id UUID validation error',
+    },
     // TICKET-082: entry?action=supper-detail smoke. A bogus supper_id the caller
     // is not a member of → HTTP 404 (membership gate) with a JSON error envelope.
     // This exercises the new GET read path: the function parses, hits the suppers /
