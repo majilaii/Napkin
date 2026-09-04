@@ -86,7 +86,12 @@ export function SnapSheet({
 }: SnapSheetProps) {
     const offsets = useMemo(() => offsetsFor(H, metrics), [H, metrics]);
     const firstSnap = locked ? lockedSnap : initialSnap;
-    const internalTranslateY = useSharedValue(offsetsFor(H, metrics)[firstSnap]);
+    const internalTranslateY = useSharedValue(offsets[firstSnap]);
+    const seededExternalTranslateY = useRef<SharedValue<number> | null>(null);
+    if (externalTranslateY && seededExternalTranslateY.current !== externalTranslateY) {
+        externalTranslateY.value = offsets[firstSnap];
+        seededExternalTranslateY.current = externalTranslateY;
+    }
     const translateY = externalTranslateY ?? internalTranslateY;
     const snapIndex = useSharedValue<Snap>(firstSnap);
 

@@ -69,6 +69,7 @@ import type MapViewType from 'react-native-maps';
 import { useQueryClient } from '@tanstack/react-query';
 import Reanimated, {
     useAnimatedStyle,
+    useSharedValue,
     type DerivedValue,
 } from 'react-native-reanimated';
 
@@ -653,7 +654,9 @@ export function WishlistMapView({
     // is inline by design (no new theme tokens — TICKET-131).
     const frostBg = isDark ? FROST_DARK : palette.scrimFrost;
     const chromeTop = chromeTopOffset ?? 12;
-    const usesExternalBottomInset = bottomInset !== undefined || animatedBottomInset !== undefined;
+    // Only the settled inset opts into Places' collection-framing semantics.
+    // The live channel moves chrome and is otherwise behavior-neutral.
+    const usesExternalBottomInset = bottomInset !== undefined;
     // Places passes preserveItemOrder when locality is explicit/no-location:
     // keep deviceCoords for the native blue dot + locate FAB, but do not let
     // London reorder or anchor a Paris result collection.
@@ -948,17 +951,10 @@ export function WishlistMapView({
     }, [onOpenRestaurant]);
 
     const bottomChromeInset = bottomInset ?? insets.bottom + NAV_CLEARANCE;
-    const locateChromeAnimatedStyle = useAnimatedStyle(() => ({
-        transform: [{
-            translateY: bottomChromeInset
-                - (animatedBottomInset?.value ?? bottomChromeInset),
-        }],
-    }));
-    const listChipAnimatedStyle = useAnimatedStyle(() => ({
-        transform: [{
-            translateY: bottomChromeInset
-                - (animatedBottomInset?.value ?? bottomChromeInset),
-        }],
+    const fallbackLiveBottomInset = useSharedValue(0);
+    const liveBottomInset = animatedBottomInset ?? fallbackLiveBottomInset;
+    const bottomChromeAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: -liveBottomInset.value }],
     }));
 
     // ── Source pills (TICKET-131) — frosted segmented, top-LEFT on the glass ────
@@ -1268,11 +1264,13 @@ export function WishlistMapView({
                         styles.fab,
                         {
                             backgroundColor: frostBg,
-                            bottom: bottomChromeInset
-                                + (usesExternalBottomInset ? Spacing.sm + Spacing.xs : 0),
+                            bottom: animatedBottomInset
+                                ? Spacing.sm + Spacing.xs
+                                : bottomChromeInset
+                                    + (usesExternalBottomInset ? Spacing.sm + Spacing.xs : 0),
                         },
                         Shadow.ambient,
-                        ...(animatedBottomInset ? [locateChromeAnimatedStyle] : []),
+                        ...(animatedBottomInset ? [bottomChromeAnimatedStyle] : []),
                     ]}
                     hitSlop={8}
                     accessibilityRole="button"
@@ -1297,9 +1295,12 @@ export function WishlistMapView({
                     onPress={listChip.onPress}
                     style={[
                         styles.peopleChip,
-                        { backgroundColor: frostBg, bottom: bottomChromeInset },
+                        {
+                            backgroundColor: frostBg,
+                            bottom: animatedBottomInset ? 0 : bottomChromeInset,
+                        },
                         Shadow.ambient,
-                        ...(animatedBottomInset ? [listChipAnimatedStyle] : []),
+                        ...(animatedBottomInset ? [bottomChromeAnimatedStyle] : []),
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel={listChip.selected ? `Change List, ${listChip.label} selected` : 'Choose a List'}

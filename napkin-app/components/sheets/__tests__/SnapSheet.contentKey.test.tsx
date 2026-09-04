@@ -122,6 +122,7 @@ describe('SnapSheet content handoff reset', () => {
         const onSettle = jest.fn();
         const translateY = { value: -1 } as SharedValue<number>;
         const offsets = offsetsFor(H, PLACES_SNAP_METRICS);
+        let translationAtContentRender: number | null = null;
         render(
             <SnapSheet
                 H={H}
@@ -130,10 +131,16 @@ describe('SnapSheet content handoff reset', () => {
                 onSettle={onSettle}
                 metrics={PLACES_SNAP_METRICS}
                 translateY={translateY}
-                renderContent={() => null}
+                renderContent={() => {
+                    // Runs before the passive withTiming alignment effect, so this
+                    // assertion exercises SnapSheet's synchronous mount seed.
+                    translationAtContentRender = translateY.value;
+                    return null;
+                }}
             />,
         );
 
+        expect(translationAtContentRender).toBeCloseTo(offsets[PEEK]);
         expect(translateY.value).toBeCloseTo(offsets[PEEK]);
         onSettle.mockClear();
 

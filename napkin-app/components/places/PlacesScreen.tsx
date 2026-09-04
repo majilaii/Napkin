@@ -390,7 +390,7 @@ export function PlacesScreen({
         liveVisibleHeight(sheetH, sheetTranslateY.value, PLACES_SNAP_METRICS)
     ));
     const sheetChromeAnimatedStyle = useAnimatedStyle(() => ({
-        transform: [{ translateY: bottomInset - liveBottomInset.value }],
+        transform: [{ translateY: -liveBottomInset.value }],
     }));
     const [paperTopChromeHeight, setPaperTopChromeHeight] = useState<number | null>(null);
     const placesListRef = useRef<FlatList<DecoratedPlacesRow>>(null);
@@ -1343,7 +1343,7 @@ export function PlacesScreen({
                         styles.viewTogglePosition,
                         {
                             bottom: mapMode
-                                ? bottomInset + Spacing.sm + Spacing.xs
+                                ? Spacing.sm + Spacing.xs
                                 : insets.bottom + navigationClearance,
                         },
                         mapMode ? sheetChromeAnimatedStyle : undefined,
@@ -1598,7 +1598,7 @@ export function PlacesScreen({
                 <Animated.View
                     style={[
                         styles.selectedCaptionPosition,
-                        { bottom: bottomInset + Spacing.sm + Spacing.xs },
+                        { bottom: Spacing.sm + Spacing.xs },
                         sheetChromeAnimatedStyle,
                     ]}
                 >

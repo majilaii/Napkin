@@ -43,10 +43,13 @@ jest.mock('react-native', () => {
     };
 });
 jest.mock('react-native-reanimated', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ReactModule = require('react') as typeof React;
     return {
         __esModule: true,
         default: { createAnimatedComponent: (component: unknown) => component },
         useAnimatedStyle: (factory: () => unknown) => factory(),
+        useSharedValue: (value: unknown) => ReactModule.useRef({ value }).current,
     };
 });
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
@@ -212,16 +215,16 @@ describe('Places map region restoration', () => {
         const locateStyle = locateFab.props.style as Record<string, unknown>[];
         expect(locateFab.props.hitSlop).toBe(8);
         expect(locateStyle[1]).toEqual(expect.objectContaining({
-            bottom: settledInset + Spacing.sm + Spacing.xs,
+            bottom: Spacing.sm + Spacing.xs,
         }));
         expect(locateStyle[locateStyle.length - 1]).toEqual({
-            transform: [{ translateY: settledInset - animatedBottomInset.value }],
+            transform: [{ translateY: -animatedBottomInset.value }],
         });
 
         const listStyle = screen.getByLabelText('Choose a List').props.style as Record<string, unknown>[];
-        expect(listStyle[1]).toEqual(expect.objectContaining({ bottom: settledInset }));
+        expect(listStyle[1]).toEqual(expect.objectContaining({ bottom: 0 }));
         expect(listStyle[listStyle.length - 1]).toEqual({
-            transform: [{ translateY: settledInset - animatedBottomInset.value }],
+            transform: [{ translateY: -animatedBottomInset.value }],
         });
     });
 

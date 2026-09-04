@@ -42,10 +42,13 @@ jest.mock('react-native', () => {
     };
 });
 jest.mock('react-native-reanimated', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ReactModule = require('react') as typeof React;
     return {
         __esModule: true,
         default: { createAnimatedComponent: (component: unknown) => component },
         useAnimatedStyle: (factory: () => unknown) => factory(),
+        useSharedValue: (value: unknown) => ReactModule.useRef({ value }).current,
     };
 });
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
