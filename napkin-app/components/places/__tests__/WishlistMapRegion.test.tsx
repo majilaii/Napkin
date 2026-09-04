@@ -1,7 +1,8 @@
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
+import type { DerivedValue } from 'react-native-reanimated';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { WishlistMapView, type WishlistMapItem } from '@/components/wishlist/WishlistMapView';
 
 const mockFitToCoordinates = jest.fn();
@@ -39,6 +40,13 @@ jest.mock('react-native', () => {
         Text: host('Text'),
         useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
         View: host('View'),
+    };
+});
+jest.mock('react-native-reanimated', () => {
+    return {
+        __esModule: true,
+        default: { createAnimatedComponent: (component: unknown) => component },
+        useAnimatedStyle: (factory: () => unknown) => factory(),
     };
 });
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
@@ -179,5 +187,68 @@ describe('Places map region restoration', () => {
         const style = screen.getByText('2').props.style as { fontFamily?: string };
         expect(style.fontFamily).toBe('Manrope_700Bold');
         expect(style.fontFamily).not.toMatch(/Italic/);
+    });
+
+    it('keeps native map padding settled while bottom chrome reads the live inset', () => {
+        const settledInset = 250;
+        const animatedBottomInset = { value: 448 } as DerivedValue<number>;
+        const screen = render(
+            <WishlistMapView
+                items={ITEMS}
+                unmappableCount={0}
+                userCoords={null}
+                locationStatus="denied"
+                onRequestLocation={jest.fn()}
+                onOpenRestaurant={jest.fn()}
+                bottomInset={settledInset}
+                animatedBottomInset={animatedBottomInset}
+                listChip={{ label: 'Late suppers', onPress: jest.fn() }}
+                palette={Colors.light}
+            />,
+        );
+
+        expect(screen.getByTestId('map-view').props.mapPadding.bottom).toBe(settledInset);
+        const locateFab = screen.getByLabelText('center map on my location');
+        const locateStyle = locateFab.props.style as Record<string, unknown>[];
+        expect(locateFab.props.hitSlop).toBe(8);
+        expect(locateStyle[1]).toEqual(expect.objectContaining({
+            bottom: settledInset + Spacing.sm + Spacing.xs,
+        }));
+        expect(locateStyle[locateStyle.length - 1]).toEqual({
+            transform: [{ translateY: settledInset - animatedBottomInset.value }],
+        });
+
+        const listStyle = screen.getByLabelText('Choose a List').props.style as Record<string, unknown>[];
+        expect(listStyle[1]).toEqual(expect.objectContaining({ bottom: settledInset }));
+        expect(listStyle[listStyle.length - 1]).toEqual({
+            transform: [{ translateY: settledInset - animatedBottomInset.value }],
+        });
+    });
+
+    it('keeps the legacy bottom chrome styles when no inset channel is supplied', () => {
+        const screen = render(
+            <WishlistMapView
+                items={ITEMS}
+                unmappableCount={0}
+                userCoords={null}
+                locationStatus="denied"
+                onRequestLocation={jest.fn()}
+                onOpenRestaurant={jest.fn()}
+                listChip={{ label: 'Late suppers', onPress: jest.fn() }}
+                palette={Colors.light}
+            />,
+        );
+
+        expect(screen.getByTestId('map-view').props.mapPadding.bottom).toBe(0);
+        const locateStyle = screen.getByLabelText('center map on my location').props.style;
+        expect(locateStyle).toHaveLength(3);
+        expect(locateStyle).toEqual(expect.arrayContaining([
+            expect.objectContaining({ bottom: 92 }),
+        ]));
+        const listStyle = screen.getByLabelText('Choose a List').props.style;
+        expect(listStyle).toHaveLength(3);
+        expect(listStyle).toEqual(expect.arrayContaining([
+            expect.objectContaining({ bottom: 92 }),
+        ]));
     });
 });

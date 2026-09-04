@@ -67,8 +67,12 @@ import MapView, {
 } from 'react-native-maps';
 import type MapViewType from 'react-native-maps';
 import { useQueryClient } from '@tanstack/react-query';
+import Reanimated, {
+    useAnimatedStyle,
+    type DerivedValue,
+} from 'react-native-reanimated';
 
-import { Colors, Radius, Shadow, Type } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { heirloomMapStyle } from '@/constants/mapStyle';
 import { tileUrlTemplate, MAPTILER_ATTRIBUTION, MAP_TILE_MODE } from '@/lib/maptiler';
 import { haversineMiles, type LatLng as GeoLatLng } from '@/lib/geo';
@@ -104,6 +108,8 @@ import {
     type LocationStatus,
     type WishlistMapItem,
 } from './mapShared';
+
+const AnimatedPressable = Reanimated.createAnimatedComponent(Pressable);
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -144,8 +150,10 @@ interface Props {
     initialRegion?: Region;
     /** Reports completed user and programmatic camera moves to the screen owner. */
     onRegionChangeComplete?: (region: Region) => void;
-    /** Settled sheet height only; feeds native map padding and bottom chrome. */
+    /** Settled sheet height only; feeds native map padding and fallback bottom chrome. */
     bottomInset?: number;
+    /** Live sheet height for UI-thread bottom chrome; native map padding never reads it. */
+    animatedBottomInset?: DerivedValue<number>;
     /**
      * TICKET-124: open a followee's review (entry-detail). Provided by the
      * network layer only; when a selected pin carries `entryId` AND this is set,
@@ -578,6 +586,7 @@ export function WishlistMapView({
     initialRegion: restoredInitialRegion,
     onRegionChangeComplete,
     bottomInset,
+    animatedBottomInset,
     onOpenReview,
     listChip,
     preserveItemOrder = false,
@@ -644,7 +653,7 @@ export function WishlistMapView({
     // is inline by design (no new theme tokens — TICKET-131).
     const frostBg = isDark ? FROST_DARK : palette.scrimFrost;
     const chromeTop = chromeTopOffset ?? 12;
-    const usesExternalBottomInset = bottomInset !== undefined;
+    const usesExternalBottomInset = bottomInset !== undefined || animatedBottomInset !== undefined;
     // Places passes preserveItemOrder when locality is explicit/no-location:
     // keep deviceCoords for the native blue dot + locate FAB, but do not let
     // London reorder or anchor a Paris result collection.
@@ -939,6 +948,18 @@ export function WishlistMapView({
     }, [onOpenRestaurant]);
 
     const bottomChromeInset = bottomInset ?? insets.bottom + NAV_CLEARANCE;
+    const locateChromeAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [{
+            translateY: bottomChromeInset
+                - (animatedBottomInset?.value ?? bottomChromeInset),
+        }],
+    }));
+    const listChipAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [{
+            translateY: bottomChromeInset
+                - (animatedBottomInset?.value ?? bottomChromeInset),
+        }],
+    }));
 
     // ── Source pills (TICKET-131) — frosted segmented, top-LEFT on the glass ────
     // Shown in BOTH the empty state and the populated map so switching back from
@@ -1241,15 +1262,17 @@ export function WishlistMapView({
             {/* Locate FAB — bottom-RIGHT, clear of the floating nav pill; hidden
                 once a peek card is up. */}
             {!selected ? (
-                <Pressable
+                <AnimatedPressable
                     onPress={handleRecenter}
                     style={[
                         styles.fab,
                         {
                             backgroundColor: frostBg,
-                            bottom: bottomChromeInset + (usesExternalBottomInset ? 12 : 0),
+                            bottom: bottomChromeInset
+                                + (usesExternalBottomInset ? Spacing.sm + Spacing.xs : 0),
                         },
                         Shadow.ambient,
+                        ...(animatedBottomInset ? [locateChromeAnimatedStyle] : []),
                     ]}
                     hitSlop={8}
                     accessibilityRole="button"
@@ -1264,18 +1287,19 @@ export function WishlistMapView({
                             color={locationStatus === 'granted' ? palette.primary : palette.textSecondary}
                         />
                     )}
-                </Pressable>
+                </AnimatedPressable>
             ) : null}
 
             {/* Lists chip — Your map only, bottom-LEFT. It scopes the same map
                 instead of opening a second map implementation. */}
             {listChip && !selected ? (
-                <Pressable
+                <AnimatedPressable
                     onPress={listChip.onPress}
                     style={[
                         styles.peopleChip,
                         { backgroundColor: frostBg, bottom: bottomChromeInset },
                         Shadow.ambient,
+                        ...(animatedBottomInset ? [listChipAnimatedStyle] : []),
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel={listChip.selected ? `Change List, ${listChip.label} selected` : 'Choose a List'}
@@ -1285,7 +1309,7 @@ export function WishlistMapView({
                     <Text style={[styles.peopleChipText, { color: palette.primary }]} numberOfLines={1}>
                         {listChip.label}
                     </Text>
-                </Pressable>
+                </AnimatedPressable>
             ) : null}
 
             {/* People chip — Discover only, bottom-LEFT (corner law v2, TICKET-137).

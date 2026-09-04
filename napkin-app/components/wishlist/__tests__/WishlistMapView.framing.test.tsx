@@ -41,6 +41,13 @@ jest.mock('react-native', () => {
         View: host('View'),
     };
 });
+jest.mock('react-native-reanimated', () => {
+    return {
+        __esModule: true,
+        default: { createAnimatedComponent: (component: unknown) => component },
+        useAnimatedStyle: (factory: () => unknown) => factory(),
+    };
+});
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('expo-image', () => ({ Image: () => null }));

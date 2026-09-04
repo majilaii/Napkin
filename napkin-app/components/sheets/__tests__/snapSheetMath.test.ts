@@ -4,6 +4,7 @@ import {
     HALF,
     PEEK,
     PLACES_SNAP_METRICS,
+    liveVisibleHeight,
     listPanOwnsSheet,
     offsetsFor,
     resolveSnap,
@@ -35,6 +36,14 @@ describe('snapSheetMath behavior', () => {
         expect(visibleHeight(H, HALF, PLACES_SNAP_METRICS)).toBeCloseTo(H * 0.56);
         expect(visibleHeight(H, FULL, PLACES_SNAP_METRICS)).toBeCloseTo(H * 0.92);
         expect(offsetsFor(H, PLACES_SNAP_METRICS)[PEEK]).toBeCloseTo(H * 0.92 - 250);
+    });
+
+    it.each([PEEK, HALF, FULL])('reports live visible height at detent %s', (snap) => {
+        const H = 605;
+        const translateY = offsetsFor(H, PLACES_SNAP_METRICS)[snap];
+        expect(liveVisibleHeight(H, translateY, PLACES_SNAP_METRICS)).toBeCloseTo(
+            visibleHeight(H, snap, PLACES_SNAP_METRICS),
+        );
     });
 
     it('keeps ownership and projected settle decisions', () => {

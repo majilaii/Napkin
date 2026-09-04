@@ -104,7 +104,23 @@ jest.mock('react-native-reanimated', () => {
             ),
         );
     });
-    return { __esModule: true, default: { FlatList: MockFlatList } };
+    const host = (name: string) => (props: Record<string, unknown>) =>
+        ReactModule.createElement(name, props, props.children as React.ReactNode);
+    return {
+        __esModule: true,
+        default: { FlatList: MockFlatList, View: host('ReanimatedView') },
+        cancelAnimation: jest.fn(),
+        Easing: { linear: (value: number) => value },
+        useAnimatedStyle: (factory: () => unknown) => factory(),
+        useDerivedValue: (updater: () => unknown) => {
+            const value = ReactModule.useRef({ value: updater() });
+            value.current.value = updater();
+            return value.current;
+        },
+        useSharedValue: (value: unknown) => ReactModule.useRef({ value }).current,
+        withRepeat: (value: unknown) => value,
+        withTiming: (value: unknown) => value,
+    };
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
