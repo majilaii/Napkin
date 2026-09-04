@@ -305,6 +305,9 @@ serve(async (req) => {
             if (!table_id) {
                 return jsonResponse({ error: 'table_id is required' }, 400);
             }
+            if (!isUuid(table_id)) {
+                return jsonResponse({ error: 'table_id must be a UUID' }, 400);
+            }
 
             // Validate caller is a member of the Table
             const { data: membership, error: memberError } = await supabase

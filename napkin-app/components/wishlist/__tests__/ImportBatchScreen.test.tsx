@@ -224,7 +224,7 @@ describe('/imports/[jobId] place persistence', () => {
         act(() => renderer.unmount());
     });
 
-    it('keeps the picker open and surfaces the existing toast when persistence fails', async () => {
+    it('keeps the picker open and surfaces an inline error when persistence fails', async () => {
         mockPersistPlace.mockRejectedValueOnce(new Error('Places unavailable'));
         const renderer = renderScreen();
         const picker = openFixPicker(renderer);
@@ -239,8 +239,48 @@ describe('/imports/[jobId] place persistence', () => {
         });
 
         expect(mockRepoint).not.toHaveBeenCalled();
-        expect(mockToast).toHaveBeenCalledWith("couldn't fix — try again");
-        expect(renderer.root.findByType('PlacePickerModal').props.visible).toBe(true);
+        expect(mockToast).not.toHaveBeenCalled();
+        const failedPicker = renderer.root.findByType('PlacePickerModal');
+        expect(failedPicker.props.visible).toBe(true);
+        expect(failedPicker.props.errorText).toBe("couldn't fix — try again");
+
+        act(() => failedPicker.props.onDismiss());
+        const dismissedPicker = renderer.root.findByType('PlacePickerModal');
+        expect(dismissedPicker.props.visible).toBe(false);
+        expect(dismissedPicker.props.errorText).toBeNull();
+        act(() => renderer.unmount());
+    });
+
+    it('locks synchronously against two picks before mutation state re-renders', async () => {
+        let releasePersist!: (id: string) => void;
+        mockPersistPlace.mockImplementationOnce(() => new Promise<string>((resolve) => {
+            releasePersist = resolve;
+        }));
+        const renderer = renderScreen();
+        const picker = openFixPicker(renderer);
+        const result = {
+            id: 'ChIJ-double-pick',
+            name: 'One paid lookup',
+            city: null,
+            cuisine: null,
+        };
+        let firstPick!: Promise<void>;
+        let secondPick!: Promise<void>;
+
+        act(() => {
+            firstPick = picker.props.onSelect(result);
+            secondPick = picker.props.onSelect(result);
+        });
+
+        expect(mockPersistPlace).toHaveBeenCalledTimes(1);
+        expect(mockRepoint).not.toHaveBeenCalled();
+
+        await act(async () => {
+            releasePersist(PERSISTED_ID);
+            await Promise.all([firstPick, secondPick]);
+        });
+
+        expect(mockRepoint).toHaveBeenCalledTimes(1);
         act(() => renderer.unmount());
     });
 });

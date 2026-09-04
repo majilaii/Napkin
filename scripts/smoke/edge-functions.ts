@@ -129,6 +129,10 @@ function jwtSub(jwt: string): string {
 }
 
 const SMOKE_USER_ID = jwtSub(JWT);
+const TICKET_242_REPOINT_SENTINEL =
+    `not-a-provider-id://napkin-smoke/ticket-242/repoint/${crypto.randomUUID()}`;
+const TICKET_242_ADD_SENTINEL =
+    `not-a-provider-id://napkin-smoke/ticket-242/add/${crypto.randomUUID()}`;
 
 function peekCardShape(json: unknown): string | null {
     const data = (json as { data?: Record<string, unknown> }).data;
@@ -462,9 +466,9 @@ const CHECKS: Check[] = [
             return null;
         },
     },
-    // TICKET-242: this synthetic provider-shaped id cannot match a real external_id,
-    // so it must be rejected after the compatibility lookup rather than reach a uuid
-    // column and turn into a 500. Rejection precedes item lookup; no side effects.
+    // TICKET-242: use a unique non-provider sentinel per run so it cannot collide
+    // with an arbitrary external_id stored by a real row. Rejection precedes item
+    // lookup, so this probe has no side effects.
     {
         name: 'wishlist?action=repoint malformed restaurant_id → 400 (TICKET-242)',
         method: 'POST',
@@ -472,7 +476,7 @@ const CHECKS: Check[] = [
         body: {
             action: 'repoint',
             item_id: '00000000-0000-0000-0000-000000000000',
-            restaurant_id: 'ChIJ-smoke-malformed-place-id',
+            restaurant_id: TICKET_242_REPOINT_SENTINEL,
         },
         expectedStatus: 400,
         shape: (json) =>
@@ -481,14 +485,15 @@ const CHECKS: Check[] = [
                 : 'expected restaurant_id UUID validation error',
     },
     // TICKET-242: cover add separately because the originating Sentry event did
-    // not carry an action tag. This sentinel is not a possible provider id.
+    // not carry an action tag. Its independently generated sentinel cannot
+    // pre-exist, keeping this mutation probe side-effect-free.
     {
         name: 'wishlist?action=add malformed restaurant_id → 400 (TICKET-242)',
         method: 'POST',
         fn: 'wishlist',
         body: {
             action: 'add',
-            restaurant_id: 'not-a-provider-id://ticket-242/add',
+            restaurant_id: TICKET_242_ADD_SENTINEL,
         },
         expectedStatus: 400,
         shape: (json) =>
