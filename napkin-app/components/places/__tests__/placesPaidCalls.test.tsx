@@ -863,6 +863,15 @@ describe('Places People-segment paid-call gate', () => {
         fireEvent.press(screen.getByLabelText('list places'));
         expect(screen.queryByTestId('wishlist-map')).toBeNull();
         expect(screen.getByTestId('places-view-toggle')).toHaveTextContent('map');
+        // List mode DETACHES the toggle's animated style instead of unmounting the
+        // node, and a detach does not reset props on Fabric — the last worklet
+        // transform keeps being re-applied. Passing `undefined` here stranded the
+        // pill up to 554pt above its slot (TICKET-243 review 2, reproduced on device).
+        expect(screen.getByTestId('places-view-toggle').parent?.parent?.props.style).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ transform: [{ translateY: 0 }] }),
+            ]),
+        );
         expect(screen.getByTestId('places-city-ledger')).toBeTruthy();
         expect(screen.getByText('London')).toBeTruthy();
         expect(screen.getByText('40+ places')).toBeTruthy();

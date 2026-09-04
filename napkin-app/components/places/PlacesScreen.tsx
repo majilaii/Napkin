@@ -392,6 +392,14 @@ export function PlacesScreen({
     const sheetChromeAnimatedStyle = useAnimatedStyle(() => ({
         transform: [{ translateY: -liveBottomInset.value }],
     }));
+    // List mode DETACHES the animated style from the toggle instead of
+    // unmounting it, and a detach does not reset props on Fabric: the last
+    // worklet-written transform stays in the native registry and is re-applied
+    // on every later commit. Swapping in an identity transform overwrites that
+    // entry, so the toggle cannot keep the map-mode offset in list mode.
+    const restingChromeAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: 0 }],
+    }));
     const [paperTopChromeHeight, setPaperTopChromeHeight] = useState<number | null>(null);
     const placesListRef = useRef<FlatList<DecoratedPlacesRow>>(null);
     const restoredScrollRef = useRef(false);
@@ -1346,7 +1354,7 @@ export function PlacesScreen({
                                 ? Spacing.sm + Spacing.xs
                                 : insets.bottom + navigationClearance,
                         },
-                        mapMode ? sheetChromeAnimatedStyle : undefined,
+                        mapMode ? sheetChromeAnimatedStyle : restingChromeAnimatedStyle,
                     ]}
                     pointerEvents="box-none"
                 >
