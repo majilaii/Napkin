@@ -71,7 +71,6 @@ import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { classifyImportFailure, importFailureTags } from '@/lib/importFailureCopy';
-import { captureError } from '@/lib/sentry';
 import { track } from '@/lib/track';
 import { markImportCompleted } from '@/lib/importActivation';
 import { mintImportMatchCorrection } from '@/lib/importResolution';
@@ -210,6 +209,11 @@ export function ImportLinkSheet({
     // Whole-save failure copy for the picker panel (the root toast is occluded
     // by this modal). Cleared on every fresh attempt so stale copy never sticks.
     const [saveError, setSaveError] = useState<string | null>(null);
+    const saveAttemptRef = useRef(0);
+    const resetSaveError = useCallback(() => {
+        saveAttemptRef.current += 1;
+        setSaveError(null);
+    }, []);
     // Track which candidate keys have already been saved successfully (skip on retry).
     const savedCandidateIdsRef = useRef<Set<string>>(new Set());
 
@@ -304,14 +308,14 @@ export function ImportLinkSheet({
             setFailedCandidateKeys(new Set());
             setTickedKeys(new Set()); // re-initialized when resolver succeeds
             setChosenTable(null);
-            setSaveError(null);
+            resetSaveError();
             resolve(trimmed);
         } else {
             setErrorCode('INVALID_URL');
             setSheetState('error');
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visible, initialUrl]);
+    }, [visible, initialUrl, resetSaveError]);
 
     // ── Resolver state transitions ─────────────────────────────────────
     useEffect(() => {
@@ -375,7 +379,7 @@ export function ImportLinkSheet({
 
     // ── Handlers ───────────────────────────────────────────────────────
     const handleFindIt = useCallback(() => {
-        setSaveError(null);
+        resetSaveError();
         if (!inputOk) {
             setTouched(true);
             return;
@@ -394,7 +398,7 @@ export function ImportLinkSheet({
         setTickedKeys(new Set()); // candidates not yet known; re-initialized on success
         setChosenTable(null);
         resolve(url);
-    }, [inputOk, inputValue, resolve]);
+    }, [inputOk, inputValue, resolve, resetSaveError]);
 
     const handleCancel = useCallback(() => {
         videoReqRef.current++;
@@ -417,7 +421,7 @@ export function ImportLinkSheet({
         setNoteText('');
         setLastUrl('');
         setErrorCode(null);
-        setSaveError(null);
+        resetSaveError();
         setEditMatchQuery('');
         setEditMatchResults([]);
         setEditCorrectionForCandidate(null);
@@ -434,7 +438,7 @@ export function ImportLinkSheet({
         setTickedKeys(new Set());
         setChosenTable(null);
         onDismiss();
-    }, [cancel, onDismiss]);
+    }, [cancel, onDismiss, resetSaveError]);
 
     // Reads the clipboard only now — on an explicit tap. This is the single point
     // where iOS may show the paste prompt, and it's user-initiated by design.
@@ -460,7 +464,7 @@ export function ImportLinkSheet({
         note: string,
     ) => {
         if (!user?.id || ticked.length === 0) return;
-        setSaveError(null);
+        resetSaveError();
 
         // Fix 7: get or mint a stable nonce per candidate (reused across retries).
         const getOrMintNonce = (c: ResolvedCandidate): string => {
@@ -553,6 +557,7 @@ export function ImportLinkSheet({
         }
         const destinationTargets = destinationTargetsRef.current;
 
+        const attempt = saveAttemptRef.current;
         saveImportSpots.mutate(
             {
                 import_nonce: importNonceRef.current,
@@ -641,21 +646,18 @@ export function ImportLinkSheet({
                     }
                 },
                 onError: (err) => {
+                    if (attempt !== saveAttemptRef.current) return;
                     // Keep the sheet open — but SAY something. This handler was
                     // empty until 2026-09-04, so the three pre-network v2
                     // preconditions (and every 4xx/5xx) rendered as a button
                     // that simply did nothing, forever.
                     const { message } = classifyImportFailure(err);
                     setSaveError(message);
-                    captureError(err, {
-                        context: 'import:save_spots',
-                        tags: importFailureTags(err, 'import_link_sheet'),
-                    });
                     track('import_save_failed', importFailureTags(err, 'import_link_sheet'));
                 },
             },
         );
-    }, [user?.id, inputValue, resolvedData, saveImportSpots, handleDismiss, chosenTable, toast]);
+    }, [user?.id, inputValue, resolvedData, saveImportSpots, handleDismiss, chosenTable, toast, resetSaveError]);
 
     const handleSearchManually = useCallback((query?: string) => {
         handleDismiss();
@@ -677,7 +679,7 @@ export function ImportLinkSheet({
     // TICKET-082: run on-device extraction for a video URI, then resolve the text.
     // Extracted so both the picker and retry can invoke it.
     const runVideoExtraction = useCallback(async (uri: string) => {
-        setSaveError(null);
+        resetSaveError();
         const myId = ++videoReqRef.current;
         // Defensive guard for stale/deferred iOS deep links opened on another
         // platform. The normal Android UI cannot reach this function because the
@@ -706,7 +708,7 @@ export function ImportLinkSheet({
             setErrorCode('VIDEO_FAILED');
             setSheetState('error');
         }
-    }, [resolve]);
+    }, [resolve, resetSaveError]);
 
     const handleRetry = useCallback(() => {
         if (errorCode === 'VIDEO_UNAVAILABLE') {
@@ -719,9 +721,9 @@ export function ImportLinkSheet({
             return;
         }
         setSheetState('idle');
-        setSaveError(null);
+        resetSaveError();
         resolve(lastUrl);
-    }, [resolve, lastUrl, errorCode, runVideoExtraction]);
+    }, [resolve, lastUrl, errorCode, runVideoExtraction, resetSaveError]);
 
     // ── Edit-match inline search ───────────────────────────────────────
     const runEditMatchSearch = useCallback(async (
@@ -766,7 +768,7 @@ export function ImportLinkSheet({
         if (result.canceled || !result.assets?.[0]) return;
         const asset = result.assets[0];
 
-        setSaveError(null);
+        resetSaveError();
         setSheetState('screenshot-uploading');
         try {
             if (!user?.id) throw new Error('Not authenticated');
@@ -777,7 +779,7 @@ export function ImportLinkSheet({
             setErrorCode('UPLOAD_FAILED');
             setSheetState('error');
         }
-    }, [user?.id, resolve]);
+    }, [user?.id, resolve, resetSaveError]);
 
     // TICKET-082: pick a saved video → on-device OCR + voiceover → resolve text.
     // The phone does all the perception (free); we only POST the extracted text.
@@ -836,8 +838,9 @@ export function ImportLinkSheet({
 
     // TICKET-060: handle destination confirm (async capture fan-out)
     const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
-        setSaveError(null);
+        resetSaveError();
         if (!user?.id) return;
+        const attempt = saveAttemptRef.current;
         createImport.mutate(
             {
                 image_path: screenshotStoragePath ?? undefined,
@@ -847,17 +850,14 @@ export function ImportLinkSheet({
             {
                 onSuccess: () => { handleDismiss(); },
                 onError: (err) => {
+                    if (attempt !== saveAttemptRef.current) return;
                     const { message } = classifyImportFailure(err);
                     setSaveError(message);
-                    captureError(err, {
-                        context: 'import:create_import',
-                        tags: importFailureTags(err, 'destination_confirm'),
-                    });
                     track('import_save_failed', importFailureTags(err, 'destination_confirm'));
                 },
             },
         );
-    }, [user?.id, createImport, screenshotStoragePath, lastUrl, handleDismiss]);
+    }, [user?.id, createImport, screenshotStoragePath, lastUrl, handleDismiss, resetSaveError]);
 
     const handleEditMatchQueryChange = useCallback((q: string) => {
         setEditMatchQuery(q);
