@@ -29,6 +29,7 @@ import {
     resolveSpotsRateGate,
     resolutionDecisionForCandidate,
     buildPlacesSearchBody,
+    keepTypeRejectedAsGhost,
 } from './_helpers.ts';
 import { mapsItemsToStaged } from './mapsList.ts';
 
@@ -353,6 +354,13 @@ Deno.test('resolveImportPlaceSearch: absent/malformed top types fail closed as t
 Deno.test('resolveImportPlaceSearch: no Places result is ordinary no-match, not type rejection', async () => {
     const result = await resolveImportPlaceSearch(() => [] as Array<{ categories: string[] }>);
     assertEquals(result, { candidates: [], typeRejected: false });
+});
+
+Deno.test('keepTypeRejectedAsGhost: keeps only trusted extracted confidence', () => {
+    assertEquals(keepTypeRejectedAsGhost('high'), true);
+    assertEquals(keepTypeRejectedAsGhost('exact'), true);
+    assertEquals(keepTypeRejectedAsGhost('low'), false);
+    assertEquals(keepTypeRejectedAsGhost(undefined), false);
 });
 
 // ── Regression: a venue-type rejection must never swallow the spot ───────────

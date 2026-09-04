@@ -62,6 +62,14 @@ function messageOf(error: unknown): string {
 export function classifyImportFailure(error: unknown): ClassifiedImportFailure {
     const raw = messageOf(error);
 
+    if (codeOf(error) === 'NETWORK') {
+        return {
+            reason: 'offline',
+            message: 'no connection · your clip is safe, try again',
+            retryable: true,
+        };
+    }
+
     const precondition = PRECONDITION_MESSAGES.get(raw);
     if (precondition === 'missing_provenance') {
         return {

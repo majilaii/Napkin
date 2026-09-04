@@ -304,6 +304,7 @@ export function ImportLinkSheet({
             setFailedCandidateKeys(new Set());
             setTickedKeys(new Set()); // re-initialized when resolver succeeds
             setChosenTable(null);
+            setSaveError(null);
             resolve(trimmed);
         } else {
             setErrorCode('INVALID_URL');
@@ -374,6 +375,7 @@ export function ImportLinkSheet({
 
     // ── Handlers ───────────────────────────────────────────────────────
     const handleFindIt = useCallback(() => {
+        setSaveError(null);
         if (!inputOk) {
             setTouched(true);
             return;
@@ -415,6 +417,7 @@ export function ImportLinkSheet({
         setNoteText('');
         setLastUrl('');
         setErrorCode(null);
+        setSaveError(null);
         setEditMatchQuery('');
         setEditMatchResults([]);
         setEditCorrectionForCandidate(null);
@@ -674,6 +677,7 @@ export function ImportLinkSheet({
     // TICKET-082: run on-device extraction for a video URI, then resolve the text.
     // Extracted so both the picker and retry can invoke it.
     const runVideoExtraction = useCallback(async (uri: string) => {
+        setSaveError(null);
         const myId = ++videoReqRef.current;
         // Defensive guard for stale/deferred iOS deep links opened on another
         // platform. The normal Android UI cannot reach this function because the
@@ -715,6 +719,7 @@ export function ImportLinkSheet({
             return;
         }
         setSheetState('idle');
+        setSaveError(null);
         resolve(lastUrl);
     }, [resolve, lastUrl, errorCode, runVideoExtraction]);
 
@@ -761,6 +766,7 @@ export function ImportLinkSheet({
         if (result.canceled || !result.assets?.[0]) return;
         const asset = result.assets[0];
 
+        setSaveError(null);
         setSheetState('screenshot-uploading');
         try {
             if (!user?.id) throw new Error('Not authenticated');
@@ -830,6 +836,7 @@ export function ImportLinkSheet({
 
     // TICKET-060: handle destination confirm (async capture fan-out)
     const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
+        setSaveError(null);
         if (!user?.id) return;
         createImport.mutate(
             {
@@ -1166,6 +1173,7 @@ export function ImportLinkSheet({
                                 onConfirm={handleDestinationConfirm}
                                 onCancel={() => setSheetState('menu')}
                                 isSaving={createImport.isPending}
+                                errorText={saveError}
                             />
                         )}
 

@@ -693,6 +693,7 @@ import {
   isV2ResolveSpotsProtocol,
   isV2SaveProtocolRequest,
   isWebExtractionSource,
+  keepTypeRejectedAsGhost,
   listOnlySaveKind,
   mapVerifiedRestaurantIds,
   normalizePinWishlist,
@@ -3385,10 +3386,21 @@ async function handleUrlResolve(
     decision: ImportResolutionDecision;
   }> = [];
   for (let i = 0; i < staged.length; i++) {
-    // Unlike an ordinary no-match/name/locality miss (which remains a
-    // reviewable ghost), a non-food Places top result is scene-text noise and
-    // must never reach the candidate staging queue.
-    if (typeRejectedByIndex[i]) continue;
+    if (typeRejectedByIndex[i]) {
+      // A non-food Places top result is usually OCR scene-text noise and must
+      // not become a pin — UNLESS the extractor itself was confident: a
+      // caption-named inn/hotel restaurant (2026-09-04, "Posada Real Torre
+      // Berrueza") is a real spot Google merely typed as lodging. Trusted
+      // extracts fall through as a name/city ghost; the rest still drop.
+      if (keepTypeRejectedAsGhost(staged[i].extracted.confidence)) {
+        dedupedStaged.push({
+          staged: staged[i],
+          place: null,
+          decision: "no_result",
+        });
+      }
+      continue;
+    }
     const place = placeResults[i];
     const placeId = place?.id ?? staged[i].extracted.google_place_id;
     if (placeId && seenPlaceIds.has(placeId)) continue;
@@ -3801,7 +3813,17 @@ async function handleVideoText(
     decision: ImportResolutionDecision;
   }> = [];
   for (let i = 0; i < staged.length; i++) {
-    if (typeRejectedByIndex[i]) continue;
+    if (typeRejectedByIndex[i]) {
+      // Same rule as handleUrlResolve: trusted extracts ghost, the rest drop.
+      if (keepTypeRejectedAsGhost(staged[i].extracted.confidence)) {
+        deduped.push({
+          s: staged[i],
+          place: null,
+          decision: "no_result",
+        });
+      }
+      continue;
+    }
     const place = placeResults[i];
     const placeId = place?.id ?? staged[i].extracted.google_place_id;
     if (placeId && seenPlaceIds.has(placeId)) continue;

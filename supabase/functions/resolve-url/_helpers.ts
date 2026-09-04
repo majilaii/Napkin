@@ -356,6 +356,13 @@ export function shouldEmitGhostCandidate(input: {
     input.extractedName.trim().length > 0;
 }
 
+/** Keep trusted extracted copy when Places rejects only the venue type. */
+export function keepTypeRejectedAsGhost(
+  confidence: string | null | undefined,
+): boolean {
+  return confidence === "high" || confidence === "exact";
+}
+
 /**
  * Compatibility guard for save_spots.
  *

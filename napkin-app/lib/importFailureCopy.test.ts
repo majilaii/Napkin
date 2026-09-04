@@ -49,6 +49,14 @@ describe('classifyImportFailure', () => {
         expect(result.message).toContain('your clip is safe');
     });
 
+    it('detects the structured callEdgeFn connectivity failure', () => {
+        const result = classifyImportFailure(edgeError(
+            'Couldn’t reach Napkin. Check your connection and try again.',
+            { code: 'NETWORK' },
+        ));
+        expect(result.reason).toBe('offline');
+    });
+
     it('falls back to a retryable generic line for an unrecognised error', () => {
         const result = classifyImportFailure(new Error('something odd'));
         expect(result.reason).toBe('unknown');
