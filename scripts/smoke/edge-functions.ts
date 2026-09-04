@@ -129,6 +129,10 @@ function jwtSub(jwt: string): string {
 }
 
 const SMOKE_USER_ID = jwtSub(JWT);
+const TICKET_242_REPOINT_SENTINEL =
+    `not-a-provider-id://napkin-smoke/ticket-242/repoint/${crypto.randomUUID()}`;
+const TICKET_242_ADD_SENTINEL =
+    `not-a-provider-id://napkin-smoke/ticket-242/add/${crypto.randomUUID()}`;
 
 function peekCardShape(json: unknown): string | null {
     const data = (json as { data?: Record<string, unknown> }).data;
@@ -461,6 +465,41 @@ const CHECKS: Check[] = [
             if (!data) return 'missing data envelope';
             return null;
         },
+    },
+    // TICKET-242: use a unique non-provider sentinel per run so it cannot collide
+    // with an arbitrary external_id stored by a real row. Rejection precedes item
+    // lookup, so this probe has no side effects.
+    {
+        name: 'wishlist?action=repoint malformed restaurant_id → 400 (TICKET-242)',
+        method: 'POST',
+        fn: 'wishlist',
+        body: {
+            action: 'repoint',
+            item_id: '00000000-0000-0000-0000-000000000000',
+            restaurant_id: TICKET_242_REPOINT_SENTINEL,
+        },
+        expectedStatus: 400,
+        shape: (json) =>
+            (json as { error?: string }).error === 'restaurant_id must be a UUID'
+                ? null
+                : 'expected restaurant_id UUID validation error',
+    },
+    // TICKET-242: cover add separately because the originating Sentry event did
+    // not carry an action tag. Its independently generated sentinel cannot
+    // pre-exist, keeping this mutation probe side-effect-free.
+    {
+        name: 'wishlist?action=add malformed restaurant_id → 400 (TICKET-242)',
+        method: 'POST',
+        fn: 'wishlist',
+        body: {
+            action: 'add',
+            restaurant_id: TICKET_242_ADD_SENTINEL,
+        },
+        expectedStatus: 400,
+        shape: (json) =>
+            (json as { error?: string }).error === 'restaurant_id must be a UUID'
+                ? null
+                : 'expected restaurant_id UUID validation error',
     },
     // TICKET-082: entry?action=supper-detail smoke. A bogus supper_id the caller
     // is not a member of → HTTP 404 (membership gate) with a JSON error envelope.

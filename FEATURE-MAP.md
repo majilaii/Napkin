@@ -123,7 +123,7 @@ Entry companion pickers list mutual follows only. Search uses `user-profile?acti
 | `/import-kickoff` | `napkin-app/app/import-kickoff.tsx` | large-job manifest and queue trigger | `resolve-url`, `wishlist`, `notifications` through `useProcessImportQueue` | local large-job state plus `import_jobs`, `import_resolutions`, `wishlist_items` |
 | `/import-progress` | `napkin-app/app/import-progress.tsx` | active local manifests, recent import hooks, completeness hooks | `wishlist`, `restaurant-completeness` | local manifests plus `import_jobs`, `list_imports`, `import_resolutions`, `restaurants` |
 | `/import-digest` | `napkin-app/app/import-digest.tsx` | local digest manifest, correction/list/wishlist hooks | `places-search`, `restaurant-completeness`, `lists`, `wishlist` | local manifest plus `import_jobs`, `import_resolutions`, `restaurants`, `lists`, `list_entries`, `wishlist_items` |
-| `/imports/[jobId]` | `napkin-app/app/imports/[jobId].tsx` | import-batch, repoint/remove/add-spot and list hooks | `wishlist`, `places-search`, `lists` | `import_jobs`, `list_import_items`, `import_resolutions`, `restaurants`, `wishlist_items`, `lists`, `list_entries` |
+| `/imports/[jobId]` | `napkin-app/app/imports/[jobId].tsx` | import-batch, place persistence, repoint/remove/add-spot and list hooks | `wishlist`, `places-search`, `lists` | `import_jobs`, `list_import_items`, `import_resolutions`, `restaurants`, `wishlist_items`, `lists`, `list_entries` |
 
 ### Settings and administration
 
@@ -267,7 +267,7 @@ Source: `app/import.tsx`, `app/import-review.tsx`, `app/import-kickoff.tsx`, `ap
 - `/import-review` with candidates shows approve/exclude/destination controls. Missing manifest or zero spots produces “nothing to review”; inspect local manifest presence to distinguish expired/broken handoff from an intentional zero-candidate extraction.
 - `/import-digest` shows saved/rejected/repair rows. Missing job/manifest and “nothing left” are distinct code paths.
 - Import candidate “not this?” correction starts from the bare extracted name and sends structured city/area plus granted-only device coordinates to `places-search`; it never duplicates `best_query` locality.
-- `/imports/[jobId]` shows load, not-found, populated batch, and “no spots in this import” states. Error/not-found is not an empty successful batch.
+- `/imports/[jobId]` shows load, not-found, populated batch, and “no spots in this import” states. Error/not-found is not an empty successful batch. Fix/add picks persist a ghost Place before the wishlist write; a failed pick stays open with its error inline in the page sheet, while success dismisses before the toast. Malformed wishlist ids are rejected with a 400 instead of surfacing as a 500.
 - Video import runs OCR/perception on device before server resolution (`useProcessImportQueue`). TikTok's cheap fast path is single-candidate-only (`lib/importFastPath.ts`); multi-candidate TikTok input escalates.
 - Maps lists over 20 return `mode:'large_list'`, use a client-pumped background job in chunks of 20, and post a local completion notification when backgrounded (`lib/largeImportJob.ts`, `useProcessImportQueue`).
 - A long “reading” state can be active local OCR/background work, not a dead server request. Confirm the manifest phase/timestamps before declaring it stuck.

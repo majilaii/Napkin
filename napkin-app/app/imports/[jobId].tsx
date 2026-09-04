@@ -5,7 +5,7 @@
  * user can review what landed and prune the misses (or file them into a list)
  * instead of them vanishing into hundreds of saves.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
@@ -19,6 +19,7 @@ import { useImportBatch, type ImportBatchItem } from '@/hooks/wishlist/useImport
 import { useWishlistRemove } from '@/hooks/wishlist/useWishlistRemove';
 import { useRepointWishlistItem } from '@/hooks/wishlist/useRepointWishlistItem';
 import { useAddSpotToBatch } from '@/hooks/wishlist/useAddSpotToBatch';
+import { usePersistPlace } from '@/hooks/search/usePersistPlace';
 import { useToast } from '@/providers/ToastProvider';
 import { AddToListSheet } from '@/components/lists';
 import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
@@ -28,6 +29,8 @@ import {
     spotCountLabel,
     relativeTime,
 } from '@/components/wishlist/importSourceLabel';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function ImportBatchScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -44,36 +47,45 @@ export default function ImportBatchScreen() {
     const remove = useWishlistRemove(user?.id);
     const repoint = useRepointWishlistItem(user?.id, jobId);
     const addSpot = useAddSpotToBatch(user?.id, jobId);
+    const { mutateAsync: persistPlace, isPending: persisting } = usePersistPlace();
     // Optimistically pruned restaurant_ids (instant row removal).
     const [removed, setRemoved] = useState<Set<string>>(() => new Set());
     const [addTarget, setAddTarget] = useState<{ id: string; name: string } | null>(null);
     // Amend (b48): fix a mis-resolved spot, or add a missed one.
     const [picker, setPicker] = useState<{ kind: 'fix'; item: ImportBatchItem } | { kind: 'add' } | null>(null);
+    const [pickerError, setPickerError] = useState<string | null>(null);
+    const pickInFlight = useRef(false);
+    const pickerBusy = persisting || repoint.isPending || addSpot.isPending;
 
     const handlePick = useCallback(
-        (r: PlacePickerResult) => {
+        async (r: PlacePickerResult) => {
             const p = picker;
-            setPicker(null);
-            if (!p) return;
-            if (p.kind === 'fix') {
-                repoint.mutate(
-                    { item_id: p.item.id, restaurant_id: r.id },
-                    {
-                        onSuccess: () => toast.show(`fixed → ${r.name}`),
-                        onError: () => toast.show("couldn't fix — try again"),
-                    },
-                );
-            } else {
-                addSpot.mutate(
-                    { restaurant_id: r.id },
-                    {
-                        onSuccess: () => toast.show(`added ${r.name}`),
-                        onError: () => toast.show("couldn't add — try again"),
-                    },
-                );
+            if (!p || pickerBusy || pickInFlight.current) return;
+            pickInFlight.current = true;
+            setPickerError(null);
+            try {
+                const restaurantId = UUID_RE.test(r.id)
+                    ? r.id
+                    : await persistPlace(r.external_id ?? r.id);
+                if (p.kind === 'fix') {
+                    await repoint.mutateAsync({
+                        item_id: p.item.id,
+                        restaurant_id: restaurantId,
+                    });
+                } else {
+                    await addSpot.mutateAsync({ restaurant_id: restaurantId });
+                }
+                setPicker(null);
+                toast.show(p.kind === 'fix' ? `fixed → ${r.name}` : `added ${r.name}`);
+            } catch {
+                setPickerError(p.kind === 'fix'
+                    ? "couldn't fix — try again"
+                    : "couldn't add — try again");
+            } finally {
+                pickInFlight.current = false;
             }
         },
-        [picker, repoint, addSpot, toast],
+        [picker, pickerBusy, persistPlace, repoint, addSpot, toast],
     );
 
     const job = data?.job ?? null;
@@ -143,7 +155,10 @@ export default function ImportBatchScreen() {
                             <Text style={[styles.title, { color: palette.text }]}>This import</Text>
                             <Text style={[styles.subtitle, { color: palette.textMuted }]}>{subtitle}</Text>
                             <Pressable
-                                onPress={() => setPicker({ kind: 'add' })}
+                                onPress={() => {
+                                    setPickerError(null);
+                                    setPicker({ kind: 'add' });
+                                }}
                                 hitSlop={8}
                                 style={styles.addRow}
                                 accessibilityLabel="add a missing spot"
@@ -182,7 +197,10 @@ export default function ImportBatchScreen() {
 
                                 <View style={styles.actions}>
                                     <Pressable
-                                        onPress={() => setPicker({ kind: 'fix', item: it })}
+                                        onPress={() => {
+                                            setPickerError(null);
+                                            setPicker({ kind: 'fix', item: it });
+                                        }}
                                         hitSlop={8}
                                         accessibilityLabel={`fix ${r.name}`}
                                     >
@@ -228,9 +246,14 @@ export default function ImportBatchScreen() {
                         : 'search and add it to this import'
                 }
                 initialQuery={picker?.kind === 'fix' ? (picker.item.restaurant?.name ?? '') : ''}
-                busy={repoint.isPending || addSpot.isPending}
+                busy={pickerBusy}
+                errorText={pickerError}
                 onSelect={handlePick}
-                onDismiss={() => setPicker(null)}
+                onDismiss={() => {
+                    if (pickerBusy) return;
+                    setPicker(null);
+                    setPickerError(null);
+                }}
                 palette={palette}
             />
         </View>

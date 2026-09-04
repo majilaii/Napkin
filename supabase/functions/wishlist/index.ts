@@ -8,10 +8,12 @@
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { resolveRestaurantLookupId } from '../_shared/canonicalRestaurant.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { upsertRestaurant, type RestaurantInput } from '../_shared/restaurant.ts';
 import { validateWishlistSource } from '../_shared/wishlistSource.ts';
+import { isUuid } from '../_shared/uuid.ts';
 import { aggregateTableWishlist, type TableWishlistRow } from './listTable.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -49,6 +51,7 @@ serve(async (req) => {
         return new Response('ok', { headers: corsHeaders });
     }
 
+    let action: string | undefined;
     try {
         // ── Auth ────────────────────────────────────────────────────────
         const authHeader = req.headers.get('Authorization');
@@ -74,14 +77,38 @@ serve(async (req) => {
         }
 
         const body = await req.json();
-        const { action } = body;
+        action = typeof body.action === 'string' ? body.action : undefined;
 
         // ── add ──────────────────────────────────────────────────────────
         if (action === 'add') {
             let restaurantId: string;
+            let jobId: string | null = null;
+
+            if (body.job_id !== undefined && body.job_id !== null) {
+                if (!isUuid(body.job_id)) {
+                    return jsonResponse({ error: 'job_id must be a UUID' }, 400);
+                }
+                jobId = body.job_id;
+            }
 
             if (body.restaurant_id) {
-                restaurantId = body.restaurant_id as string;
+                const rawRestaurantId = body.restaurant_id;
+                if (typeof rawRestaurantId !== 'string') {
+                    return jsonResponse({ error: 'restaurant_id must be a UUID' }, 400);
+                }
+                restaurantId = rawRestaurantId;
+                if (!isUuid(rawRestaurantId)) {
+                    const resolvedId = await resolveRestaurantLookupId(supabase, rawRestaurantId);
+                    if (!resolvedId) {
+                        return jsonResponse({ error: 'restaurant_id must be a UUID' }, 400);
+                    }
+                    console.warn('wishlist resolved legacy external restaurant_id', {
+                        action,
+                        restaurant_id: rawRestaurantId,
+                        resolved_restaurant_id: resolvedId,
+                    });
+                    restaurantId = resolvedId;
+                }
             } else if (body.restaurant) {
                 // Places payload: upsert the restaurant first, then record the wish
                 const input = body.restaurant as RestaurantInput;
@@ -121,13 +148,13 @@ serve(async (req) => {
                 // b48 amend: sparse back-fill — if this add is tagging the spot into
                 // an import batch and the existing row has no job_id, link it so it
                 // shows up in that batch's detail. Never overwrite a non-null job_id.
-                if (typeof body.job_id === 'string' && existing.job_id == null) {
+                if (jobId && existing.job_id == null) {
                     await supabase
                         .from('wishlist_items')
-                        .update({ job_id: body.job_id })
+                        .update({ job_id: jobId })
                         .eq('id', existing.id)
                         .eq('user_id', user.id);
-                    return jsonResponse({ data: { ...existing, job_id: body.job_id } });
+                    return jsonResponse({ data: { ...existing, job_id: jobId } });
                 }
                 return jsonResponse({ data: existing });
             }
@@ -141,7 +168,7 @@ serve(async (req) => {
                     source: validatedSource ?? null,
                     // b48 amend: tag this save to an import batch so an added-by-hand
                     // spot shows up in that import's detail (list_import_items).
-                    job_id: typeof body.job_id === 'string' ? body.job_id : null,
+                    job_id: jobId,
                 })
                 .select('id, user_id, restaurant_id, note, source, created_at, job_id')
                 .single();
@@ -152,16 +179,32 @@ serve(async (req) => {
 
         // ── check ────────────────────────────────────────────────────────
         if (action === 'check') {
-            const { restaurant_id } = body;
-            if (!restaurant_id) {
+            const rawRestaurantId = body.restaurant_id;
+            if (!rawRestaurantId) {
                 return jsonResponse({ error: 'restaurant_id is required' }, 400);
+            }
+            if (typeof rawRestaurantId !== 'string') {
+                return jsonResponse({ error: 'restaurant_id must be a UUID' }, 400);
+            }
+            let restaurantId = rawRestaurantId;
+            if (!isUuid(rawRestaurantId)) {
+                const resolvedId = await resolveRestaurantLookupId(supabase, rawRestaurantId);
+                if (!resolvedId) {
+                    return jsonResponse({ error: 'restaurant_id must be a UUID' }, 400);
+                }
+                console.warn('wishlist resolved legacy external restaurant_id', {
+                    action,
+                    restaurant_id: rawRestaurantId,
+                    resolved_restaurant_id: resolvedId,
+                });
+                restaurantId = resolvedId;
             }
 
             const { data, error } = await supabase
                 .from('wishlist_items')
                 .select('id')
                 .eq('user_id', user.id)
-                .eq('restaurant_id', restaurant_id)
+                .eq('restaurant_id', restaurantId)
                 .maybeSingle();
 
             if (error) throw error;
@@ -170,16 +213,32 @@ serve(async (req) => {
 
         // ── remove ───────────────────────────────────────────────────────
         if (action === 'remove') {
-            const { restaurant_id } = body;
-            if (!restaurant_id) {
+            const rawRestaurantId = body.restaurant_id;
+            if (!rawRestaurantId) {
                 return jsonResponse({ error: 'restaurant_id is required' }, 400);
+            }
+            if (typeof rawRestaurantId !== 'string') {
+                return jsonResponse({ error: 'restaurant_id must be a UUID' }, 400);
+            }
+            let restaurantId = rawRestaurantId;
+            if (!isUuid(rawRestaurantId)) {
+                const resolvedId = await resolveRestaurantLookupId(supabase, rawRestaurantId);
+                if (!resolvedId) {
+                    return jsonResponse({ error: 'restaurant_id must be a UUID' }, 400);
+                }
+                console.warn('wishlist resolved legacy external restaurant_id', {
+                    action,
+                    restaurant_id: rawRestaurantId,
+                    resolved_restaurant_id: resolvedId,
+                });
+                restaurantId = resolvedId;
             }
 
             const { error } = await supabase
                 .from('wishlist_items')
                 .delete()
                 .eq('user_id', user.id)
-                .eq('restaurant_id', restaurant_id);
+                .eq('restaurant_id', restaurantId);
 
             if (error) throw error;
             return jsonResponse({ data: { removed: true } });
@@ -245,6 +304,9 @@ serve(async (req) => {
             const { table_id } = body;
             if (!table_id) {
                 return jsonResponse({ error: 'table_id is required' }, 400);
+            }
+            if (!isUuid(table_id)) {
+                return jsonResponse({ error: 'table_id must be a UUID' }, 400);
             }
 
             // Validate caller is a member of the Table
@@ -399,6 +461,9 @@ serve(async (req) => {
         if (action === 'list_import_items') {
             const { job_id } = body;
             if (!job_id) return jsonResponse({ error: 'job_id is required' }, 400);
+            if (!isUuid(job_id)) {
+                return jsonResponse({ error: 'job_id must be a UUID' }, 400);
+            }
 
             const { data: job, error: jobErr } = await supabase
                 .from('import_jobs')
@@ -435,9 +500,28 @@ serve(async (req) => {
         // `correct` which re-points a whole job. Service-role → explicit user_id.
         if (action === 'repoint') {
             const item_id = body.item_id as string | undefined;
-            const restaurant_id = body.restaurant_id as string | undefined;
-            if (!item_id || !restaurant_id) {
+            const rawRestaurantId = body.restaurant_id;
+            if (!item_id || !rawRestaurantId) {
                 return jsonResponse({ error: 'item_id and restaurant_id are required' }, 400);
+            }
+            if (!isUuid(item_id)) {
+                return jsonResponse({ error: 'item_id must be a UUID' }, 400);
+            }
+            if (typeof rawRestaurantId !== 'string') {
+                return jsonResponse({ error: 'restaurant_id must be a UUID' }, 400);
+            }
+            let restaurantId = rawRestaurantId;
+            if (!isUuid(rawRestaurantId)) {
+                const resolvedId = await resolveRestaurantLookupId(supabase, rawRestaurantId);
+                if (!resolvedId) {
+                    return jsonResponse({ error: 'restaurant_id must be a UUID' }, 400);
+                }
+                console.warn('wishlist resolved legacy external restaurant_id', {
+                    action,
+                    restaurant_id: rawRestaurantId,
+                    resolved_restaurant_id: resolvedId,
+                });
+                restaurantId = resolvedId;
             }
 
             const { data: item, error: itemErr } = await supabase
@@ -448,8 +532,8 @@ serve(async (req) => {
                 .maybeSingle();
             if (itemErr) throw itemErr;
             if (!item) return jsonResponse({ error: 'Not found' }, 404);
-            if (item.restaurant_id === restaurant_id) {
-                return jsonResponse({ data: { id: item_id, restaurant_id } });
+            if (item.restaurant_id === restaurantId) {
+                return jsonResponse({ data: { id: item_id, restaurant_id: restaurantId } });
             }
 
             // UNIQUE(user_id, restaurant_id) is NON-partial — a row (even
@@ -459,7 +543,7 @@ serve(async (req) => {
                 .from('wishlist_items')
                 .select('id, deleted_at, job_id, note')
                 .eq('user_id', user.id)
-                .eq('restaurant_id', restaurant_id)
+                .eq('restaurant_id', restaurantId)
                 .neq('id', item_id)
                 .maybeSingle();
             if (dupErr) throw dupErr;
@@ -484,12 +568,14 @@ serve(async (req) => {
                     .delete()
                     .eq('id', item_id)
                     .eq('user_id', user.id);
-                return jsonResponse({ data: { id: dup.id, restaurant_id, merged: true } });
+                return jsonResponse({
+                    data: { id: dup.id, restaurant_id: restaurantId, merged: true },
+                });
             }
 
             const { data: updated, error: updErr } = await supabase
                 .from('wishlist_items')
-                .update({ restaurant_id, extraction_status: 'resolved' })
+                .update({ restaurant_id: restaurantId, extraction_status: 'resolved' })
                 .eq('id', item_id)
                 .eq('user_id', user.id)
                 .select('id, restaurant_id')
@@ -502,7 +588,7 @@ serve(async (req) => {
 
     } catch (err) {
         console.error('wishlist error:', err);
-        reportError(err, { fn: 'wishlist' });
+        reportError(err, { fn: 'wishlist', action });
         return jsonResponse({ error: 'Internal Server Error', details: String(err) }, 500);
     }
 });
