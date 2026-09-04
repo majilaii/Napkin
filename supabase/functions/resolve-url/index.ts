@@ -693,6 +693,7 @@ import {
   isV2ResolveSpotsProtocol,
   isV2SaveProtocolRequest,
   isWebExtractionSource,
+  keepTypeRejectedAsGhost,
   listOnlySaveKind,
   mapVerifiedRestaurantIds,
   normalizePinWishlist,
@@ -701,6 +702,7 @@ import {
   resolveImportPlaceSearch,
   resolveSpotsRateGate,
   routesToVideoText,
+  shouldEmitGhostCandidate,
   type SaveSpotPlacePayload,
   type SourceType,
   v2RestaurantIdsNeedingExternalId,
@@ -1263,7 +1265,27 @@ async function handleVisionExtract(
     }),
   );
 
-  if (candidates.length === 0 && extracted.name && typeRejectedCount === 0) {
+  // A type rejection must NOT swallow the spot. Until 2026-09-04 this guard
+  // carried `&& typeRejectedCount === 0`, so a candidate whose top Places result
+  // failed the food/drink allowlist (IMPORT_PLACE_TYPE_ALLOWLIST — no lodging,
+  // so every posada / inn / hotel restaurant) returned `candidates: []`. That is
+  // an empty 200: no ghost, no import_resolutions row, nothing for the sheet to
+  // show, and the client's zero-candidate branch then deletes the manifest with
+  // only a toast. Founder repro: "Posada Real Torre Berrueza" extracted at
+  // high confidence with a real city and still vanished four times.
+  //
+  // The ghost is built from `extracted` — the model's name/city — NEVER from the
+  // rejected Places result, so promoting it cannot bind the spot to the wrong
+  // venue. The allowlist keeps doing its real job (blocking a bad MATCH); it is
+  // no longer also a silent drop. `type_rejected` still rides the response so
+  // the client can label why this one came through unresolved.
+  if (
+    shouldEmitGhostCandidate({
+      resolvedCount: candidates.length,
+      extractedName: extracted.name,
+      typeRejectedCount,
+    })
+  ) {
     // FIX #2: ghost candidates use google_place_id=null and external_id=null.
     // The sentinel 'ghost_pending' caused cross-user row collapse in fn_save_import_spot.
     // The RPC mints a stable 'ghost_{user}_{nonce}' external_id at save time.
@@ -3364,10 +3386,21 @@ async function handleUrlResolve(
     decision: ImportResolutionDecision;
   }> = [];
   for (let i = 0; i < staged.length; i++) {
-    // Unlike an ordinary no-match/name/locality miss (which remains a
-    // reviewable ghost), a non-food Places top result is scene-text noise and
-    // must never reach the candidate staging queue.
-    if (typeRejectedByIndex[i]) continue;
+    if (typeRejectedByIndex[i]) {
+      // A non-food Places top result is usually OCR scene-text noise and must
+      // not become a pin — UNLESS the extractor itself was confident: a
+      // caption-named inn/hotel restaurant (2026-09-04, "Posada Real Torre
+      // Berrueza") is a real spot Google merely typed as lodging. Trusted
+      // extracts fall through as a name/city ghost; the rest still drop.
+      if (keepTypeRejectedAsGhost(staged[i].extracted.confidence)) {
+        dedupedStaged.push({
+          staged: staged[i],
+          place: null,
+          decision: "no_result",
+        });
+      }
+      continue;
+    }
     const place = placeResults[i];
     const placeId = place?.id ?? staged[i].extracted.google_place_id;
     if (placeId && seenPlaceIds.has(placeId)) continue;
@@ -3780,7 +3813,17 @@ async function handleVideoText(
     decision: ImportResolutionDecision;
   }> = [];
   for (let i = 0; i < staged.length; i++) {
-    if (typeRejectedByIndex[i]) continue;
+    if (typeRejectedByIndex[i]) {
+      // Same rule as handleUrlResolve: trusted extracts ghost, the rest drop.
+      if (keepTypeRejectedAsGhost(staged[i].extracted.confidence)) {
+        deduped.push({
+          s: staged[i],
+          place: null,
+          decision: "no_result",
+        });
+      }
+      continue;
+    }
     const place = placeResults[i];
     const placeId = place?.id ?? staged[i].extracted.google_place_id;
     if (placeId && seenPlaceIds.has(placeId)) continue;

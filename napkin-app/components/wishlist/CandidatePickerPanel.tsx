@@ -61,6 +61,13 @@ export interface CandidatePickerPanelProps {
     onOpenRestaurant?: (restaurantId: string) => void;
     /** Set of candidate keys that failed on last save attempt (shown as "couldn't pin · tap to retry"). */
     failedCandidateKeys?: Set<string>;
+    /**
+     * Whole-save failure copy, shown above the pin pill. The root toast is
+     * occluded by this modal (same reason PlacePickerModal carries its own
+     * errorText), so a silent onError left the button looking inert — the
+     * failure mode the founder hit on 2026-09-04.
+     */
+    errorText?: string | null;
     palette?: Palette;
     // ── Controlled ticked + note (fix-pass-2 item 5) ──────────────────────────
     /**
@@ -141,6 +148,7 @@ export function CandidatePickerPanel({
     onCorrectRow,
     onOpenRestaurant,
     failedCandidateKeys,
+    errorText,
     palette: paletteProp,
     ticked,
     onToggleTicked,
@@ -293,6 +301,15 @@ export function CandidatePickerPanel({
                     </View>
                 </View>
             )}
+
+            {errorText ? (
+                <Text
+                    accessibilityLiveRegion="polite"
+                    style={[Type.bodySmall, styles.saveError, { color: palette.error }]}
+                >
+                    {errorText}
+                </Text>
+            ) : null}
 
             {/* PIN pill */}
             <Pressable
@@ -599,6 +616,9 @@ const styles = StyleSheet.create({
         minHeight: 52,
     },
     // PIN pill
+    saveError: {
+        marginBottom: Spacing.sm,
+    },
     pinBtn: {
         paddingVertical: 14,
         borderRadius: Radius.full,

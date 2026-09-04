@@ -46,6 +46,8 @@ export interface DestinationPickerProps {
     onCancel: () => void;
     /** Whether the confirm mutation is in-flight. */
     isSaving?: boolean;
+    /** Whole-save failure copy, shown above the primary action. */
+    errorText?: string | null;
     /**
      * TICKET-063b: when true, constrains to single-table selection only.
      * - Hides the "my wishlist" row.
@@ -64,6 +66,7 @@ export function DestinationPicker({
     onConfirm,
     onCancel,
     isSaving = false,
+    errorText,
     singleTableOnly = false,
 }: DestinationPickerProps) {
     const scheme = useColorScheme() ?? 'light';
@@ -171,6 +174,15 @@ export function DestinationPicker({
                 )}
             </ScrollView>
 
+            {errorText ? (
+                <Text
+                    accessibilityLiveRegion="polite"
+                    style={[Type.bodySmall, styles.saveError, { color: palette.error }]}
+                >
+                    {errorText}
+                </Text>
+            ) : null}
+
             {/* Primary CTA */}
             <Pressable
                 onPress={handleSave}
@@ -223,6 +235,9 @@ const styles = StyleSheet.create({
     },
     listScroll: {
         maxHeight: 300,
+    },
+    saveError: {
+        marginBottom: Spacing.sm,
     },
     saveButton: {
         paddingVertical: Spacing.md,

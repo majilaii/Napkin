@@ -328,6 +328,42 @@ export async function resolveImportPlaceSearch<
 }
 
 /**
+ * Should the resolver fall back to a name-only ghost candidate?
+ *
+ * The invariant, learned the hard way on 2026-09-04: a venue-type rejection must
+ * NEVER change this answer. The allowlist above exists to stop a bad MATCH — it
+ * is not a licence to drop the spot. When it was also a drop, a posada/inn (no
+ * `lodging` in the allowlist) produced an empty 200 with no ghost and no
+ * provenance row, and the import silently disappeared.
+ *
+ * The ghost is always built from the extracted name/city, never from the
+ * rejected Places result, so emitting one cannot bind the spot to a wrong venue.
+ */
+export function shouldEmitGhostCandidate(input: {
+  /** How many candidates actually resolved to a Place. */
+  resolvedCount: number;
+  /** The model's extracted name — a ghost is meaningless without it. */
+  extractedName: string | null | undefined;
+  /**
+   * Present ONLY to prove it is not consulted. Kept in the signature so a
+   * future edit that reintroduces the drop has to delete an asserted argument
+   * rather than quietly re-add `&& typeRejectedCount === 0`.
+   */
+  typeRejectedCount?: number;
+}): boolean {
+  return input.resolvedCount === 0 &&
+    typeof input.extractedName === "string" &&
+    input.extractedName.trim().length > 0;
+}
+
+/** Keep trusted extracted copy when Places rejects only the venue type. */
+export function keepTypeRejectedAsGhost(
+  confidence: string | null | undefined,
+): boolean {
+  return confidence === "high" || confidence === "exact";
+}
+
+/**
  * Compatibility guard for save_spots.
  *
  * New large-import clients understand the top-level `type_rejected` result flag
