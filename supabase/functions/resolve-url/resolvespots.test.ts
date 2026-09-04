@@ -20,6 +20,7 @@ import {
     IMPORT_PLACE_TYPE_ALLOWLIST,
     hasAllowedImportPlaceType,
     resolveImportPlaceSearch,
+    shouldEmitGhostCandidate,
     buildUnattemptedResolveSpotResult,
     buildResolveSpotDecisionResult,
     attemptedExternalIdFromResolutionEvidence,
@@ -352,4 +353,53 @@ Deno.test('resolveImportPlaceSearch: absent/malformed top types fail closed as t
 Deno.test('resolveImportPlaceSearch: no Places result is ordinary no-match, not type rejection', async () => {
     const result = await resolveImportPlaceSearch(() => [] as Array<{ categories: string[] }>);
     assertEquals(result, { candidates: [], typeRejected: false });
+});
+
+// ── Regression: a venue-type rejection must never swallow the spot ───────────
+// Founder repro 2026-09-04: "Posada Real Torre Berrueza" extracted at high
+// confidence with a real city; Google's top result typed it as lodging, the
+// allowlist rejected it, and the URL path returned `candidates: []` — no ghost,
+// no import_resolutions row, nothing on screen. The import vanished four times.
+
+Deno.test('shouldEmitGhostCandidate: type rejection does NOT suppress the ghost', () => {
+    assertEquals(
+        shouldEmitGhostCandidate({
+            resolvedCount: 0,
+            extractedName: 'Posada Real Torre Berrueza',
+            typeRejectedCount: 1,
+        }),
+        true,
+    );
+});
+
+Deno.test('shouldEmitGhostCandidate: identical answer with and without a type rejection', () => {
+    for (const typeRejectedCount of [0, 1, 5]) {
+        assertEquals(
+            shouldEmitGhostCandidate({
+                resolvedCount: 0,
+                extractedName: 'Some Inn',
+                typeRejectedCount,
+            }),
+            true,
+            `typeRejectedCount=${typeRejectedCount} must not change the outcome`,
+        );
+    }
+});
+
+Deno.test('shouldEmitGhostCandidate: no ghost once something actually resolved', () => {
+    assertEquals(
+        shouldEmitGhostCandidate({ resolvedCount: 1, extractedName: 'Kono' }),
+        false,
+    );
+});
+
+Deno.test('shouldEmitGhostCandidate: a ghost needs a real extracted name', () => {
+    assertEquals(shouldEmitGhostCandidate({ resolvedCount: 0, extractedName: null }), false);
+    assertEquals(shouldEmitGhostCandidate({ resolvedCount: 0, extractedName: '' }), false);
+    assertEquals(shouldEmitGhostCandidate({ resolvedCount: 0, extractedName: '   ' }), false);
+});
+
+Deno.test('the allowlist still rejects lodging — the gate itself is unchanged', () => {
+    assertEquals(hasAllowedImportPlaceType(['lodging', 'hotel']), false);
+    assertEquals(hasAllowedImportPlaceType(['lodging', 'restaurant']), true);
 });

@@ -70,6 +70,9 @@ import {
 import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
+import { classifyImportFailure, importFailureTags } from '@/lib/importFailureCopy';
+import { captureError } from '@/lib/sentry';
+import { track } from '@/lib/track';
 import { markImportCompleted } from '@/lib/importActivation';
 import { mintImportMatchCorrection } from '@/lib/importResolution';
 import {
@@ -204,6 +207,9 @@ export function ImportLinkSheet({
 
     // Fix 8: track which candidate keys failed on last save (for partial-failure display).
     const [failedCandidateKeys, setFailedCandidateKeys] = useState<Set<string>>(new Set());
+    // Whole-save failure copy for the picker panel (the root toast is occluded
+    // by this modal). Cleared on every fresh attempt so stale copy never sticks.
+    const [saveError, setSaveError] = useState<string | null>(null);
     // Track which candidate keys have already been saved successfully (skip on retry).
     const savedCandidateIdsRef = useRef<Set<string>>(new Set());
 
@@ -451,6 +457,7 @@ export function ImportLinkSheet({
         note: string,
     ) => {
         if (!user?.id || ticked.length === 0) return;
+        setSaveError(null);
 
         // Fix 7: get or mint a stable nonce per candidate (reused across retries).
         const getOrMintNonce = (c: ResolvedCandidate): string => {
@@ -630,8 +637,18 @@ export function ImportLinkSheet({
                         handleDismiss();
                     }
                 },
-                onError: () => {
-                    // Network/server error: keep sheet open, user can retry.
+                onError: (err) => {
+                    // Keep the sheet open — but SAY something. This handler was
+                    // empty until 2026-09-04, so the three pre-network v2
+                    // preconditions (and every 4xx/5xx) rendered as a button
+                    // that simply did nothing, forever.
+                    const { message } = classifyImportFailure(err);
+                    setSaveError(message);
+                    captureError(err, {
+                        context: 'import:save_spots',
+                        tags: importFailureTags(err, 'import_link_sheet'),
+                    });
+                    track('import_save_failed', importFailureTags(err, 'import_link_sheet'));
                 },
             },
         );
@@ -822,7 +839,15 @@ export function ImportLinkSheet({
             },
             {
                 onSuccess: () => { handleDismiss(); },
-                onError: () => { /* Keep sheet open */ },
+                onError: (err) => {
+                    const { message } = classifyImportFailure(err);
+                    setSaveError(message);
+                    captureError(err, {
+                        context: 'import:create_import',
+                        tags: importFailureTags(err, 'destination_confirm'),
+                    });
+                    track('import_save_failed', importFailureTags(err, 'destination_confirm'));
+                },
             },
         );
     }, [user?.id, createImport, screenshotStoragePath, lastUrl, handleDismiss]);
@@ -1043,6 +1068,7 @@ export function ImportLinkSheet({
                                     router.push(('/restaurant/' + id) as any);
                                 }}
                                 failedCandidateKeys={failedCandidateKeys}
+                                errorText={saveError}
                                 palette={palette}
                                 ticked={tickedKeys}
                                 selectionLocked={destinationTargetsRef.current != null}
