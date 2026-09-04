@@ -14,6 +14,7 @@ import Animated, {
     useSharedValue,
     withSpring,
     withTiming,
+    type SharedValue,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
@@ -57,6 +58,8 @@ interface SnapSheetProps {
     handleColor?: string;
     metrics?: SnapMetrics;
     style?: StyleProp<ViewStyle>;
+    /** Optional caller-owned translation channel, written on every drag and spring frame. */
+    translateY?: SharedValue<number>;
 }
 
 // Reanimated's mass default is 4. Explicit mass 1 keeps the proven TICKET-186
@@ -79,10 +82,17 @@ export function SnapSheet({
     handleColor = Colors.light.ruleWarmNib,
     metrics,
     style,
+    translateY: externalTranslateY,
 }: SnapSheetProps) {
     const offsets = useMemo(() => offsetsFor(H, metrics), [H, metrics]);
     const firstSnap = locked ? lockedSnap : initialSnap;
-    const translateY = useSharedValue(offsetsFor(H, metrics)[firstSnap]);
+    const internalTranslateY = useSharedValue(offsets[firstSnap]);
+    const seededExternalTranslateY = useRef<SharedValue<number> | null>(null);
+    if (externalTranslateY && seededExternalTranslateY.current !== externalTranslateY) {
+        externalTranslateY.value = offsets[firstSnap];
+        seededExternalTranslateY.current = externalTranslateY;
+    }
+    const translateY = externalTranslateY ?? internalTranslateY;
     const snapIndex = useSharedValue<Snap>(firstSnap);
 
     // Disjoint gesture state. Ownership is captured onBegin, never onStart.

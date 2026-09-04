@@ -22,6 +22,7 @@ import Animated, {
     cancelAnimation,
     Easing,
     useAnimatedStyle,
+    useDerivedValue,
     useSharedValue,
     withRepeat,
     withTiming,
@@ -53,6 +54,8 @@ import {
 import {
     FULL,
     PLACES_SNAP_METRICS,
+    liveVisibleHeight,
+    offsetsFor,
     visibleHeight,
 } from '@/components/sheets/snapSheetMath';
 import {
@@ -380,6 +383,23 @@ export function PlacesScreen({
     const [bottomInset, setBottomInset] = useState(() => (
         visibleHeight(sheetH, firstSnap, PLACES_SNAP_METRICS)
     ));
+    const sheetTranslateY = useSharedValue(
+        offsetsFor(sheetH, PLACES_SNAP_METRICS)[firstSnap],
+    );
+    const liveBottomInset = useDerivedValue(() => (
+        liveVisibleHeight(sheetH, sheetTranslateY.value, PLACES_SNAP_METRICS)
+    ));
+    const sheetChromeAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: -liveBottomInset.value }],
+    }));
+    // List mode DETACHES the animated style from the toggle instead of
+    // unmounting it, and a detach does not reset props on Fabric: the last
+    // worklet-written transform stays in the native registry and is re-applied
+    // on every later commit. Swapping in an identity transform overwrites that
+    // entry, so the toggle cannot keep the map-mode offset in list mode.
+    const restingChromeAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: 0 }],
+    }));
     const [paperTopChromeHeight, setPaperTopChromeHeight] = useState<number | null>(null);
     const placesListRef = useRef<FlatList<DecoratedPlacesRow>>(null);
     const restoredScrollRef = useRef(false);
@@ -1316,6 +1336,7 @@ export function PlacesScreen({
                     initialRegion={screenState.region ?? undefined}
                     onRegionChangeComplete={handleRegionChangeComplete}
                     bottomInset={bottomInset}
+                    animatedBottomInset={liveBottomInset}
                     preserveItemOrder={!distanceOrigin}
                     collectionScopeKey={renderedProjection.scopeKey}
                     // Murmur sits below the search pill + chip row (top wash is opaque to ~130pt).
@@ -1325,28 +1346,38 @@ export function PlacesScreen({
             ) : null}
 
             {!searchMode && !selectedCaptionVisible ? (
-                <Pressable
-                    testID="places-view-toggle"
-                    onPress={handleViewToggle}
-                    style={({ pressed }) => [
-                        styles.viewToggle,
-                        Shadow.ambient,
+                <Animated.View
+                    style={[
+                        styles.viewTogglePosition,
                         {
                             bottom: mapMode
-                                ? bottomInset + Spacing.sm + Spacing.xs
+                                ? Spacing.sm + Spacing.xs
                                 : insets.bottom + navigationClearance,
-                            backgroundColor: palette.scrimFrost,
-                            opacity: pressed ? 0.72 : 1,
                         },
+                        mapMode ? sheetChromeAnimatedStyle : restingChromeAnimatedStyle,
                     ]}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${viewToggle.label} places`}
+                    pointerEvents="box-none"
                 >
-                    <Ionicons name={viewToggle.icon} size={IconSize.md} color={palette.primary} />
-                    <Text style={[styles.viewToggleLabel, { color: palette.primary }]}>
-                        {viewToggle.label}
-                    </Text>
-                </Pressable>
+                    <Pressable
+                        testID="places-view-toggle"
+                        onPress={handleViewToggle}
+                        style={({ pressed }) => [
+                            styles.viewToggle,
+                            Shadow.ambient,
+                            {
+                                backgroundColor: palette.scrimFrost,
+                                opacity: pressed ? 0.72 : 1,
+                            },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${viewToggle.label} places`}
+                    >
+                        <Ionicons name={viewToggle.icon} size={IconSize.md} color={palette.primary} />
+                        <Text style={[styles.viewToggleLabel, { color: palette.primary }]}>
+                            {viewToggle.label}
+                        </Text>
+                    </Pressable>
+                </Animated.View>
             ) : null}
 
             <View
@@ -1572,38 +1603,43 @@ export function PlacesScreen({
             ) : null}
 
             {selectedCaptionVisible && selectedRow ? (
-                <Pressable
-                    onPress={() => openRestaurant(selectedRow)}
+                <Animated.View
                     style={[
-                        styles.selectedCaption,
-                        Shadow.ambient,
-                        {
-                            bottom: bottomInset + 12,
-                            backgroundColor: palette.surfaceNote,
-                        },
+                        styles.selectedCaptionPosition,
+                        { bottom: Spacing.sm + Spacing.xs },
+                        sheetChromeAnimatedStyle,
                     ]}
-                    accessibilityRole="button"
-                    testID="places-selected-caption"
-                    accessibilityLabel={`open ${selectedRow.name}`}
                 >
-                    <View style={styles.captionCopy}>
-                        <View style={styles.nameRatingLine}>
-                            <Text style={[styles.captionName, { color: palette.text }]} numberOfLines={1}>
-                                {selectedRow.name}
+                    <Pressable
+                        onPress={() => openRestaurant(selectedRow)}
+                        style={[
+                            styles.selectedCaption,
+                            Shadow.ambient,
+                            { backgroundColor: palette.surfaceNote },
+                        ]}
+                        accessibilityRole="button"
+                        testID="places-selected-caption"
+                        accessibilityLabel={`open ${selectedRow.name}`}
+                    >
+                        <View style={styles.captionCopy}>
+                            <View style={styles.nameRatingLine}>
+                                <Text style={[styles.captionName, { color: palette.text }]} numberOfLines={1}>
+                                    {selectedRow.name}
+                                </Text>
+                                <PlacesRatingLabel row={selectedRow} />
+                            </View>
+                            <Text style={[styles.resultMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                                {selectedRow.network
+                                    ? composeFriendCaptionMeta(selectedRow)
+                                    : composeRowMeta(
+                                        { ...selectedRow, friendsBeenCount: 0, isPinned: false },
+                                        selectedDistance,
+                                    )}
                             </Text>
-                            <PlacesRatingLabel row={selectedRow} />
                         </View>
-                        <Text style={[styles.resultMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                            {selectedRow.network
-                                ? composeFriendCaptionMeta(selectedRow)
-                                : composeRowMeta(
-                                    { ...selectedRow, friendsBeenCount: 0, isPinned: false },
-                                    selectedDistance,
-                                )}
-                        </Text>
-                    </View>
-                    <Ionicons name="chevron-forward-outline" size={17} color={palette.textFaint} />
-                </Pressable>
+                        <Ionicons name="chevron-forward-outline" size={17} color={palette.textFaint} />
+                    </Pressable>
+                </Animated.View>
             ) : null}
 
             {mapMode ? (
@@ -1617,6 +1653,8 @@ export function PlacesScreen({
                 backgroundColor={palette.surfaceNote}
                 handleColor={palette.ruleWarmNib}
                 metrics={PLACES_SNAP_METRICS}
+                style={styles.mapSheet}
+                translateY={sheetTranslateY}
                 contentKey={sheetContentKey}
                 onPanStart={Keyboard.dismiss}
                 onSettle={(sheetSnap, settledHeight) => {
@@ -1968,16 +2006,18 @@ const styles = StyleSheet.create({
     placeCount: {
         ...Type.metadata,
     },
-    viewToggle: {
+    viewTogglePosition: {
         position: 'absolute',
         left: Spacing.md,
+        zIndex: 4,
+    },
+    viewToggle: {
         minHeight: VIEW_TOGGLE_HEIGHT,
         borderRadius: Radius.full,
         paddingHorizontal: Spacing.md,
         flexDirection: 'row',
         alignItems: 'center',
         gap: Spacing.sm,
-        zIndex: 4,
     },
     viewToggleLabel: {
         ...Type.ledgerValue,
@@ -2002,10 +2042,13 @@ const styles = StyleSheet.create({
         fontSize: 13,
         lineHeight: 18,
     },
-    selectedCaption: {
+    selectedCaptionPosition: {
         position: 'absolute',
         left: 14,
         right: 14,
+        zIndex: 1,
+    },
+    selectedCaption: {
         minHeight: 64,
         borderRadius: Radius.lg,
         paddingHorizontal: 15,
@@ -2013,6 +2056,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
+    },
+    mapSheet: {
+        zIndex: 5,
     },
     captionCopy: {
         flex: 1,

@@ -30,7 +30,18 @@ export const PLACES_SNAP_METRICS: SnapMetrics = Object.freeze({
 const PROJECTION_SECONDS = 0.2;
 
 export function sheetHeight(H: number, metrics: SnapMetrics = DEFAULT_SNAP_METRICS): number {
+    'worklet';
     return H * metrics.fullRatio;
+}
+
+/** Visible sheet height at any in-flight translation, including drag and spring frames. */
+export function liveVisibleHeight(
+    H: number,
+    translateY: number,
+    metrics: SnapMetrics = DEFAULT_SNAP_METRICS,
+): number {
+    'worklet';
+    return H * metrics.fullRatio - translateY;
 }
 
 export function visibleHeight(

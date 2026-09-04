@@ -1,12 +1,20 @@
 import React from 'react';
 import { act, render } from '@testing-library/react-native';
+import type { SharedValue } from 'react-native-reanimated';
 
 import {
     SnapSheet,
     type SnapSheetContentContext,
     type SnapSheetHandle,
 } from '../SnapSheet';
-import { FULL, PEEK, PLACES_SNAP_METRICS } from '../snapSheetMath';
+import {
+    FULL,
+    HALF,
+    PEEK,
+    PLACES_SNAP_METRICS,
+    offsetsFor,
+    visibleHeight,
+} from '../snapSheetMath';
 
 type GestureHandlers = {
     onBegin?: () => void;
@@ -99,9 +107,57 @@ function latestListPan(): GestureHandlers {
     return mockGesturePans[mockGesturePans.length - 2].handlers;
 }
 
+function latestHeaderPan(): GestureHandlers {
+    return mockGesturePans[mockGesturePans.length - 1].handlers;
+}
+
 describe('SnapSheet content handoff reset', () => {
     beforeEach(() => {
         mockGesturePans.length = 0;
+    });
+
+    it('writes drag and spring frames through a caller-owned translation without changing settle', () => {
+        const H = 800;
+        const sheetRef = React.createRef<SnapSheetHandle>();
+        const onSettle = jest.fn();
+        const translateY = { value: -1 } as SharedValue<number>;
+        const offsets = offsetsFor(H, PLACES_SNAP_METRICS);
+        let translationAtContentRender: number | null = null;
+        render(
+            <SnapSheet
+                H={H}
+                initialSnap={PEEK}
+                sheetRef={sheetRef}
+                onSettle={onSettle}
+                metrics={PLACES_SNAP_METRICS}
+                translateY={translateY}
+                renderContent={() => {
+                    // Runs before the passive withTiming alignment effect, so this
+                    // assertion exercises SnapSheet's synchronous mount seed.
+                    translationAtContentRender = translateY.value;
+                    return null;
+                }}
+            />,
+        );
+
+        expect(translationAtContentRender).toBeCloseTo(offsets[PEEK]);
+        expect(translateY.value).toBeCloseTo(offsets[PEEK]);
+        onSettle.mockClear();
+
+        const pan = latestHeaderPan();
+        act(() => {
+            pan.onBegin?.();
+            pan.onUpdate?.({ translationY: offsets[HALF] - offsets[PEEK] });
+        });
+        expect(translateY.value).toBeCloseTo(offsets[HALF]);
+
+        act(() => pan.onFinalize?.({ velocityY: 0 }));
+        expect(translateY.value).toBeCloseTo(offsets[HALF]);
+        expect(onSettle).toHaveBeenCalledWith(
+            HALF,
+            visibleHeight(H, HALF, PLACES_SNAP_METRICS),
+        );
+        expect(sheetRef.current?.currentSnap()).toBe(HALF);
     });
 
     it('collapses after scrolled Places is replaced by People at the top', () => {
