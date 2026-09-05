@@ -31,10 +31,10 @@ export function ListComposeFields({ draft, onChange, busy, palette, tableName }:
                 </Pressable>
                 <FieldUnderline
                     value={draft.title} onChangeText={(title) => onChange({ title })}
-                    placeholder="Sunday brunch" accessibilityLabel="list name" maxLength={60}
+                    placeholder="list name" accessibilityLabel="list name" maxLength={60}
                     editable={!busy} autoFocus returnKeyType="done" onSubmitEditing={Keyboard.dismiss}
                     containerStyle={styles.nameField}
-                    inputStyle={[Type.listNameInput, styles.underline]}
+                    inputStyle={[draft.title ? Type.listNameInput : Type.body, styles.underline]}
                 />
             </View>
             {draft.title.length >= 50 ? <Text style={[Type.metadata, styles.counter, { color: palette.textMuted }]}>{draft.title.length}/60</Text> : null}
@@ -72,10 +72,9 @@ export function ListComposeFields({ draft, onChange, busy, palette, tableName }:
                     <Text style={[Type.metadata, { color: palette.textMuted }]}>{draft.privacy}</Text>
                 </Pressable>}
             </View>
-            <Text style={[Type.metadata, styles.hint, { color: palette.textMuted }]}>
-                {draft.ranked ? 'numbered in order' : 'newest first'}
-                {tableName !== undefined ? ' · shared with table members' : ''}
-            </Text>
+            {tableName !== undefined ? <Text style={[Type.metadata, styles.hint, { color: palette.textMuted }]}>
+                shared with table members
+            </Text> : null}
         </View>
     );
 }
