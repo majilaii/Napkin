@@ -149,7 +149,7 @@ function renderScreen() {
 
 function openFixPicker(renderer: any) {
     act(() => {
-        renderer.root.findByProps({ accessibilityLabel: 'fix Wrong place' }).props.onPress();
+        renderer.root.findByProps({ accessibilityLabel: 'change place for Wrong place' }).props.onPress();
     });
     return renderer.root.findByType('PlacePickerModal');
 }
@@ -180,7 +180,7 @@ describe('/imports/[jobId] place persistence', () => {
         ];
         const renderer = renderScreen();
         expect(renderer.root.findByType('ImportChecks').props.items).toEqual([mockChecks[0]]);
-        expect(renderer.root.findAllByProps({ accessibilityLabel: 'open Wrong place' })).toHaveLength(0);
+        expect(renderer.root.findAllByProps({ accessibilityLabel: 'view place: Wrong place' })).toHaveLength(0);
         act(() => renderer.unmount());
     });
 
@@ -235,7 +235,7 @@ describe('/imports/[jobId] place persistence', () => {
     it('persists a provider result before adding the spot to the batch', async () => {
         const renderer = renderScreen();
         act(() => {
-            renderer.root.findByProps({ accessibilityLabel: 'add a missing spot' }).props.onPress();
+            renderer.root.findByProps({ accessibilityLabel: 'add a missing place' }).props.onPress();
         });
         const picker = renderer.root.findByType('PlacePickerModal');
 

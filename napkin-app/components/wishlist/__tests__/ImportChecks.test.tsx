@@ -98,6 +98,8 @@ it('retries legacy checks without inventing a match or a saved-place claim', asy
     const refresh = jest.fn();
     const r = mount({ items: [{ ...ITEM, import_nonce: null, restaurant_id: null }], onRefreshPlaces: refresh });
     expect(contents(r)).not.toContain('find correct place');
+    expect(contents(r)).not.toContain('Choose a listing');
+    expect(contents(r)).toContain('Automatic matching has paused.');
     expect(contents(r)).toContain('dismiss check');
     await act(async () => { await button(r, 'try matching again').props.onPress(); });
     expect(mockRetry).toHaveBeenCalledWith('check-1');

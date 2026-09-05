@@ -57,12 +57,16 @@ export function ImportChecks({ userId, items, savedRestaurantIds, palette,
     const [notice, setNotice] = useState<string | null>(null);
     const [matchingQueued, setMatchingQueued] = useState(false);
     const inFlight = useRef(false);
-    const displayedItems = activeItem && !items.some((item) => item.id === activeItem.id)
-        ? [activeItem, ...items] : items;
+    const activeIndex = useRef(0);
+    const displayedItems = [...items];
+    if (activeItem && !items.some((item) => item.id === activeItem.id)) {
+        displayedItems.splice(activeIndex.current, 0, activeItem);
+    }
 
     const actOnCheck = async (item: ExhaustedCompletenessItem, action: 'retry' | 'dismiss') => {
         if (inFlight.current) return;
         inFlight.current = true;
+        activeIndex.current = Math.max(0, items.findIndex((entry) => entry.id === item.id));
         setBusyId(item.id);
         setActiveItem(item);
         setActionError(null);
@@ -95,6 +99,7 @@ export function ImportChecks({ userId, items, savedRestaurantIds, palette,
             return;
         }
         inFlight.current = true;
+        activeIndex.current = Math.max(0, items.findIndex((entry) => entry.id === item.id));
         setBusyId(item.id);
         setActiveItem(item);
         setPickerError(null);
@@ -144,7 +149,11 @@ export function ImportChecks({ userId, items, savedRestaurantIds, palette,
                 <Text style={[Type.sectionTitle, { color: palette.text }]}>
                     {displayedItems.length === 1 ? '1 place to check' : `${displayedItems.length} places to check`}
                 </Text>
-                <Text style={[Type.body, { color: palette.textMuted }]}>Choose a listing to finish matching this clip.</Text>
+                <Text style={[Type.body, { color: palette.textMuted }]}>
+                    {displayedItems.some((item) => item.import_nonce)
+                        ? 'Choose a listing to finish matching this clip.'
+                        : 'Automatic matching has paused. Try again or dismiss the check.'}
+                </Text>
             </View> : !loading && !error && !hasMore && !notice ? (
                 <Text style={[Type.metadata, { color: palette.textMuted }]}>No place checks waiting.</Text>
             ) : null}

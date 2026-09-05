@@ -191,7 +191,7 @@ export default function ImportBatchScreen() {
                                 }}
                                 hitSlop={8}
                                 style={styles.addRow}
-                                accessibilityLabel="add a missing spot"
+                                accessibilityLabel="add a missing place"
                                 accessibilityRole="button"
                             >
                                 <Ionicons name="add" size={18} color={palette.primary} />
@@ -214,7 +214,8 @@ export default function ImportBatchScreen() {
                                 <Pressable
                                     onPress={() => router.push(`/restaurant/${r.id}` as any)}
                                     style={({ pressed }) => [styles.rowBody, { opacity: pressed ? 0.75 : 1 }]}
-                                    accessibilityLabel={`open ${r.name}`}
+                                    accessibilityLabel={`view place: ${r.name}`}
+                                    accessibilityRole="button"
                                 >
                                     <Text style={[styles.name, { color: palette.text }]}>
                                         {r.name}
@@ -233,8 +234,7 @@ export default function ImportBatchScreen() {
                                             setPickerError(null);
                                             setPicker({ kind: 'fix', item: it });
                                         }}
-                                        hitSlop={8}
-                                        accessibilityLabel={`fix ${r.name}`}
+                                        accessibilityLabel={`change place for ${r.name}`}
                                         accessibilityRole="button"
                                         style={styles.textAction}
                                     >
@@ -242,8 +242,7 @@ export default function ImportBatchScreen() {
                                     </Pressable>
                                     <Pressable
                                         onPress={() => setAddTarget({ id: r.id, name: r.name })}
-                                        hitSlop={8}
-                                        accessibilityLabel={`add ${r.name} to a list`}
+                                        accessibilityLabel={`add to list: ${r.name}`}
                                         accessibilityRole="button"
                                         style={styles.textAction}
                                     >
@@ -251,8 +250,7 @@ export default function ImportBatchScreen() {
                                     </Pressable>
                                     <Pressable
                                         onPress={() => handleRemove(it)}
-                                        hitSlop={8}
-                                        accessibilityLabel={`remove ${r.name} from wishlist`}
+                                        accessibilityLabel={`remove pin for ${r.name}`}
                                         accessibilityRole="button"
                                         style={styles.textAction}
                                     >
