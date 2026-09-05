@@ -27,6 +27,8 @@ interface Props {
     value: string | null;
     onChange: (next: string | null) => void;
     palette?: Palette;
+    variant?: 'default' | 'compact';
+    onPick?: () => void;
 }
 
 /** First grapheme of an input string (multi-codepoint safe). */
@@ -35,7 +37,7 @@ function firstGrapheme(s: string): string {
     return chars.length ? chars[0] : '';
 }
 
-export function ListEmojiPicker({ value, onChange, palette: paletteProp }: Props) {
+export function ListEmojiPicker({ value, onChange, palette: paletteProp, variant = 'default', onPick }: Props) {
     const scheme = useColorScheme();
     const palette = (paletteProp ?? Colors[scheme ?? 'light']) as Palette;
 
@@ -51,9 +53,9 @@ export function ListEmojiPicker({ value, onChange, palette: paletteProp }: Props
 
     return (
         <View style={styles.wrap}>
-            <Text style={[Type.label, { color: palette.textMuted, marginBottom: Spacing.xs }]}>
+            {variant === 'default' ? <Text style={[Type.label, { color: palette.textMuted, marginBottom: Spacing.xs }]}>
                 Icon (optional)
-            </Text>
+            </Text> : null}
             <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -62,9 +64,10 @@ export function ListEmojiPicker({ value, onChange, palette: paletteProp }: Props
             >
                 {/* none */}
                 <Pressable
-                    onPress={() => { onChange(null); setCustom(''); }}
+                    onPress={() => { onChange(null); setCustom(''); onPick?.(); }}
                     style={[
                         styles.chip,
+                        variant === 'compact' && styles.compactChip,
                         styles.noneChip,
                         {
                             backgroundColor: value == null ? palette.primaryMuted : palette.surfaceJournalHi,
@@ -85,9 +88,10 @@ export function ListEmojiPicker({ value, onChange, palette: paletteProp }: Props
                     return (
                         <Pressable
                             key={e}
-                            onPress={() => { onChange(e); setCustom(''); }}
+                            onPress={() => { onChange(e); setCustom(''); onPick?.(); }}
                             style={[
                                 styles.chip,
+                        variant === 'compact' && styles.compactChip,
                                 {
                                     backgroundColor: active ? palette.primaryMuted : palette.surfaceJournalHi,
                                     borderColor: active ? palette.primary : 'transparent',
@@ -110,6 +114,7 @@ export function ListEmojiPicker({ value, onChange, palette: paletteProp }: Props
                     placeholderTextColor={palette.textMuted}
                     style={[
                         styles.chip,
+                        variant === 'compact' && styles.compactChip,
                         styles.customInput,
                         {
                             backgroundColor: isCustom ? palette.primaryMuted : palette.surfaceJournalHi,
@@ -119,6 +124,8 @@ export function ListEmojiPicker({ value, onChange, palette: paletteProp }: Props
                     ]}
                     accessibilityLabel="custom icon"
                     maxLength={4}
+                    returnKeyType="done"
+                    onSubmitEditing={onPick}
                 />
             </ScrollView>
         </View>
@@ -137,6 +144,7 @@ const styles = StyleSheet.create({
         gap: 8,
         paddingRight: Spacing.md,
     },
+    compactChip: { borderRadius: Radius.full, borderWidth: 0 },
     chip: {
         width: CHIP,
         height: CHIP,

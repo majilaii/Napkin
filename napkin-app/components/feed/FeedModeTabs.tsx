@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export type FeedMode = 'for-you' | 'following';
@@ -29,7 +29,7 @@ export function FeedModeTabs({ mode, onModeChange }: Props) {
         <View
             style={[
                 styles.container,
-                { backgroundColor: palette.background, borderBottomColor: palette.ghostRule },
+                { backgroundColor: palette.background },
             ]}
         >
             {TABS.map((tab) => {
@@ -47,8 +47,8 @@ export function FeedModeTabs({ mode, onModeChange }: Props) {
                             style={[
                                 styles.label,
                                 isActive
-                                    ? { color: palette.text }
-                                    : { color: palette.textFaint },
+                                    ? { color: palette.primary }
+                                    : { color: palette.textMuted },
                             ]}
                         >
                             {tab.label}
@@ -69,9 +69,8 @@ const styles = StyleSheet.create({
     container: {
         flexDirection: 'row',
         gap: 22,
-        marginHorizontal: 20,
+        marginHorizontal: Spacing.lg,
         marginTop: -5,
-        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     tab: {
         minWidth: 44,

@@ -1,5 +1,9 @@
 /**
- * feed-friends edge function — TICKET-098 Phase A.
+ * feed-friends: include_activity:true opts into entries, pins and personal lists
+ * from the viewer and followees. activity.ts / fn_friends_activity own that path.
+ * The legacy contract below remains unchanged for older installed apps.
+ *
+ * Legacy feed-friends contract — TICKET-098 Phase A.
  *
  * Friends-only reviews feed: reverse-chronological, public-eligible entries
  * authored by the viewer's follow set (follows.follower_id = viewer —
@@ -10,7 +14,7 @@
  * Eligibility lives in ONE shared SQL helper (fn_public_eligible_entries,
  * called via fn_friends_feed):
  *   restaurant_id IS NOT NULL AND visibility <> 'private'
- *   AND rating IS NOT NULL AND trim(content) >= 20 chars   -- engagement gate,
+ *   AND rating IS NOT NULL AND trim(content) >= 1 char   -- engagement gate,
  *       synced with is_entry_publicly_eligible so no feed card is ever a
  *       dead card (displayable but not tappable/reactable)
  *   AND author account public AND no either-direction block.
@@ -28,6 +32,7 @@
  * (cross-Table aggregate + logger-count trending). Contract is NOT compatible:
  * own entries never appear here, and there is no `trending` sibling field.
  */
+import { activityCursor, loadActivityPage } from './activity.ts';
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
@@ -87,6 +92,19 @@ serve(async (req) => {
             Math.max(parseInt(body.limit ?? String(DEFAULT_PAGE_SIZE), 10) || DEFAULT_PAGE_SIZE, 1),
             MAX_PAGE_SIZE,
         );
+
+        // New clients opt in; installed older builds retain the entry-only contract below.
+        if (body.include_activity === true) {
+            let activityDecoded;
+            try { activityDecoded = activityCursor(body.cursor); }
+            catch { return fail('INVALID_CURSOR', 'Invalid activity cursor'); }
+            const page = await loadActivityPage(
+                (name, args) => supabase.rpc(name, args), user.id, activityDecoded, limit,
+            );
+            return new Response(JSON.stringify({ data: page }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
 
         // 1. Page of eligible entries — follow set, eligibility, blocks, and the
         //    keyset cursor are ALL applied in SQL before LIMIT [ARCH-REVIEW-4].

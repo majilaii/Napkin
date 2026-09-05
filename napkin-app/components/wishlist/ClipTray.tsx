@@ -155,9 +155,6 @@ export function ClipTray({
                                     onPress={() => sheetRef.current?.snapTo(expanded ? HALF : FULL)}
                                     style={styles.headerAction}
                                 >
-                                    <Text style={[Type.metadata, { color: palette.primary }]}>
-                                        {expanded ? 'less' : 'expand'}
-                                    </Text>
                                     <Ionicons name={expanded ? 'chevron-down-outline' : 'chevron-up-outline'} size={20} color={palette.primary} />
                                 </Pressable>
                                 <Pressable onPress={dismissTray} style={styles.headerAction}

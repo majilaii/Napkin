@@ -155,6 +155,9 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/restaurant_completeness.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/friends_activity.spec.sql
           bash supabase/tests/restaurant_completeness.concurrency.sh \
             "postgresql://postgres:postgres@127.0.0.1:54329/postgres"
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \

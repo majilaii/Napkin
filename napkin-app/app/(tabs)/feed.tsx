@@ -5,7 +5,7 @@
  * used by Friends and a `mode` state, then swaps between two bodies that share
  * one FeedHeader masthead:
  *
- *   Friends → pure chronological reviews from people you follow, nothing else
+ *   Friends → chronological activity from you and people you follow
  *   For You → the explore surface: socials, people, lists
  *
  * Friends is always the landing mode. For You stays one tap away.
@@ -36,10 +36,12 @@ export default function FeedScreen() {
 
     // Tab screens stay mounted. Reset on every landing so returning to Feed can
     // never preserve a prior For You selection as the apparent default.
+    const { refetch } = feedQuery;
     useFocusEffect(
         useCallback(() => {
             setMode('following');
-        }, []),
+            if (user?.id) void refetch();
+        }, [user?.id, refetch]),
     );
 
     const header = <FeedHeader mode={mode} onModeChange={setMode} />;

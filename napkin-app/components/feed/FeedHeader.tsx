@@ -14,7 +14,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Colors, Type } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { FeedModeTabs, type FeedMode } from './FeedModeTabs';
 import { feedMastheadDate } from './feedDates';
@@ -44,7 +44,7 @@ export function FeedHeader({ mode, onModeChange }: Props) {
 
 const styles = StyleSheet.create({
     header: {
-        paddingHorizontal: 20,
+        paddingHorizontal: Spacing.lg,
     },
     dateline: {
         ...Type.dateline,

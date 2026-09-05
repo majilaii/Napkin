@@ -28,7 +28,8 @@ jest.mock('react-native', () => {
 });
 jest.mock('expo-image', () => ({ Image: 'ExpoImage' }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock('@/hooks/use-color-scheme', () => ({ useColorScheme: () => 'light' }));
 jest.mock('@/providers/AuthProvider', () => ({ useAuth: () => ({ user: { id: 'viewer' } }) }));
 jest.mock('@/hooks/entries/useDeleteEntry', () => ({
@@ -103,7 +104,7 @@ describe('FriendFeedCard density weights', () => {
             tintFor('restaurant-1', Colors.light),
         );
         expect(row.props).toMatchObject({
-            accessibilityLabel: 'Maya Chen, noted, AGORA souvla bar, 4.5, quietly excellent',
+            accessibilityLabel: 'Maya Chen, tried, AGORA souvla bar, 4.5, quietly excellent',
             accessibilityHint: 'Opens this entry',
         });
         expect(renderer.root.findAllByType('Ionicons')).toHaveLength(0);
@@ -152,7 +153,7 @@ describe('FriendFeedCard density weights', () => {
             plateTints[(baseTintIndex + 1) % plateTints.length],
         );
         expect(card.props).toMatchObject({
-            accessibilityLabel: 'Maya Chen, noted, AGORA souvla bar, 4.5, quietly excellent',
+            accessibilityLabel: 'Maya Chen, tried, AGORA souvla bar, 4.5, quietly excellent',
             accessibilityHint: 'Opens this entry',
         });
         expect(renderer.root.findAllByType('ExpoImage')).toHaveLength(2);
@@ -171,7 +172,7 @@ describe('FriendFeedCard density weights', () => {
         const rating = renderer.root.findByProps({ testID: 'feed-ledger-rating' });
 
         expect(ledger.props).toMatchObject({
-            accessibilityLabel: 'Maya Chen, noted, AGORA souvla bar, 4.5',
+            accessibilityLabel: 'Maya Chen, tried, AGORA souvla bar, 4.5',
             accessibilityHint: 'Opens this entry',
         });
         expect(flattenStyle(ledger.props.style({ pressed: false }))).toMatchObject({
@@ -190,4 +191,23 @@ describe('FriendFeedCard density weights', () => {
         expect(dividers).toHaveLength(1);
         act(() => renderer.unmount());
     });
+});
+
+ it.each([[[]], [['one']], [['one', 'two']]])('routes own entries in owner mode with a you byline (%j photos)', (photos) => {
+    mockPush.mockClear();
+    const row = { ...feedRow(photos as string[]), user_id: 'viewer' };
+    const renderer = render(row);
+    const target = renderer.root.findAllByType('Pressable').find((n: any) => n.props.accessibilityHint === 'Opens this entry');
+    expect(target.props.accessibilityLabel).toContain('you, tried');
+    act(() => target.props.onPress());
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/entry-detail', params: { entryId: row.id } });
+    act(() => renderer.unmount());
+});
+it('routes peers in public mode', () => {
+    mockPush.mockClear();
+    const renderer = render(feedRow([]));
+    const target = renderer.root.findAllByType('Pressable').find((n: any) => n.props.accessibilityHint === 'Opens this entry');
+    act(() => target.props.onPress());
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/entry-detail', params: { entryId: 'entry-1', viewAs: 'public' } });
+    act(() => renderer.unmount());
 });

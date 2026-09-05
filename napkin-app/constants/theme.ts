@@ -499,6 +499,14 @@ export const Type = {
     fontFamily: 'Newsreader_500Medium',
     lineHeight: 34,
   } as TextStyle,
+  /** Authored list name in the compact creation form. */
+  listNameInput: {
+    fontSize: 22,
+    fontWeight: '500' as const,
+    fontFamily: 'Newsreader_500Medium',
+    lineHeight: 28,
+    letterSpacing: -0.2,
+  } as TextStyle,
   /** Compact Friends-feed metadata, bylines, and relative timestamps. */
   feedMeta: {
     fontSize: 13,
