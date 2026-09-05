@@ -112,3 +112,17 @@ it('does not expose internal provider errors or falsely assert a missing city', 
     expect(importCheckExplanation('locality_reject')).toBe('The location could not be confirmed.');
     expect(importCheckExplanation('secret-provider-payload')).toBe('Napkin could not finish checking this place’s details.');
 });
+it('keeps a busy check in its original position when the cache optimistically removes it', async () => {
+    let finish!: () => void;
+    mockDismiss.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const first = { ...ITEM, id: 'first-check', restaurant_name: 'First place' };
+    const r = mount({ items: [first, ITEM] });
+    const props = r.root.props;
+    act(() => r.root.findAllByProps({ accessibilityLabel: 'keep as saved' })[1].props.onPress());
+    act(() => r.update(<ImportChecks {...props} items={[first]} />));
+    const text = contents(r);
+    expect(text.indexOf('First place')).toBeLessThan(text.indexOf('Posada Real Torre Berrueza'));
+    expect(r.root.findByProps({ accessibilityLabel: 'updating place check' })).toBeTruthy();
+    await act(async () => { finish(); });
+    act(() => r.unmount());
+});
