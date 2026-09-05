@@ -32,7 +32,7 @@ export interface TopEntry {
     id: string;
     restaurant_name: string;
     rating: number;
-    visited_at: string;
+    visited_at: string | null;
 }
 
 export interface RecentActivityItem {
@@ -40,7 +40,7 @@ export interface RecentActivityItem {
     id: string;
     restaurant_name: string;
     rating: number | null;
-    date: string;
+    date: string | null;
 }
 
 export interface MemberProfileData {

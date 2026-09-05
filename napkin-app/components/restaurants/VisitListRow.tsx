@@ -17,7 +17,8 @@ interface Props {
     onPress?: () => void;
 }
 
-function formatLongDate(iso: string): string {
+function formatLongDate(iso: string | null): string {
+    if (!iso) return 'no date';
     try {
         const d = new Date(iso);
         return d.toLocaleDateString(undefined, {

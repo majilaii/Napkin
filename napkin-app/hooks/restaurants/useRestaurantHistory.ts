@@ -24,7 +24,7 @@ export type Visit = {
     entry_id?: string;
     table_night_id?: string;
     rating: number | null;
-    date: string; // ISO string
+    date: string | null; // Actual visit date, unknown until chosen
     user_display_names: string[];
 };
 

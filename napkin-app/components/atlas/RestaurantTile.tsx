@@ -51,7 +51,8 @@ function textureFor(id: string): readonly [string, string] {
     return [t[0], t[1]] as const;
 }
 
-function formatDate(isoDate: string): string {
+function formatDate(isoDate: string | null): string {
+    if (!isoDate) return 'no date';
     return new Date(isoDate).toLocaleDateString('en-US', {
         month: 'short',
         year: 'numeric',
@@ -87,8 +88,8 @@ export function RestaurantTile({
     });
 
     // Most-recent visit date
-    const mostRecentDate = tile.visits[0]?.date ?? '';
-    const dateLabel = mostRecentDate ? formatDate(mostRecentDate) : '';
+    const mostRecentDate = tile.visits[0]?.date ?? null;
+    const dateLabel = formatDate(mostRecentDate);
 
     const isRound = tile.tile_type === 'round' || tile.tile_type === 'mixed';
     const isMixed = tile.tile_type === 'mixed';

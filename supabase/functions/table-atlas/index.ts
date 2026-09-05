@@ -1,3 +1,4 @@
+import { latestKnownVisit } from '../_shared/visitDates.ts';
 /**
  * Table Atlas Edge Function
  *
@@ -23,7 +24,7 @@ type CityRow = {
     name: string;
     spot_count: number;
     member_count: number;
-    last_visit_at: string;
+    last_visit_at: string | null;
     hero_photo_url: string | null;
     hero_photo_source: string | null;
     hero_places_photo_attribution_html: string | null;
@@ -58,7 +59,8 @@ type VisitRow =
           display_name: string;
           avatar_url: string | null;
           rating: number | null;
-          date: string;
+          date: string | null;
+          created_at?: string;
           table_night_id: string;
           /** All participants for the peek sheet */
           round_participants: RoundParticipant[];
@@ -70,7 +72,8 @@ type VisitRow =
           display_name: string;
           avatar_url: string | null;
           rating: number | null;
-          date: string;
+          date: string | null;
+          created_at?: string;
           entry_id: string;
       };
 
@@ -257,13 +260,14 @@ async function handleCityIndex(
     type CityEntry = {
         restaurant_ids: Set<string>;
         user_ids: Set<string>;
-        last_visit_at: string;
+        last_visit_at: string | null;
         // hero photo tracks the most-recent dated photo across all restaurants in the city
         hero_photo_url: string | null;
         hero_photo_source: string | null;
         hero_places_photo_attribution_html: string | null;
         hero_restaurant_name: string | null;
         hero_photo_date: string;
+        order_at: string;
     };
 
     const cityMap = new Map<string, CityEntry>();
@@ -272,36 +276,40 @@ async function handleCityIndex(
         city: string,
         restaurantId: string,
         userId: string | null,
-        date: string,
+        date: string | null,
         photo: string | null,
         photoSource: string | null,
         placesAttributionHtml: string | null,
         restaurantName: string,
+        recordedAt?: string,
     ) {
         if (!city) return;
+        const orderDate = date ?? recordedAt ?? '';
         const existing = cityMap.get(city);
         if (!existing) {
             cityMap.set(city, {
                 restaurant_ids: new Set([restaurantId]),
                 user_ids: new Set(userId ? [userId] : []),
                 last_visit_at: date,
+                order_at: orderDate,
                 hero_photo_url: photo,
                 hero_photo_source: photo ? photoSource : null,
                 hero_places_photo_attribution_html: photo ? placesAttributionHtml : null,
                 hero_restaurant_name: photo ? restaurantName : null,
-                hero_photo_date: photo ? date : '',
+                hero_photo_date: photo ? orderDate : '',
             });
         } else {
             existing.restaurant_ids.add(restaurantId);
             if (userId) existing.user_ids.add(userId);
-            if (date > existing.last_visit_at) existing.last_visit_at = date;
+            existing.last_visit_at = latestKnownVisit(existing.last_visit_at, date);
+            if (orderDate > existing.order_at) existing.order_at = orderDate;
             // Pick photo from the most-recent visit that has one
-            if (photo && date >= existing.hero_photo_date) {
+            if (photo && orderDate >= existing.hero_photo_date) {
                 existing.hero_photo_url = photo;
                 existing.hero_photo_source = photoSource;
                 existing.hero_places_photo_attribution_html = placesAttributionHtml;
                 existing.hero_restaurant_name = restaurantName;
-                existing.hero_photo_date = date;
+                existing.hero_photo_date = orderDate;
             }
         }
     }
@@ -313,11 +321,12 @@ async function handleCityIndex(
             r.city,
             r.id,
             e.user_id,
-            e.visited_at ?? e.created_at,
+            e.visited_at ?? null,
             r.photo_url,
             r.photo_source ?? null,
             r.places_photo_attribution_html ?? null,
             r.name,
+            e.created_at,
         );
     }
     // TICKET-044: use projectRound for participant resolution (live and merged).
@@ -355,7 +364,7 @@ async function handleCityIndex(
 
     // Sort cities by last_visit_at DESC
     const sortedCities: CityRow[] = Array.from(cityMap.entries())
-        .sort(([, a], [, b]) => b.last_visit_at.localeCompare(a.last_visit_at))
+        .sort(([nameA, a], [nameB, b]) => b.order_at.localeCompare(a.order_at) || nameA.localeCompare(nameB))
         .map(([name, data]) => ({
             name,
             spot_count: data.restaurant_ids.size,
@@ -524,14 +533,16 @@ async function handleCityPage(
         round_visits: {
             night_id: string;
             average_rating: number | null;
-            date: string;
+            date: string | null;
+            created_at?: string;
             participant_user_ids: string[];
         }[];
         solo_visits: {
             entry_id: string;
             user_id: string;
             rating: number | null;
-            date: string;
+            date: string | null;
+            created_at?: string;
         }[];
         companion_ids_union: Set<string>;
     };
@@ -598,7 +609,8 @@ async function handleCityPage(
             entry_id: e.id,
             user_id: e.user_id,
             rating: e.rating ?? null,
-            date: e.visited_at ?? e.created_at,
+            date: e.visited_at ?? null,
+            created_at: e.created_at,
         });
         for (const cId of (companionsByEntry.get(e.id) ?? [])) {
             agg.companion_ids_union.add(cId);
@@ -649,7 +661,7 @@ async function handleCityPage(
         let rating: number | null = null;
         if (hasRound) {
             const latestRound = agg.round_visits.sort((a, b) =>
-                b.date.localeCompare(a.date),
+                (b.date ?? b.created_at ?? '').localeCompare(a.date ?? a.created_at ?? ''),
             )[0];
             rating = latestRound.average_rating;
         } else {
@@ -663,7 +675,7 @@ async function handleCityPage(
             if (rating == null) {
                 const sorted = agg.solo_visits
                     .filter((v) => v.rating != null)
-                    .sort((a, b) => b.date.localeCompare(a.date));
+                    .sort((a, b) => (b.date ?? b.created_at ?? '').localeCompare(a.date ?? a.created_at ?? ''));
                 if (sorted.length > 0) rating = sorted[0].rating;
             }
         }
@@ -684,7 +696,7 @@ async function handleCityPage(
 
         const visits: VisitRow[] = [
             ...agg.round_visits
-                .sort((a, b) => b.date.localeCompare(a.date))
+                .sort((a, b) => (b.date ?? b.created_at ?? '').localeCompare(a.date ?? a.created_at ?? ''))
                 .map((rv) => {
                     const roundParticipants: RoundParticipant[] =
                         rv.participant_user_ids.map((uid) => ({
@@ -706,7 +718,7 @@ async function handleCityPage(
                     };
                 }),
             ...agg.solo_visits
-                .sort((a, b) => b.date.localeCompare(a.date))
+                .sort((a, b) => (b.date ?? b.created_at ?? '').localeCompare(a.date ?? a.created_at ?? ''))
                 .map((sv) => ({
                     kind: 'solo' as const,
                     id: sv.entry_id,
@@ -715,6 +727,7 @@ async function handleCityPage(
                     avatar_url: profiles.get(sv.user_id)?.avatar_url ?? null,
                     rating: sv.rating,
                     date: sv.date,
+                    created_at: sv.created_at,
                     entry_id: sv.entry_id,
                 })),
         ];

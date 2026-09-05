@@ -165,7 +165,7 @@ export type DiaryEntryRow = {
     photo_url: string | null;
     rating: number | null;
     note: string | null;
-    visited_at: string;
+    visited_at: string | null;
     created_at: string;
     /**
      * TICKET-044 — merged-round discriminators.

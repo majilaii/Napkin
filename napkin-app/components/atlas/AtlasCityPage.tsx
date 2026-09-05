@@ -246,8 +246,8 @@ export function AtlasCityPage({
             });
         }
         return [...filteredTiles].sort((a, b) => {
-            const ad = a.visits[0]?.date ?? '';
-            const bd = b.visits[0]?.date ?? '';
+            const ad = a.visits[0]?.date ?? a.visits[0]?.created_at ?? '';
+            const bd = b.visits[0]?.date ?? b.visits[0]?.created_at ?? '';
             return bd.localeCompare(ad);
         });
     }, [filteredTiles, sortOrder]);

@@ -1,20 +1,13 @@
-/**
- * /restaurant-reviews — every public review of one restaurant
- * (TICKET-154, Letterboxd film → Reviews).
- *
- * Entered from the restaurant page's VOICES section. Text-forward cards in
- * the /reviews grammar: serif reviewer name + amber rating, the note as the
- * hero (em-dash, italic-adjacent serif), quiet date + taste-match line.
- * Paginated (canonical cursor family). Rows open the public entry view.
- */
-import React, { useMemo } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Spacing, Shadow, Type } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { Avatar } from '@/components/feed/Avatar';
+import { PhotoLightbox } from '@/components/photos/PhotoLightbox';
 import { ErrorState } from '@/components/ErrorState';
 import { useRestaurantReviews } from '@/hooks/restaurants/useRestaurantReviews';
 import { flattenPages } from '@/lib/pagination';
@@ -32,7 +25,7 @@ export default function RestaurantReviewsScreen() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
-    const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
         useRestaurantReviews(id);
 
     const rows = useMemo(() => flattenPages(data), [data]);
@@ -85,7 +78,7 @@ export default function RestaurantReviewsScreen() {
                 <FlatList
                     data={rows}
                     keyExtractor={(r) => r.entry_id}
-                    contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 90 }}
+                    contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: insets.bottom + 90 }}
                     showsVerticalScrollIndicator={false}
                     onEndReached={() => {
                         if (hasNextPage && !isFetchingNextPage) fetchNextPage();
@@ -94,7 +87,7 @@ export default function RestaurantReviewsScreen() {
                     ListFooterComponent={
                         isFetchingNextPage ? (
                             <ActivityIndicator color={palette.primary} style={{ marginVertical: Spacing.md }} />
-                        ) : null
+                        ) : isError ? <ErrorState onRetry={() => isFetchNextPageError ? fetchNextPage() : refetch()} /> : null
                     }
                     renderItem={({ item }) => (
                         <ReviewRow
@@ -123,30 +116,64 @@ function ReviewRow({
     palette: typeof Colors.light;
     onPress: () => void;
 }) {
-    const metaBits = [formatDate(row.created_at)];
-    if (row.calibration) metaBits.push(`${row.calibration.match_pct}% match`);
+    const [expanded, setExpanded] = useState(false);
+    const [long, setLong] = useState(false);
+    const [photoIndex, setPhotoIndex] = useState<number | null>(null);
+    const photos = [...new Set(row.photo_urls?.length ? row.photo_urls : row.photo_url ? [row.photo_url] : [])];
+    const date = formatDate(row.created_at);
 
     return (
-        <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}>
-            <View style={[styles.card, { backgroundColor: palette.card }, Shadow.subtle]}>
+        <View style={[styles.review, { borderBottomColor: palette.ghostRule }]}>
+            <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`${row.display_name}, ${date}, ${row.rating} out of 5. ${row.note_excerpt}`} accessibilityHint="Opens this review"
+                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
                 <View style={styles.cardHead}>
-                    <Text style={[styles.cardName, { color: palette.text }]} numberOfLines={1}>
-                        {row.display_name}
-                    </Text>
+                    <Avatar name={row.display_name} url={row.avatar_url} size={32} palette={palette} />
+                    <View style={styles.author}>
+                        <Text style={[styles.cardName, { color: palette.text }]} numberOfLines={1}>{row.display_name}</Text>
+                        <Text style={[styles.cardDate, { color: palette.textMuted }]}>{date}</Text>
+                    </View>
                     {row.rating != null ? (
-                        <Text style={[styles.cardRating, { color: palette.amberBright }]}>
-                            {Number(row.rating).toFixed(1)}
-                        </Text>
+                        <View style={styles.rating} accessibilityLabel={`${row.rating} out of 5 stars`}>
+                            <Ionicons name="star" size={11} color={palette.amberBright} />
+                            <Text style={[styles.cardRating, { color: palette.amberBright }]}>{Number(row.rating).toFixed(1)}</Text>
+                        </View>
                     ) : null}
                 </View>
-                <Text style={[styles.cardNote, { color: palette.textSecondary }]} numberOfLines={6}>
-                    {`— ${row.note_excerpt}`}
-                </Text>
-                <Text style={[styles.cardDate, { color: palette.textMuted }]}>
-                    {metaBits.join(' · ')}
-                </Text>
-            </View>
-        </Pressable>
+                <View>
+                    <Text style={[styles.cardNote, { color: palette.textSoft }]} numberOfLines={expanded ? undefined : 5}>
+                        {row.note_excerpt}
+                    </Text>
+                    {/* Measure the full text at its actual width, including dynamic type. */}
+                    <Text accessible={false} importantForAccessibility="no-hide-descendants"
+                        style={[styles.cardNote, styles.measure]} onTextLayout={(event) => setLong(event.nativeEvent.lines.length > 5)}>
+                        {row.note_excerpt}
+                    </Text>
+                </View>
+            </Pressable>
+            {long ? (
+                <Pressable onPress={() => setExpanded(!expanded)} style={styles.more} accessibilityRole="button" accessibilityState={{ expanded }}>
+                    <Text style={[styles.link, { color: palette.primary }]}>{expanded ? 'less' : 'more'}</Text>
+                </Pressable>
+            ) : null}
+            {photos.length ? (
+                <View style={styles.photos}>
+                    {photos.slice(0, 3).map((url, index) => (
+                        <Pressable key={url} onPress={() => setPhotoIndex(index)} accessibilityRole="button"
+                            accessibilityLabel={`Photo ${index + 1} of ${photos.length} by ${row.display_name}`}
+                            style={[styles.photo, { height: photos.length === 1 ? 150 : photos.length === 2 ? 128 : 116, borderColor: palette.imageOutline }]}>
+                            <Image source={{ uri: url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                            {index === 2 && photos.length > 3 ? (
+                                <View style={[styles.overflow, { backgroundColor: palette.overlayPhoto }]}>
+                                    <Text style={[styles.overflowText, { color: palette.textOnImage }]}>+{photos.length - 3}</Text>
+                                </View>
+                            ) : null}
+                        </Pressable>
+                    ))}
+                </View>
+            ) : null}
+            {photoIndex != null ? <PhotoLightbox visible photos={photos} initialIndex={photoIndex}
+                caption={`${row.display_name} · ${date}`} onClose={() => setPhotoIndex(null)} /> : null}
+        </View>
     );
 }
 
@@ -160,10 +187,10 @@ const styles = StyleSheet.create({
         paddingTop: Spacing.sm,
         paddingBottom: Spacing.sm,
     },
-    back: { width: 32, alignItems: 'flex-start' },
+    back: { width: 40, minHeight: 40, justifyContent: 'center', alignItems: 'flex-start' },
     titleWrap: { alignItems: 'center', flexShrink: 1 },
     title: { ...Type.screenTitle },
-    subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 11, marginTop: 1 },
+    subtitle: { ...Type.caption, marginTop: 2 },
     emptyWrap: { paddingTop: 80, alignItems: 'center', paddingHorizontal: 40 },
     emptyCta: {
         fontFamily: 'Manrope_600SemiBold',
@@ -177,30 +204,19 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 22,
     },
-    card: {
-        borderRadius: 16,
-        paddingHorizontal: Spacing.md + 2,
-        paddingVertical: Spacing.md,
-        marginBottom: Spacing.sm,
-        gap: 6,
-    },
-    cardHead: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        justifyContent: 'space-between',
-        gap: Spacing.md,
-    },
-    cardName: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 18,
-        lineHeight: 22,
-        flexShrink: 1,
-    },
-    cardRating: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 17 },
-    cardNote: {
-        fontFamily: 'Newsreader_400Regular',
-        fontSize: 14.5,
-        lineHeight: 21,
-    },
-    cardDate: { fontFamily: 'Manrope_500Medium', fontSize: 11 },
+    review: { paddingVertical: 22, borderBottomWidth: StyleSheet.hairlineWidth, gap: 12 },
+    cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+    author: { flex: 1, gap: 2 },
+    cardName: { ...Type.body, fontFamily: 'Manrope_600SemiBold', lineHeight: 21 },
+    cardRating: { ...Type.rating, fontSize: 20, lineHeight: 26 },
+    rating: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    cardNote: { fontFamily: 'Newsreader_400Regular', fontSize: 16, lineHeight: 22 },
+    cardDate: { ...Type.caption },
+    measure: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0, pointerEvents: 'none' },
+    more: { minHeight: 40, justifyContent: 'center', alignSelf: 'flex-start', marginVertical: -10, paddingRight: 16 },
+    link: { ...Type.caption, fontFamily: 'Manrope_600SemiBold' },
+    photos: { flexDirection: 'row', gap: 6 },
+    photo: { flex: 1, borderRadius: 6, overflow: 'hidden', borderWidth: 1 },
+    overflow: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+    overflowText: { ...Type.titleLarge },
 });

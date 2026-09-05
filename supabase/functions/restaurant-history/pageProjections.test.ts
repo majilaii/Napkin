@@ -3,6 +3,7 @@ import {
     appendPageProjections,
     loadSelfLog,
     loadTableNotes,
+    isBareVisit,
 } from './pageProjections.ts';
 
 type QueryLog = {
@@ -140,6 +141,9 @@ Deno.test('self_log fixture: solo rated entry', async () => {
         rating: 4.5,
         note: 'charred leeks',
         visited_at: '2026-08-20T12:00:00.000Z',
+        created_at: '2026-08-20T11:00:00.000Z',
+        is_bare: false,
+        supper_id: null,
         companions: [],
         photos: [],
     }]);
@@ -327,6 +331,7 @@ Deno.test('table_notes fixture: authorized shared note uses fn_visible_entry_ids
         rating: 4.5,
         note: 'order the turbot',
         visited_at: '2026-08-24T20:00:00.000Z',
+        created_at: '2026-08-24T19:00:00.000Z',
     }]);
     assertEquals(rpcs, [{
         name: 'fn_visible_entry_ids',
@@ -442,4 +447,29 @@ Deno.test('restaurant page additions are byte-additive over untouched keys', () 
     assertEquals(JSON.stringify(before.visits), recordedVisitsBytes);
     assertEquals(JSON.stringify(after.visits), recordedVisitsBytes);
     assertEquals(JSON.stringify(untouched), JSON.stringify(before));
+});
+
+Deno.test('self_log keeps undated bare visits and record order after backdating', async () => {
+    const old = entry({ id: 'old', created_at: '2026-08-01', visited_at: '2026-08-01' });
+    const recent = entry({ id: 'recent', created_at: '2026-09-05', visited_at: null, rating: null, content: null });
+    const first = await loadSelfLog(fakeClient({ entries: [old, recent] }).client, VIEWER, RESTAURANT);
+    assertEquals(first.map((row) => row.entry_id), ['recent', 'old']);
+    assertEquals(first[0].visited_at, null);
+    assertEquals(first[0].created_at, '2026-09-05');
+    assertEquals(first[0].is_bare, true);
+    recent.visited_at = '2010-01-01';
+    const second = await loadSelfLog(fakeClient({ entries: [old, recent] }).client, VIEWER, RESTAURANT);
+    assertEquals(second.map((row) => row.entry_id), ['recent', 'old']);
+    assertEquals(second[0].is_bare, false);
+});
+
+Deno.test('bare advice includes legacy fields and other participants, allowing the author row', () => {
+    const bare = { user_id: VIEWER, entry_participants: [{ user_id: VIEWER }] };
+    assertEquals(isBareVisit(bare), true);
+    for (const patch of [
+        { photo_url: 'legacy.jpg' }, { entry_photos: [{ photo_url: 'photo.jpg' }] },
+        { entry_tables: [{ entry_id: 'entry' }] }, { supper_id: 'supper' },
+        { entry_participants: [{ user_id: OTHER }] }, { entry_companions: [{ user_id: OTHER }] },
+        { value_rating: 4 }, { dish_description: 'leeks' }, { visited_at: '2020-01-01' },
+    ]) assertEquals(isBareVisit({ ...bare, ...patch }), false);
 });

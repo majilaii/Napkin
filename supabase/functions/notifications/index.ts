@@ -25,6 +25,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { emitImportDone } from '../_shared/notify.ts';
 import { encodeCursor, decodeCursor, type CursorTuple } from '../_shared/pagination.ts';
+import { viewerHasBeen } from './viewerHasBeen.ts';
 import { resolveCanonicalRestaurantIds } from '../_shared/canonicalRestaurant.ts';
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -214,28 +215,7 @@ function buildQuote(entry: { rating: number | null; content: string | null }): s
     return `"${content}${stars}"`;
 }
 
-/**
- * Check if the recipient has been to the given restaurant.
- * Best-effort — returns false on error.
- */
-async function viewerHasBeen(
-    supabase: SupabaseClient,
-    recipientUserId: string,
-    restaurantId: string | null,
-): Promise<boolean> {
-    if (!restaurantId) return false;
-    try {
-        const { data } = await supabase
-            .from('user_restaurant_status')
-            .select('been')
-            .eq('user_id', recipientUserId)
-            .eq('restaurant_id', restaurantId)
-            .maybeSingle();
-        return (data as { been?: boolean } | null)?.been === true;
-    } catch {
-        return false;
-    }
-}
+
 
 // ── Hydration ─────────────────────────────────────────────────────────────────
 
@@ -291,7 +271,7 @@ async function hydrate(
             : Promise.resolve({ data: [] as { id: string; name: string; photo_url: string | null }[], error: null }),
         entryIds.length
             ? supabase.from('entries').select('id, user_id, table_id, rating, content, photo_url, restaurant_id, visited_at, visibility').in('id', entryIds)
-            : Promise.resolve({ data: [] as { id: string; user_id: string; table_id: string | null; rating: number | null; content: string | null; photo_url: string | null; restaurant_id: string | null; visited_at: string; visibility: string }[], error: null }),
+            : Promise.resolve({ data: [] as { id: string; user_id: string; table_id: string | null; rating: number | null; content: string | null; photo_url: string | null; restaurant_id: string | null; visited_at: string | null; visibility: string }[], error: null }),
     ]);
 
     // Fix #2 (Codex review 2026-04-28): check each hydration query for errors.

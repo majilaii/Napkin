@@ -1,3 +1,4 @@
+import { compareVisitRecords, knownVisitDate } from '@/lib/visitDates';
 import type { MyList } from '@/hooks/lists/useMyLists';
 import type { SelfLogRow } from '@/hooks/restaurants/useRestaurantPage';
 
@@ -6,18 +7,16 @@ const LEDGER_MONTHS = [
     'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
 ] as const;
 
-export function shortLedgerDate(value: string): string {
-    const date = new Date(value);
+export function shortLedgerDate(value: string | null | undefined): string {
+    const date = knownVisitDate(value);
+    if (!date) return 'no date';
     return `${date.getDate()} ${LEDGER_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
 export function deriveLedgerStats(rows: SelfLogRow[]) {
-    const sorted = [...rows].sort((a, b) => {
-        if (a.visited_at !== b.visited_at) return a.visited_at < b.visited_at ? 1 : -1;
-        return b.id.localeCompare(a.id);
-    });
+    const sorted = [...rows].sort(compareVisitRecords);
     const rated = rows.filter((row) => row.rating != null).map((row) => Number(row.rating));
-    const timestamps = rows.map((row) => row.visited_at).sort();
+    const timestamps = rows.map((row) => row.visited_at).filter((date): date is string => !!knownVisitDate(date)).sort();
     return {
         rows: sorted,
         average: rated.length > 0

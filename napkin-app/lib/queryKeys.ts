@@ -56,6 +56,7 @@ export const queryKeys = {
 
     // Members (Table-scoped member profiles)
     members: {
+        profileAll: () => ['members', 'profile'] as const,
         profile: (userId: string, tableId: string) => ['members', 'profile', userId, tableId] as const,
     },
 

@@ -88,7 +88,7 @@ function fakeReader(options: FakeOptions = {}) {
             const dateFor = (entry: LedgerCandidate) => entry.visited_at ?? entry.created_at;
             const result = entries
                 .filter((entry) => request.userIds.includes(entry.user_id))
-                .filter((entry) => entry.restaurant_id != null && entry.rating != null)
+                .filter((entry) => entry.restaurant_id != null && (request.category === 'lookback' || entry.rating != null))
                 .filter((entry) => request.branch === 'visited'
                     ? entry.visited_at != null
                     : entry.visited_at == null)
@@ -97,7 +97,7 @@ function fakeReader(options: FakeOptions = {}) {
                 .filter((entry) => !request.restaurantIds
                     || request.restaurantIds.includes(entry.restaurant_id))
                 .filter((entry) => !request.start || dateFor(entry) >= request.start)
-                .filter((entry) => dateFor(entry) < request.end)
+                .filter((entry) => (request.category === 'lookback' && request.branch === 'created') || dateFor(entry) < request.end)
                 .filter((entry) => !request.after
                     || dateFor(entry) > request.after.date
                     || (dateFor(entry) === request.after.date && entry.id > request.after.id))
@@ -164,7 +164,7 @@ Deno.test('ledger bounds are half-open, current-month ends now, and tz changes U
     assertEquals(current.isCurrentMonth, true);
 });
 
-Deno.test('ledger counts coalesced dates at month/crown edges and excludes unrated rows', async () => {
+Deno.test('ledger counts only known dates at month/crown edges and excludes unrated rows', async () => {
     const b = bounds();
     const crownEdge = b.crownStart;
     const { reader } = fakeReader({
@@ -189,10 +189,10 @@ Deno.test('ledger counts coalesced dates at month/crown edges and excludes unrat
     const snapshot = await loadFriendsLedger(reader, VIEWER, b);
     const viewer = snapshot.data.rows.find((ledgerRow) => ledgerRow.is_viewer)!;
 
-    assertEquals(viewer.meals, 2);
+    assertEquals(viewer.meals, 1);
     assertEquals(viewer.crowns, 1);
-    assertEquals(viewer.new_places, 2);
-    assertEquals(viewer.napkins, 5);
+    assertEquals(viewer.new_places, 0);
+    assertEquals(viewer.napkins, 2);
 });
 
 Deno.test('ledger applies cohort before one union visibility gate for every aggregate', async () => {
@@ -399,8 +399,8 @@ Deno.test('ledger 250-followee fixture matches the exact bounded-query formula',
     const snapshot = await loadFriendsLedger(fake.reader, VIEWER, bounds());
 
     assertEquals(snapshot.metrics, {
-        month: 6,
-        crown: 6,
+        month: 3,
+        crown: 3,
         lookback: 6,
         visibility: 1,
         follows: 1,
@@ -432,12 +432,27 @@ Deno.test('ledger newest-500 cap keeps 501 rows, six chunks, bounded lists, stab
     assertEquals(firstSnapshot.data.rows.length, 501);
     assertEquals(firstSnapshot.data.rows.some((item) => item.user_id === followees[500]), false);
     assertEquals(firstSnapshot.data.rows, secondSnapshot.data.rows);
-    assertEquals(firstSnapshot.metrics.month, 12);
-    assertEquals(firstSnapshot.metrics.crown, 12);
+    assertEquals(firstSnapshot.metrics.month, 6);
+    assertEquals(firstSnapshot.metrics.crown, 6);
     assertEquals(firstSnapshot.metrics.lookback, 12);
     assertEquals(firstSnapshot.metrics.follows, 1);
     assertEquals(firstSnapshot.metrics.profiles, 6);
     assert(first.reads.every((read) => read.userIds.length <= 100));
     assert(first.reads.every((read) => (read.restaurantIds?.length ?? 0) <= 100));
     assert(first.profileCalls.every((ids) => ids.length <= 100));
+});
+
+Deno.test('rated undated visits earn no period awards and unknown history prevents false first-visit credit', async () => {
+    const fake = fakeReader({ entries: [
+        row('known', VIEWER, '2026-09-05', { restaurant_id: 'known-place' }),
+        row('bare-history', VIEWER, '2026-10-20', {
+            restaurant_id: 'known-place', rating: null, visited_at: null,
+        }),
+        ...['one', 'two', 'three'].map((id) => row(id, VIEWER, '2026-09-08', {
+            restaurant_id: 'undated-place', visited_at: null,
+        })),
+    ] });
+    const snapshot = await loadFriendsLedger(fake.reader, VIEWER, bounds());
+    const viewer = snapshot.data.rows.find((item) => item.is_viewer)!;
+    assertEquals([viewer.meals, viewer.new_places, viewer.crowns], [1, 0, 0]);
 });

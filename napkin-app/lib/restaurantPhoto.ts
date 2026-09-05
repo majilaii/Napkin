@@ -1,3 +1,4 @@
+import { compareVisitRecords } from '@/lib/visitDates';
 /**
  * Restaurant photo resolvers — shared owners for tile and detail-masthead photos.
  *
@@ -160,10 +161,7 @@ export function resolveMastheadPhotos(
         });
     };
 
-    const selfLog = [...(page?.self_log ?? [])].sort((a, b) => {
-        if (a.visited_at !== b.visited_at) return a.visited_at < b.visited_at ? 1 : -1;
-        return b.id.localeCompare(a.id);
-    });
+    const selfLog = [...(page?.self_log ?? [])].sort(compareVisitRecords);
     for (const row of selfLog) {
         for (const photo of row.photos) addEntry(photo.url, 'your photo', row.entry_id);
     }

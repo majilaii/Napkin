@@ -1,3 +1,4 @@
+import { countDatedVisitsSince, entryOrderDate, latestKnownVisit } from '../_shared/visitDates.ts';
 /**
  * User Profile Edge Function — TICKET-020
  *
@@ -179,7 +180,7 @@ type DiaryRow = {
     photo_url: string | null;
     rating: number | null;
     note: string | null;
-    visited_at: string;
+    visited_at: string | null;
     created_at: string;
     // TICKET-044: present only for self-view when the entry is part of a merged round.
     // Public diary NEVER includes round_kind — Tables are private.
@@ -344,11 +345,9 @@ async function fetchStats(supabase: any, targetId: string, includePrivate = fals
     const dimensionAvgs = computeDimensionAvgs(rows);
 
     const yearStart = `${new Date().getFullYear()}-01-01`;
-    let logsThisYear = 0;
+    const logsThisYear = countDatedVisitsSince(rows, yearStart);
     let reviewsCount = 0;
     for (const r of rows) {
-        const visited = (r.visited_at ?? r.created_at ?? '') as string;
-        if (visited >= yearStart) logsThisYear++;
         if (typeof r.content === 'string' && r.content.trim().length > 0) reviewsCount++;
     }
 
@@ -417,7 +416,6 @@ async function fetchRecentlyLogged(supabase: any, targetId: string): Promise<Res
         .neq('visibility', 'private')
         .not('restaurant_id', 'is', null)
         .not('rating', 'is', null)
-        .order('visited_at', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(200);
     if (error) throw error;
@@ -488,7 +486,7 @@ async function fetchTablePreviews(
             .eq('table_id', tableId)
             .neq('visibility', 'private')
             .not('rating', 'is', null)
-            .order('visited_at', { ascending: false })
+            .order('visited_at', { ascending: false, nullsFirst: false })
             .order('created_at', { ascending: false });
         if (entryErr) throw entryErr;
 
@@ -518,7 +516,7 @@ async function fetchTablePreviews(
             table_name: tableNameMap.get(tableId) || 'Table',
             avg,
             visit_count: ratedRows.length,
-            last_entry_at: mostRecent ? (mostRecent.visited_at ?? mostRecent.created_at) : null,
+            last_entry_at: mostRecent ? mostRecent.visited_at : null,
             last_entry_restaurant_name: lastRestaurantName,
             last_entry_rating: mostRecent?.rating ?? null,
         });
@@ -565,29 +563,31 @@ async function buildPicksFromIds(
     // liked / has_review fold across ALL the author's entries for the pick (not just
     // rated ones) — a curated pick may be liked or reviewed without a number.
     // review_entry_id = id of the most-recent entry that has written content.
-    const agg = new Map<string, { max_rating: number | null; visit_count: number; last_visited_at: string | null; liked: boolean; has_review: boolean; review_entry_id: string | null; review_at: string | null }>();
+    const agg = new Map<string, { max_rating: number | null; visit_count: number; last_visited_at: string | null; order_at: string; liked: boolean; has_review: boolean; review_entry_id: string | null; review_at: string | null }>();
     for (const e of (entries ?? []) as any[]) {
         const rid = e.restaurant_id as string;
         const rating = e.rating != null ? Number(e.rating) : null;
-        const visited = (e.visited_at ?? e.created_at) as string;
+        const visited = (e.visited_at ?? null) as string | null;
+        const orderedAt = entryOrderDate(e);
         const liked = e.liked === true;
         const hasReview = typeof e.content === 'string' && e.content.trim().length > 0;
         const ex = agg.get(rid);
         if (!ex) {
             agg.set(rid, {
-                max_rating: rating, visit_count: 1, last_visited_at: visited, liked, has_review: hasReview,
+                max_rating: rating, visit_count: 1, last_visited_at: visited, order_at: orderedAt, liked, has_review: hasReview,
                 review_entry_id: hasReview ? e.id : null,
-                review_at: hasReview ? visited : null,
+                review_at: hasReview ? orderedAt : null,
             });
         } else {
             if (rating != null) ex.max_rating = ex.max_rating != null ? Math.max(ex.max_rating, rating) : rating;
             ex.visit_count += 1;
-            if (!ex.last_visited_at || visited > ex.last_visited_at) ex.last_visited_at = visited;
+            ex.last_visited_at = latestKnownVisit(ex.last_visited_at, visited);
+            if (orderedAt > ex.order_at) ex.order_at = orderedAt;
             ex.liked = ex.liked || liked;
             ex.has_review = ex.has_review || hasReview;
-            if (hasReview && (!ex.review_at || visited > ex.review_at)) {
+            if (hasReview && (!ex.review_at || orderedAt > ex.review_at)) {
                 ex.review_entry_id = e.id;
-                ex.review_at = visited;
+                ex.review_at = orderedAt;
             }
         }
     }
@@ -691,6 +691,7 @@ async function fetchTopFour(
         max_rating: number;
         visit_count: number;
         last_visited_at: string | null;
+        order_at: string;
         liked: boolean;
         has_review: boolean;
         review_entry_id: string | null;
@@ -701,7 +702,8 @@ async function fetchTopFour(
     for (const e of (entries ?? []) as any[]) {
         const rid = e.restaurant_id as string;
         const rating = Number(e.rating);
-        const visited = (e.visited_at ?? e.created_at) as string;
+        const visited = (e.visited_at ?? null) as string | null;
+        const orderedAt = entryOrderDate(e);
         const liked = e.liked === true;
         const hasReview = typeof e.content === 'string' && e.content.trim().length > 0;
         const existing = buckets.get(rid);
@@ -711,22 +713,22 @@ async function fetchTopFour(
                 max_rating: rating,
                 visit_count: 1,
                 last_visited_at: visited,
+                order_at: orderedAt,
                 liked,
                 has_review: hasReview,
                 review_entry_id: hasReview ? e.id : null,
-                review_at: hasReview ? visited : null,
+                review_at: hasReview ? orderedAt : null,
             });
         } else {
             existing.max_rating = Math.max(existing.max_rating, rating);
             existing.visit_count += 1;
-            if (!existing.last_visited_at || visited > existing.last_visited_at) {
-                existing.last_visited_at = visited;
-            }
+            existing.last_visited_at = latestKnownVisit(existing.last_visited_at, visited);
+            if (orderedAt > existing.order_at) existing.order_at = orderedAt;
             existing.liked = existing.liked || liked;
             existing.has_review = existing.has_review || hasReview;
-            if (hasReview && (!existing.review_at || visited > existing.review_at)) {
+            if (hasReview && (!existing.review_at || orderedAt > existing.review_at)) {
                 existing.review_entry_id = e.id;
-                existing.review_at = visited;
+                existing.review_at = orderedAt;
             }
         }
     }
@@ -735,9 +737,9 @@ async function fetchTopFour(
         .sort((a, b) => {
             if (a.max_rating !== b.max_rating) return b.max_rating - a.max_rating;
             if (a.visit_count !== b.visit_count) return b.visit_count - a.visit_count;
-            const al = a.last_visited_at ?? '';
-            const bl = b.last_visited_at ?? '';
-            return al < bl ? 1 : al > bl ? -1 : 0;
+            const al = a.order_at;
+            const bl = b.order_at;
+            return al < bl ? 1 : al > bl ? -1 : a.restaurant_id.localeCompare(b.restaurant_id);
         })
         .slice(0, 4);
 
@@ -828,13 +830,15 @@ async function fetchRegulars(
         rating_sum: number;
         rating_count: number;
         last_visited_at: string | null;
+        order_at: string;
     };
 
     const buckets = new Map<string, Bucket>();
     for (const e of (entries ?? []) as any[]) {
         const rid = e.restaurant_id as string;
         const rating = e.rating != null ? Number(e.rating) : null;
-        const visited = (e.visited_at ?? e.created_at) as string;
+        const visited = (e.visited_at ?? null) as string | null;
+        const orderedAt = entryOrderDate(e);
         const existing = buckets.get(rid);
         if (!existing) {
             buckets.set(rid, {
@@ -843,6 +847,7 @@ async function fetchRegulars(
                 rating_sum: rating ?? 0,
                 rating_count: rating != null ? 1 : 0,
                 last_visited_at: visited,
+                order_at: orderedAt,
             });
         } else {
             existing.visit_count += 1;
@@ -850,9 +855,8 @@ async function fetchRegulars(
                 existing.rating_sum += rating;
                 existing.rating_count += 1;
             }
-            if (!existing.last_visited_at || visited > existing.last_visited_at) {
-                existing.last_visited_at = visited;
-            }
+            existing.last_visited_at = latestKnownVisit(existing.last_visited_at, visited);
+            if (orderedAt > existing.order_at) existing.order_at = orderedAt;
         }
     }
 
@@ -860,9 +864,9 @@ async function fetchRegulars(
         .filter((b) => b.visit_count >= 3)
         .sort((a, b) => {
             if (a.visit_count !== b.visit_count) return b.visit_count - a.visit_count;
-            const al = a.last_visited_at ?? '';
-            const bl = b.last_visited_at ?? '';
-            return al < bl ? 1 : al > bl ? -1 : 0;
+            const al = a.order_at;
+            const bl = b.order_at;
+            return al < bl ? 1 : al > bl ? -1 : a.restaurant_id.localeCompare(b.restaurant_id);
         })
         .slice(0, limit);
 
@@ -954,13 +958,15 @@ async function fetchSpots(
         rating_sum: number;
         rating_count: number;
         last_visited_at: string | null;
+        order_at: string;
     };
 
     const buckets = new Map<string, Bucket>();
     for (const e of (entries ?? []) as any[]) {
         const rid = e.restaurant_id as string;
         const rating = e.rating != null ? Number(e.rating) : null;
-        const visited = (e.visited_at ?? e.created_at) as string;
+        const visited = (e.visited_at ?? null) as string | null;
+        const orderedAt = entryOrderDate(e);
         const existing = buckets.get(rid);
         if (!existing) {
             buckets.set(rid, {
@@ -969,6 +975,7 @@ async function fetchSpots(
                 rating_sum: rating ?? 0,
                 rating_count: rating != null ? 1 : 0,
                 last_visited_at: visited,
+                order_at: orderedAt,
             });
         } else {
             existing.visit_count += 1;
@@ -976,17 +983,16 @@ async function fetchSpots(
                 existing.rating_sum += rating;
                 existing.rating_count += 1;
             }
-            if (!existing.last_visited_at || visited > existing.last_visited_at) {
-                existing.last_visited_at = visited;
-            }
+            existing.last_visited_at = latestKnownVisit(existing.last_visited_at, visited);
+            if (orderedAt > existing.order_at) existing.order_at = orderedAt;
         }
     }
 
     const ordered = Array.from(buckets.values())
         .sort((a, b) => {
-            const al = a.last_visited_at ?? '';
-            const bl = b.last_visited_at ?? '';
-            return al < bl ? 1 : al > bl ? -1 : 0;
+            const al = a.order_at;
+            const bl = b.order_at;
+            return al < bl ? 1 : al > bl ? -1 : a.restaurant_id.localeCompare(b.restaurant_id);
         })
         .slice(0, limit);
 
@@ -1074,7 +1080,7 @@ async function fetchDiary(
             photo_url: e.photo_url ?? e.restaurant_photo_url ?? null,
             rating: e.rating,
             note: e.content ?? null,
-            visited_at: e.visited_at ?? e.created_at,
+            visited_at: e.visited_at ?? null,
             created_at: e.created_at,
         };
 

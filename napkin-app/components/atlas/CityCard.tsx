@@ -44,7 +44,8 @@ function textureForCity(cityName: string): readonly [string, string] {
     return [t[0], t[1]] as const;
 }
 
-function formatLastVisit(isoDate: string): string {
+function formatLastVisit(isoDate: string | null): string {
+    if (!isoDate) return 'no date';
     const d = new Date(isoDate);
     return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
@@ -79,7 +80,7 @@ export function CityCard({
     });
     const showHero = !!hero.url;
 
-    const meta = `${city.spot_count} spot${city.spot_count !== 1 ? 's' : ''} · ${city.member_count} of us · last ${formatLastVisit(city.last_visit_at)}`;
+    const meta = `${city.spot_count} spot${city.spot_count !== 1 ? 's' : ''} · ${city.member_count} of us · ${city.last_visit_at ? `last ${formatLastVisit(city.last_visit_at)}` : 'no date'}`;
 
     return (
         <PressableScale onPress={onPress} haptic="light" scaleTo={0.97}>

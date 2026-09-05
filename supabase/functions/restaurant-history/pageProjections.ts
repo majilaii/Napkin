@@ -13,7 +13,10 @@ export type SelfLogRow = {
     source: 'solo' | 'supper';
     rating: number | null;
     note: string | null;
-    visited_at: string;
+    visited_at: string | null;
+    created_at: string;
+    is_bare: boolean;
+    supper_id: string | null;
     companions: string[];
     photos: SelfLogPhoto[];
 };
@@ -29,7 +32,8 @@ export type TableNoteRow = {
     };
     rating: number | null;
     note: string;
-    visited_at: string;
+    visited_at: string | null;
+    created_at: string;
 };
 
 export type TableMembershipPair = {
@@ -57,23 +61,39 @@ function one<T>(value: T | T[] | null | undefined): T | null {
     return value ?? null;
 }
 
-function sortProjectionRows<T extends { visited_at: string }>(
+function sortProjectionRows<T extends { created_at: string }>(
     rows: T[],
     idFor: (row: T) => string,
 ): T[] {
     return rows.sort((a, b) => {
-        if (a.visited_at !== b.visited_at) {
-            return a.visited_at < b.visited_at ? 1 : -1;
+        if (a.created_at !== b.created_at) {
+            return a.created_at < b.created_at ? 1 : -1;
         }
         return idFor(b).localeCompare(idFor(a));
     });
 }
 
 function photosForEntry(entry: any): SelfLogPhoto[] {
-    return ((entry.entry_photos ?? []) as any[])
+    const photos = ((entry.entry_photos ?? []) as any[])
         .filter((photo) => typeof photo?.id === 'string' && typeof photo?.photo_url === 'string')
         .sort((a, b) => Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0))
         .map((photo) => ({ id: photo.id as string, url: photo.photo_url as string }));
+    if (entry.photo_url && !photos.some((photo) => photo.url === entry.photo_url)) {
+        photos.unshift({ id: `hero:${entry.id}`, url: entry.photo_url });
+    }
+    return photos;
+}
+
+/** Advisory UI state; undo must repeat these checks under the writer's lock. */
+export function isBareVisit(entry: any): boolean {
+    return entry.visited_at == null && entry.rating == null
+        && ['content', 'dish_description', 'cooked_by', 'photo_url'].every((key) => !entry[key]?.trim())
+        && ['vibe_rating', 'flavor_rating', 'service_rating', 'value_rating', 'value_profile',
+            'table_id', 'table_night_id', 'supper_id'].every((key) => entry[key] == null)
+        && entry.liked !== true
+        && ['entry_photos', 'entry_tables'].every((key) => !(entry[key]?.length))
+        && ['entry_companions', 'entry_participants'].every((key) =>
+            !(entry[key] ?? []).some((person: any) => person.user_id !== entry.user_id));
 }
 
 async function companionsFor(
@@ -100,12 +120,15 @@ export async function loadSelfLog(
     const { data: authoredEntries, error: entriesError } = await supabase
         .from('entries')
         .select(`
-            id,
+            id, user_id,
             rating,
             content,
             visited_at,
             created_at,
             table_night_id,
+            supper_id, table_id, liked, dish_description, cooked_by, value_profile,
+            vibe_rating, flavor_rating, service_rating, value_rating, photo_url,
+            entry_tables(entry_id), entry_companions(user_id), entry_participants(user_id),
             entry_photos(id, photo_url, sort_order)
         `)
         .eq('user_id', viewerId)
@@ -156,6 +179,9 @@ export async function loadSelfLog(
                 rating: entry.rating ?? null,
                 note: entry.content ?? null,
                 visited_at: (mergedNight.revealed_at ?? mergedNight.created_at) as string,
+                created_at: entry.created_at as string,
+                is_bare: false,
+                supper_id: entry.supper_id ?? null,
                 companions: await companionsFor(
                     supabase,
                     viewerId,
@@ -174,7 +200,10 @@ export async function loadSelfLog(
             source: 'solo',
             rating: entry.rating ?? null,
             note: entry.content ?? null,
-            visited_at: (entry.visited_at ?? entry.created_at) as string,
+            visited_at: entry.visited_at ?? null,
+            created_at: entry.created_at as string,
+            is_bare: isBareVisit(entry) && !roundId,
+            supper_id: entry.supper_id ?? null,
             companions: [],
             photos: photosForEntry(entry),
         };
@@ -212,6 +241,9 @@ export async function loadSelfLog(
             rating: take.rating ?? null,
             note: take.notes ?? null,
             visited_at: (night.revealed_at ?? night.created_at) as string,
+            created_at: night.created_at as string,
+            is_bare: false,
+            supper_id: null,
             companions,
             photos: [],
         }))];
@@ -309,7 +341,8 @@ export async function loadTableNotes(
             },
             rating: entry.rating ?? null,
             note: entry.content as string,
-            visited_at: (entry.visited_at ?? entry.created_at) as string,
+            visited_at: entry.visited_at ?? null,
+            created_at: entry.created_at as string,
         };
     });
 

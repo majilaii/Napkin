@@ -40,7 +40,7 @@ export type LedgerCandidate = {
     id: string;
     user_id: string;
     restaurant_id: string;
-    rating: number;
+    rating: number | null;
     visited_at: string | null;
     created_at: string;
 };
@@ -354,8 +354,9 @@ export function createSupabaseLedgerReader(
                 .select('id, user_id, restaurant_id, rating, visited_at, created_at')
                 // LAW: cohort filtering happens before fn_visible_entry_ids.
                 .in('user_id', request.userIds)
-                .not('restaurant_id', 'is', null)
-                .not('rating', 'is', null);
+                .not('restaurant_id', 'is', null);
+            // Any known prior visit prevents claiming a first visit, even if unrated.
+            if (request.category !== 'lookback') query = query.not('rating', 'is', null);
 
             query = request.branch === 'visited'
                 ? query.not('visited_at', 'is', null)
@@ -366,7 +367,9 @@ export function createSupabaseLedgerReader(
                 query = query.eq('restaurant_id', request.restaurantId);
             }
             if (request.start) query = query.gte(dateColumn, request.start);
-            query = query.lt(dateColumn, request.end);
+            if (request.category !== 'lookback' || request.branch !== 'created') {
+                query = query.lt(dateColumn, request.end);
+            }
             if (request.after) {
                 query = query.or(buildLedgerKeysetFilter(dateColumn, request.after));
             }
@@ -426,25 +429,14 @@ async function readWindowForChunk(
     metrics: LedgerQueryMetrics,
     restaurantId?: string,
 ): Promise<LedgerCandidate[]> {
-    const [visited, created] = await Promise.all([
-        readBranchToExhaustion(reader, {
-            category,
-            branch: 'visited',
-            userIds,
-            restaurantId,
-            start,
-            end,
-        }, metrics),
-        readBranchToExhaustion(reader, {
-            category,
-            branch: 'created',
-            userIds,
-            restaurantId,
-            start,
-            end,
-        }, metrics),
-    ]);
-    return [...visited, ...created];
+    return readBranchToExhaustion(reader, {
+        category,
+        branch: 'visited',
+        userIds,
+        restaurantId,
+        start,
+        end,
+    }, metrics);
 }
 
 async function readLookbackForChunk(
@@ -772,15 +764,20 @@ async function loadLedgerForCohort(
     // LAW: SQL never groups MIN over ungated rows. The first eligible visit is
     // computed only now, in memory, after the single union visibility gate.
     const firstVisitByUserRestaurant = new Map<string, string>();
+    const unknownHistory = new Set<string>();
     for (const row of visibleLookback) {
         const key = `${row.user_id}\u0000${row.restaurant_id}`;
-        const date = candidateDate(row);
+        if (row.visited_at == null) {
+            unknownHistory.add(key);
+            continue;
+        }
+        const date = row.visited_at;
         const current = firstVisitByUserRestaurant.get(key);
         if (!current || date < current) firstVisitByUserRestaurant.set(key, date);
     }
     const newPlaces = new Map<string, number>();
     for (const [key, firstVisit] of firstVisitByUserRestaurant) {
-        if (firstVisit < bounds.monthStart || firstVisit >= bounds.snapshotEnd) continue;
+        if (unknownHistory.has(key) || firstVisit < bounds.monthStart || firstVisit >= bounds.snapshotEnd) continue;
         const userId = key.split('\u0000')[0];
         newPlaces.set(userId, (newPlaces.get(userId) ?? 0) + 1);
     }

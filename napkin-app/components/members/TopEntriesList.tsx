@@ -14,7 +14,8 @@ interface TopEntriesListProps {
     entries: TopEntry[];
 }
 
-function relativeDate(dateString: string): string {
+function relativeDate(dateString: string | null): string {
+    if (!dateString) return 'no date';
     const date = new Date(dateString);
     if (isNaN(date.getTime())) return dateString;
     const diffMs = Date.now() - date.getTime();

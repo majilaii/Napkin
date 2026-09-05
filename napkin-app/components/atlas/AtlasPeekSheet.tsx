@@ -44,7 +44,8 @@ const SHEET_MAX_HEIGHT = Math.round(SCREEN_HEIGHT * 0.62);
 
 // ── Date formatting ───────────────────────────────────────────────────────────
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | null): string {
+    if (!iso) return 'no date';
     try {
         const d = new Date(iso);
         return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });

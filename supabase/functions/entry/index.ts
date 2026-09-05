@@ -8,6 +8,7 @@ import { emitFriendLogged } from '../_shared/notify.ts';
 import { coerceClientNonce } from '../_shared/uuid.ts';
 import { filterMutualCompanionIds } from '../_shared/companions.ts';
 import { normalizeMergeImagePayload } from './mergeImagePayload.ts';
+import { handleVisitAction } from './visits.ts';
 
 /**
  * Entry Edge Function
@@ -48,9 +49,10 @@ async function fetchSupperSuggestion(
     supabase: any,
     userId: string,
     restaurantId: string,
-    visitedAt: string,
+    visitedAt: string | null,
     entryId: string,
 ): Promise<SupperSuggestion | null> {
+    if (!visitedAt) return null;
     try {
         const { data, error } = await supabase.rpc('fn_supper_stitch_suggestion', {
             p_user: userId,
@@ -201,14 +203,15 @@ serve(async (req) => {
                     if (entry.restaurant_id !== restaurantId) continue;
                     if (entry.user_id === user.id) continue;
                     if (entry.table_night_id !== null) continue;
-                    const entryDate = new Date(entry.visited_at ?? entry.created_at).getTime();
+                    if (!entry.visited_at) continue;
+                    const entryDate = new Date(entry.visited_at).getTime();
                     if (Math.abs(composerDate - entryDate) > windowMs) continue;
 
                     filtered.push({
                         id: entry.id,
                         user_id: entry.user_id,
                         rating: entry.rating ?? null,
-                        visited_at: entry.visited_at ?? entry.created_at,
+                        visited_at: entry.visited_at,
                         created_at: entry.created_at,
                         // Author profile filled in below (entries has no FK to profiles
                         // to embed, so we batch-fetch the chosen candidate's profile).
@@ -476,6 +479,8 @@ serve(async (req) => {
 
         if (req.method === 'POST') {
             const body = await req.json();
+            const visitResponse = await handleVisitAction(supabase, user.id, body);
+            if (visitResponse) return visitResponse;
             console.log('entry function called with body:', JSON.stringify(body));
 
             // ── upsert_restaurant action ───────────────────────────────────
@@ -1833,7 +1838,7 @@ serve(async (req) => {
                             supabase,
                             user.id,
                             dedupRestaurantId,
-                            existingEntry?.visited_at ?? visitedAtValue,
+                            existingEntry ? existingEntry.visited_at : null,
                             entryId,
                         )
                         : null;

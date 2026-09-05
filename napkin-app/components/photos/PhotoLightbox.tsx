@@ -12,6 +12,7 @@ import {
     Modal,
     View,
     Image,
+    Text,
     ScrollView,
     Pressable,
     StyleSheet,
@@ -19,7 +20,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '@/constants/theme';
+import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface Props {
@@ -27,9 +28,10 @@ interface Props {
     photos: string[];
     initialIndex: number;
     onClose: () => void;
+    caption?: string;
 }
 
-export function PhotoLightbox({ visible, photos, initialIndex, onClose }: Props) {
+export function PhotoLightbox({ visible, photos, initialIndex, onClose, caption }: Props) {
     const { width } = useWindowDimensions();
     const insets = useSafeAreaInsets();
     const scheme = useColorScheme() ?? 'light';
@@ -75,7 +77,12 @@ export function PhotoLightbox({ visible, photos, initialIndex, onClose }: Props)
                     ))}
                 </ScrollView>
 
-                {photos.length > 1 ? (
+                {caption ? (
+                    <View style={[styles.caption, { bottom: insets.bottom + 24 }]} pointerEvents="none">
+                        <Text style={[Type.caption, { color: palette.textOnImage }]}>{index + 1} / {photos.length}</Text>
+                        <Text style={[Type.caption, { color: palette.textOnImageMuted, textAlign: 'center' }]}>{caption}</Text>
+                    </View>
+                ) : photos.length > 1 ? (
                     <View style={[styles.dots, { bottom: insets.bottom + 24 }]}>
                         {photos.map((_, i) => (
                             <View
@@ -109,5 +116,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         gap: 6,
     },
+    caption: { position: 'absolute', left: 24, right: 24, alignItems: 'center', gap: 8 },
     dot: { width: 6, height: 6, borderRadius: 3 },
 });

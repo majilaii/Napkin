@@ -78,7 +78,7 @@ async function fetchMySoloEntries(userId: string): Promise<SoloShareActivity[]> 
         dish_description: r.dish_description,
         liked: r.liked ?? false,
         is_shared: r.is_shared ?? false,
-        visited_at: r.visited_at ?? r.created_at,
+        visited_at: r.visited_at,
         created_at: r.created_at,
         sort_date: r.visited_at ?? r.created_at,
         photo_url: r.photo_url,

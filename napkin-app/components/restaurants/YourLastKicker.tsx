@@ -11,13 +11,14 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface Props {
-    date: string;           // ISO date string
+    date: string | null;           // ISO date string
     rating: number | null;
 }
 
 type Palette = typeof Colors.light;
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | null): string {
+    if (!iso) return 'no date';
     try {
         const d = new Date(iso);
         return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });

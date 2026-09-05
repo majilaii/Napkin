@@ -128,7 +128,7 @@ function FeedNoteRow({ row, onLongPress, showDivider }: Props) {
                         >
                             {actor}
                         </Text>
-                        <Text style={[Type.feedMeta, { color: palette.textMuted }]}>· {rating > 0 ? 'tried' : 'noted'}</Text>
+                        <Text style={[Type.feedMeta, { color: palette.textMuted }]}>· {entryVerb(row, rating)}</Text>
                         <View style={styles.metaSpacer} />
                         <Text style={[Type.feedMeta, { color: palette.textFaint }]}>{time}</Text>
                     </View>
@@ -238,7 +238,7 @@ function CompressedCard({ row, onLongPress }: Props) {
                     <Text style={[Type.feedMetaStrong, { color: palette.text }]}>
                         {actor}
                     </Text>
-                    {` · ${rating > 0 ? 'tried' : 'noted'}`}
+                    {` · ${entryVerb(row, rating)}`}
                 </Text>
                 <Text style={[Type.feedMeta, { color: palette.textFaint }]}>{time}</Text>
             </View>
@@ -316,6 +316,7 @@ function LedgerRow({ row, onLongPress, showDivider }: Props) {
                 <Text numberOfLines={1} style={[Type.feedMetaStrong, { color: palette.text }]}>
                     {firstName}
                 </Text>
+                {rating <= 0 ? <Text style={[Type.feedMeta, { color: palette.textMuted }]}>been to</Text> : null}
                 {rating > 0 && (
                     <Text
                         testID="feed-ledger-rating"
@@ -342,11 +343,15 @@ function LedgerRow({ row, onLongPress, showDivider }: Props) {
     );
 }
 
+function entryVerb(row: FriendFeedRow, rating: number): string {
+    return rating > 0 ? 'tried' : row.content?.trim() || row.photos.length ? 'noted' : 'been to';
+}
+
 function entryAccessibilityLabel(row: FriendFeedRow, rating: number, includeContent: boolean, actor: string): string {
     const restaurantName = row.restaurant?.name ?? 'somewhere';
     return [
         actor,
-        rating > 0 ? 'tried' : 'noted',
+        entryVerb(row, rating),
         restaurantName,
         rating > 0 ? rating.toFixed(1) : null,
         includeContent ? row.content?.trim() : null,
