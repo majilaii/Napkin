@@ -14,6 +14,7 @@ const mockToast = jest.fn();
 const mockRefetchBatch = jest.fn();
 const mockRefetchChecks = jest.fn();
 let mockChecks: any[] = [];
+let mockBackgroundRefetching = false;
 
 jest.mock('react-native', () => {
     const ReactModule = require('react');
@@ -79,6 +80,7 @@ jest.mock('@/hooks/search/usePersistPlace', () => ({
 jest.mock('@/hooks/wishlist/useImportBatch', () => ({
     useImportBatch: () => ({
         isLoading: false,
+        isRefetching: mockBackgroundRefetching,
         refetch: mockRefetchBatch,
         data: {
             job: {
@@ -121,7 +123,7 @@ jest.mock('@/hooks/wishlist/useAddSpotToBatch', () => ({
 jest.mock('@/components/lists', () => ({ AddToListSheet: 'AddToListSheet' }));
 jest.mock('@/components/wishlist/ImportChecks', () => ({ ImportChecks: 'ImportChecks' }));
 jest.mock('@/hooks/imports/useCompletenessRetries', () => ({
-    useExhaustedCompletenessItems: () => ({ data: mockChecks, isLoading: false, isError: false, refetch: mockRefetchChecks }),
+    useExhaustedCompletenessItems: () => ({ data: mockChecks, isLoading: false, isError: false, isRefetching: mockBackgroundRefetching, refetch: mockRefetchChecks }),
 }));
 jest.mock('@/components/wishlist/PlacePickerModal', () => ({
     PlacePickerModal: 'PlacePickerModal',
@@ -163,13 +165,28 @@ describe('/imports/[jobId] place persistence', () => {
         mockRefetchBatch.mockReset();
         mockRefetchChecks.mockReset();
         mockChecks = [];
+        mockBackgroundRefetching = false;
     });
 
-    it('refreshes both saved identities and outstanding checks from the matching feedback', () => {
+    it('shows refresh progress only for an explicit refresh and waits for both queries', async () => {
+        mockBackgroundRefetching = true;
+        let finishBatch!: () => void;
+        let finishChecks!: () => void;
+        mockRefetchBatch.mockImplementation(() => new Promise<void>((resolve) => { finishBatch = resolve; }));
+        mockRefetchChecks.mockImplementation(() => new Promise<void>((resolve) => { finishChecks = resolve; }));
         const renderer = renderScreen();
+        expect(renderer.root.findByType('FlatList').props.refreshing).toBe(false);
+        expect(renderer.root.findByType('ImportChecks').props.refreshingPlaces).toBe(false);
         act(() => renderer.root.findByType('ImportChecks').props.onRefreshPlaces());
         expect(mockRefetchBatch).toHaveBeenCalledTimes(1);
         expect(mockRefetchChecks).toHaveBeenCalledTimes(1);
+        expect(renderer.root.findByType('FlatList').props.refreshing).toBe(true);
+        expect(renderer.root.findByType('ImportChecks').props.refreshingPlaces).toBe(true);
+        await act(async () => { finishBatch(); });
+        expect(renderer.root.findByType('FlatList').props.refreshing).toBe(true);
+        await act(async () => { finishChecks(); });
+        expect(renderer.root.findByType('FlatList').props.refreshing).toBe(false);
+        expect(renderer.root.findByType('ImportChecks').props.refreshingPlaces).toBe(false);
         act(() => renderer.unmount());
     });
 
