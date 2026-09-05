@@ -11,6 +11,7 @@ const mockPersistPlace = jest.fn(async (_placeId: string): Promise<string> => PE
 const mockRepoint = jest.fn(async (_input: { item_id: string; restaurant_id: string }) => undefined);
 const mockAddSpot = jest.fn(async (_input: { restaurant_id: string }) => undefined);
 const mockToast = jest.fn();
+let mockChecks: any[] = [];
 
 jest.mock('react-native', () => {
     const ReactModule = require('react');
@@ -19,12 +20,14 @@ jest.mock('react-native', () => {
         renderItem,
         ListHeaderComponent,
         ListEmptyComponent,
+        ListFooterComponent,
         ...props
     }: {
         data: unknown[];
         renderItem: (info: { item: unknown; index: number }) => React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
         ListEmptyComponent?: React.ReactNode;
+        ListFooterComponent?: React.ReactNode;
     }) => ReactModule.createElement(
         'FlatList',
         props,
@@ -32,6 +35,7 @@ jest.mock('react-native', () => {
         ...(data.length > 0
             ? data.map((item, index) => renderItem({ item, index }))
             : [ListEmptyComponent]),
+        ListFooterComponent,
     );
     FlatList.displayName = 'FlatList';
 
@@ -112,6 +116,10 @@ jest.mock('@/hooks/wishlist/useAddSpotToBatch', () => ({
     useAddSpotToBatch: () => ({ mutateAsync: mockAddSpot, isPending: false }),
 }));
 jest.mock('@/components/lists', () => ({ AddToListSheet: 'AddToListSheet' }));
+jest.mock('@/components/wishlist/ImportChecks', () => ({ ImportChecks: 'ImportChecks' }));
+jest.mock('@/hooks/imports/useCompletenessRetries', () => ({
+    useExhaustedCompletenessItems: () => ({ data: mockChecks, isLoading: false, isError: false }),
+}));
 jest.mock('@/components/wishlist/PlacePickerModal', () => ({
     PlacePickerModal: 'PlacePickerModal',
 }));
@@ -149,6 +157,18 @@ describe('/imports/[jobId] place persistence', () => {
         mockRepoint.mockReset().mockResolvedValue(undefined);
         mockAddSpot.mockReset().mockResolvedValue(undefined);
         mockToast.mockReset();
+        mockChecks = [];
+    });
+
+    it('shows checks for this batch once, keeping unrelated checks out of the page', () => {
+        mockChecks = [
+            { id: 'check-1', job_id: 'job-1', restaurant_id: '22222222-2222-4222-8222-222222222222' },
+            { id: 'check-2', job_id: 'other-job', restaurant_id: 'other-restaurant' },
+        ];
+        const renderer = renderScreen();
+        expect(renderer.root.findByType('ImportChecks').props.items).toEqual([mockChecks[0]]);
+        expect(renderer.root.findAllByProps({ accessibilityLabel: 'open Wrong place' })).toHaveLength(0);
+        act(() => renderer.unmount());
     });
 
     it('persists a provider result before repointing with the Napkin UUID', async () => {

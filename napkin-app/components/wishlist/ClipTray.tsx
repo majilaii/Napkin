@@ -7,19 +7,21 @@
  * likewise push only from the tray Modal's dismissal completion (with the
  * Android requestAnimationFrame fallback), so back returns to Places closed.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     KeyboardAvoidingView,
+    Keyboard,
     Modal,
     Platform,
     Pressable,
-    ScrollView,
     StyleSheet,
     Text,
     TextInput,
     View,
     type DimensionValue,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,6 +31,8 @@ import { validateUrl } from '@/lib/urlValidation';
 import { isVideoImportAvailable } from '@/modules/media-extract';
 import type { ClipLedgerRow } from './clipTrayUtils';
 import { ImportLinkSheet } from './ImportLinkSheet';
+import { SnapSheet, type SnapSheetHandle } from '@/components/sheets/SnapSheet';
+import { FULL, HALF, PEEK } from '@/components/sheets/snapSheetMath';
 
 type Palette = typeof Colors.light;
 type ImportOpenTo = 'menu' | 'video';
@@ -58,6 +62,13 @@ export function ClipTray({
     const [importOpen, setImportOpen] = useState(false);
     const [pendingUrl, setPendingUrl] = useState<string | undefined>();
     const [pendingOpenTo, setPendingOpenTo] = useState<ImportOpenTo>('menu');
+    const sheetRef = useRef<SnapSheetHandle>(null);
+    const [trayHeight, setTrayHeight] = useState(0);
+    const [expanded, setExpanded] = useState(false);
+    const trayMetrics = useMemo(() => ({
+        peekRatio: 0, peekFloor: 0, halfRatio: 0.64,
+        fullRatio: trayHeight > 0 ? Math.min(0.96, 1 - insets.top / trayHeight) : 0.96,
+    }), [insets.top, trayHeight]);
     const pendingRouteRef = useRef<string | null>(null);
     const androidFrameRef = useRef<number | null>(null);
     const inputOk = validateUrl(inputValue.trim()).ok;
@@ -108,36 +119,69 @@ export function ClipTray({
             onRequestClose={dismissTray}
             onDismiss={finishNavigation}
         >
-            <Pressable
-                style={[styles.backdrop, { backgroundColor: palette.overlay }]}
-                onPress={dismissTray}
-            >
+            <GestureHandlerRootView style={styles.backdrop}>
+                <Pressable
+                    style={[StyleSheet.absoluteFill, { backgroundColor: palette.overlay }]}
+                    onPress={dismissTray}
+                    accessibilityLabel="close clip tray"
+                    accessibilityRole="button"
+                />
                 <KeyboardAvoidingView
                     style={styles.keyboardLayer}
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    pointerEvents="box-none"
                 >
-                    <Pressable
-                        style={[
-                            styles.sheet,
-                            {
-                                backgroundColor: palette.background,
-                                paddingBottom: Math.max(insets.bottom, Spacing.lg),
-                            },
-                            Shadow.ambient,
-                        ]}
-                        onPress={(event) => event.stopPropagation()}
+                    <View
+                        style={styles.keyboardLayer}
+                        pointerEvents="box-none"
+                        onLayout={(event) => setTrayHeight(event.nativeEvent.layout.height)}
                     >
-                        <View style={[styles.grabber, { backgroundColor: palette.ruleWarmNib }]} />
-                        <ScrollView
+                    {visible && trayHeight > 0 ? <SnapSheet
+                        H={trayHeight}
+                        sheetRef={sheetRef}
+                        initialSnap={HALF}
+                        metrics={trayMetrics}
+                        backgroundColor={palette.background}
+                        handleColor={palette.ruleWarmNib}
+                        onSettle={(snap) => { setExpanded(snap === FULL); if (snap === PEEK) dismissTray(); }}
+                        onPanStart={Keyboard.dismiss}
+                        renderHeader={() => (
+                            <View style={styles.trayHeader}>
+                                <Text style={[Type.sectionTitle, { color: palette.text }]}>Clip tray</Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={expanded ? 'collapse clip tray' : 'expand clip tray'}
+                                    accessibilityState={{ expanded }}
+                                    onPress={() => sheetRef.current?.snapTo(expanded ? HALF : FULL)}
+                                    style={styles.headerAction}
+                                >
+                                    <Text style={[Type.metadata, { color: palette.primary }]}>
+                                        {expanded ? 'less' : 'expand'}
+                                    </Text>
+                                    <Ionicons name={expanded ? 'chevron-down-outline' : 'chevron-up-outline'} size={20} color={palette.primary} />
+                                </Pressable>
+                                <Pressable onPress={dismissTray} style={styles.headerAction}
+                                    accessibilityRole="button" accessibilityLabel="done with clip tray">
+                                    <Text style={[Type.metadata, { color: palette.textMuted }]}>done</Text>
+                                </Pressable>
+                            </View>
+                        )}
+                        renderContent={({ scrollEnabled, onScroll }) => (
+                        <Animated.ScrollView
                             showsVerticalScrollIndicator={false}
                             keyboardShouldPersistTaps="handled"
-                            contentContainerStyle={styles.content}
+                            keyboardDismissMode="on-drag"
+                            scrollEnabled={scrollEnabled}
+                            onScroll={onScroll}
+                            scrollEventThrottle={16}
+                            contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}
                         >
                             <StartBand
                                 palette={palette}
                                 inputValue={inputValue}
                                 inputOk={inputOk}
                                 onChangeText={setInputValue}
+                                onFocus={() => sheetRef.current?.snapTo(FULL)}
                                 onOpenLink={openLink}
                                 onOpenVideo={VIDEO_IMPORT_AVAILABLE
                                     ? () => openImport('video')
@@ -151,8 +195,10 @@ export function ClipTray({
                                 isEmpty={isEmpty}
                                 onOpenRoute={openRoute}
                             />
-                        </ScrollView>
-                    </Pressable>
+                        </Animated.ScrollView>
+                        )}
+                    /> : null}
+                    </View>
                 </KeyboardAvoidingView>
 
                 <ImportLinkSheet
@@ -161,7 +207,7 @@ export function ClipTray({
                     initialUrl={pendingUrl}
                     openTo={pendingOpenTo}
                 />
-            </Pressable>
+            </GestureHandlerRootView>
         </Modal>
     );
 }
@@ -171,6 +217,7 @@ function StartBand({
     inputValue,
     inputOk,
     onChangeText,
+    onFocus,
     onOpenLink,
     onOpenVideo,
     onOpenScreenshot,
@@ -179,6 +226,7 @@ function StartBand({
     inputValue: string;
     inputOk: boolean;
     onChangeText: (value: string) => void;
+    onFocus: () => void;
     onOpenLink: () => void;
     onOpenVideo?: () => void;
     onOpenScreenshot: () => void;
@@ -193,8 +241,9 @@ function StartBand({
                 <TextInput
                     value={inputValue}
                     onChangeText={onChangeText}
+                    onFocus={onFocus}
                     onSubmitEditing={onOpenLink}
-                    placeholder="paste a tiktok, maps, or restaurant link"
+                    placeholder="paste a place link"
                     placeholderTextColor={palette.textFaint}
                     style={[
                         Type.body,
@@ -366,7 +415,7 @@ function LedgerRow({
                     ]}
                 />
                 <View style={styles.rowCopy}>
-                    <Text style={[styles.rowTitle, { color: palette.text }]} numberOfLines={1}>
+                    <Text style={[styles.rowTitle, { color: palette.text }]} numberOfLines={2}>
                         {row.title}
                     </Text>
                     <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={1}>
@@ -376,7 +425,7 @@ function LedgerRow({
                 {row.needsLook > 0 ? (
                     <View style={[styles.needsChip, { backgroundColor: palette.tertiaryFixed }]}>
                         <Text style={[Type.labelSmall, styles.needsChipLabel, { color: palette.amberInk }]}>
-                            {`${row.needsLook} need a look`}
+                            {`${row.needsLook} to check`}
                         </Text>
                     </View>
                 ) : row.route ? (
@@ -417,20 +466,21 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     keyboardLayer: {
-        justifyContent: 'flex-end',
+        flex: 1,
     },
-    sheet: {
-        maxHeight: '86%',
-        borderTopLeftRadius: Radius.xl,
-        borderTopRightRadius: Radius.xl,
-        paddingTop: Spacing.sm,
+    trayHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: Spacing.lg,
     },
-    grabber: {
-        width: 40,
-        height: 5,
-        borderRadius: Radius.sm,
-        alignSelf: 'center',
-        opacity: 0.5,
+    headerAction: {
+        minHeight: 44,
+        minWidth: 44,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: Spacing.xs,
     },
     content: {
         paddingHorizontal: Spacing.lg,

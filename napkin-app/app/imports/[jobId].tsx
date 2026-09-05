@@ -24,6 +24,8 @@ import { useToast } from '@/providers/ToastProvider';
 import { AddToListSheet } from '@/components/lists';
 import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
 import { queryKeys } from '@/lib/queryKeys';
+import { useExhaustedCompletenessItems } from '@/hooks/imports/useCompletenessRetries';
+import { ImportChecks } from '@/components/wishlist/ImportChecks';
 import {
     importSourceLabel,
     spotCountLabel,
@@ -42,7 +44,9 @@ export default function ImportBatchScreen() {
     const toast = useToast();
 
     const { jobId } = useLocalSearchParams<{ jobId: string }>();
-    const { data, isLoading } = useImportBatch(jobId);
+    const { data, isLoading, isError, refetch } = useImportBatch(jobId);
+    const checks = useExhaustedCompletenessItems(user?.id, { pollMs: 60_000 });
+    const batchChecks = checks.data.filter((item) => item.job_id === jobId);
 
     const remove = useWishlistRemove(user?.id);
     const repoint = useRepointWishlistItem(user?.id, jobId);
@@ -93,6 +97,8 @@ export default function ImportBatchScreen() {
     const items = allItems.filter(
         (it) => it.restaurant != null && !removed.has(it.restaurant.id),
     );
+    const checkingIds = new Set(batchChecks.map((item) => item.restaurant_id));
+    const savedItems = items.filter((item) => !checkingIds.has(item.restaurant!.id));
 
     const handleRemove = useCallback(
         (it: ImportBatchItem) => {
@@ -123,7 +129,7 @@ export default function ImportBatchScreen() {
     );
 
     const subtitle = job
-        ? `${importSourceLabel(job.source)} · ${spotCountLabel(items.length)} · ${relativeTime(job.created_at)}`
+        ? [job.source ? importSourceLabel(job.source) : null, spotCountLabel(items.length), relativeTime(job.created_at)].filter(Boolean).join(' · ')
         : '';
 
     return (
@@ -131,8 +137,9 @@ export default function ImportBatchScreen() {
             <Stack.Screen options={{ headerShown: false }} />
 
             <View style={[styles.topBar, { paddingTop: insets.top + Spacing.sm }]}>
-                <Pressable onPress={() => router.back()} hitSlop={12} accessibilityLabel="back">
-                    <Ionicons name="chevron-back" size={20} color={palette.textMuted} />
+                <Pressable onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="back">
+                    <Ionicons name="chevron-back" size={24} color={palette.textMuted} />
+                    <Text style={[Type.body, { color: palette.textMuted }]}>back</Text>
                 </Pressable>
             </View>
 
@@ -140,20 +147,38 @@ export default function ImportBatchScreen() {
                 <View style={styles.center}>
                     <ActivityIndicator color={palette.primary} />
                 </View>
+            ) : isError ? (
+                <View style={styles.center}>
+                    <Text style={[Type.body, { color: palette.text }]}>Could not load this clip.</Text>
+                    <Pressable onPress={() => void refetch()} style={styles.addRow} accessibilityRole="button">
+                        <Text style={[Type.body, { color: palette.primary }]}>try again</Text>
+                    </Pressable>
+                </View>
             ) : !job ? (
                 <View style={styles.center}>
-                    <Text style={[styles.emptyText, { color: palette.text }]}>not found</Text>
+                    <Text style={[styles.emptyText, { color: palette.text }]}>This clip could not be found.</Text>
                 </View>
             ) : (
                 <FlatList
-                    data={items}
+                    data={savedItems}
                     keyExtractor={(it) => it.id}
                     contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + Spacing.xxl }]}
                     ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
                     ListHeaderComponent={
                         <View style={styles.header}>
-                            <Text style={[styles.title, { color: palette.text }]}>This import</Text>
+                            <Text style={[styles.title, { color: palette.text }]}>Review clip</Text>
                             <Text style={[styles.subtitle, { color: palette.textMuted }]}>{subtitle}</Text>
+                            {user ? <ImportChecks key={`${user.id}:${jobId}`} userId={user.id}
+                                items={batchChecks} savedRestaurantIds={new Set(items.map((item) => item.restaurant!.id))}
+                                palette={palette} loading={checks.isLoading} error={checks.isError}
+                                hasMore={!!checks.hasNextPage} loadingMore={checks.isFetchingNextPage}
+                                onRetryLoad={() => void checks.refetch()}
+                                onLoadMore={() => void checks.fetchNextPage()} /> : null}
+                            {savedItems.length > 0 ? <Text style={[Type.sectionKicker, styles.savedHeading, { color: palette.textMuted }]}>saved places</Text> : null}
+                        </View>
+                    }
+                    ListFooterComponent={
+                        <View style={styles.footer}>
                             <Pressable
                                 onPress={() => {
                                     setPickerError(null);
@@ -162,19 +187,20 @@ export default function ImportBatchScreen() {
                                 hitSlop={8}
                                 style={styles.addRow}
                                 accessibilityLabel="add a missing spot"
+                                accessibilityRole="button"
                             >
                                 <Ionicons name="add" size={18} color={palette.primary} />
-                                <Text style={[styles.addLabel, { color: palette.primary }]}>add a spot</Text>
+                                <Text style={[styles.addLabel, { color: palette.primary }]}>add a missing place</Text>
                             </Pressable>
                         </View>
                     }
-                    ListEmptyComponent={
+                    ListEmptyComponent={items.length === 0 && batchChecks.length === 0 ? (
                         <View style={styles.empty}>
                             <Text style={[styles.emptyText, { color: palette.textMuted }]}>
-                                — no spots left in this import
+                                No saved places in this clip.
                             </Text>
                         </View>
-                    }
+                    ) : null}
                     renderItem={({ item: it }) => {
                         const r = it.restaurant!;
                         const meta = [r.city, r.cuisine].filter(Boolean).join(' · ');
@@ -185,14 +211,15 @@ export default function ImportBatchScreen() {
                                     style={({ pressed }) => [styles.rowBody, { opacity: pressed ? 0.75 : 1 }]}
                                     accessibilityLabel={`open ${r.name}`}
                                 >
-                                    <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
+                                    <Text style={[styles.name, { color: palette.text }]}>
                                         {r.name}
                                     </Text>
                                     {meta ? (
-                                        <Text style={[styles.meta, { color: palette.textMuted }]} numberOfLines={1}>
+                                        <Text style={[styles.meta, { color: palette.textMuted }]}>
                                             {meta}
                                         </Text>
                                     ) : null}
+                                    <Text style={[Type.metadata, styles.viewLabel, { color: palette.primary }]}>view place →</Text>
                                 </Pressable>
 
                                 <View style={styles.actions}>
@@ -203,22 +230,28 @@ export default function ImportBatchScreen() {
                                         }}
                                         hitSlop={8}
                                         accessibilityLabel={`fix ${r.name}`}
+                                        accessibilityRole="button"
+                                        style={styles.textAction}
                                     >
-                                        <Ionicons name="swap-horizontal-outline" size={20} color={palette.textMuted} />
+                                        <Text style={[Type.metadata, { color: palette.primary }]}>change place</Text>
                                     </Pressable>
                                     <Pressable
                                         onPress={() => setAddTarget({ id: r.id, name: r.name })}
                                         hitSlop={8}
                                         accessibilityLabel={`add ${r.name} to a list`}
+                                        accessibilityRole="button"
+                                        style={styles.textAction}
                                     >
-                                        <Ionicons name="list-outline" size={20} color={palette.textMuted} />
+                                        <Text style={[Type.metadata, { color: palette.primary }]}>add to list</Text>
                                     </Pressable>
                                     <Pressable
                                         onPress={() => handleRemove(it)}
                                         hitSlop={8}
                                         accessibilityLabel={`remove ${r.name} from wishlist`}
+                                        accessibilityRole="button"
+                                        style={styles.textAction}
                                     >
-                                        <Ionicons name="close-circle-outline" size={20} color={palette.textMuted} />
+                                        <Text style={[Type.metadata, { color: palette.textMuted }]}>remove pin</Text>
                                     </Pressable>
                                 </View>
                             </View>
@@ -239,13 +272,14 @@ export default function ImportBatchScreen() {
 
             <PlacePickerModal
                 visible={picker !== null}
-                title={picker?.kind === 'fix' ? 'fix this spot' : 'add a spot'}
+                title={picker?.kind === 'fix' ? 'Change saved place' : 'Add a missing place'}
                 subtitle={
                     picker?.kind === 'fix'
                         ? `replace ${picker.item.restaurant?.name ?? 'this spot'}`
                         : 'search and add it to this import'
                 }
                 initialQuery={picker?.kind === 'fix' ? (picker.item.restaurant?.name ?? '') : ''}
+                city={picker?.kind === 'fix' ? picker.item.restaurant?.city : undefined}
                 busy={pickerBusy}
                 errorText={pickerError}
                 onSelect={handlePick}
@@ -262,26 +296,29 @@ export default function ImportBatchScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    topBar: { paddingHorizontal: 22, paddingBottom: Spacing.xs },
+    topBar: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.xs },
+    backButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: Spacing.xs },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xl },
     header: { paddingTop: Spacing.sm, paddingBottom: Spacing.md },
     title: { ...Type.screenTitle },
-    subtitle: { fontFamily: 'Manrope_500Medium', fontSize: 13, marginTop: 6 },
-    addRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: Spacing.md },
-    addLabel: { fontFamily: 'Manrope_700Bold', fontSize: 13, letterSpacing: 0.3 },
-    listContent: { paddingHorizontal: 22 },
+    subtitle: { ...Type.metadata, marginTop: Spacing.xs },
+    addRow: { flexDirection: 'row', alignItems: 'center', minHeight: 48, gap: Spacing.xs },
+    addLabel: { ...Type.body },
+    listContent: { paddingHorizontal: Spacing.lg },
+    savedHeading: { marginTop: Spacing.lg },
+    footer: { paddingTop: Spacing.md },
     row: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: Spacing.md,
+        gap: Spacing.sm,
         borderRadius: Radius.md,
         paddingVertical: Spacing.md,
         paddingHorizontal: Spacing.md,
     },
-    rowBody: { flex: 1, gap: 2 },
-    name: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 17, lineHeight: 21 },
-    meta: { fontFamily: 'Manrope_500Medium', fontSize: 12 },
-    actions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, flexShrink: 0 },
+    rowBody: { gap: Spacing.xs },
+    name: { ...Type.editorialTitle },
+    meta: { ...Type.metadata },
+    viewLabel: { marginTop: Spacing.xs },
+    actions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, justifyContent: 'space-between' },
+    textAction: { minHeight: 44, justifyContent: 'center' },
     empty: { paddingTop: Spacing.xxl, alignItems: 'center' },
-    emptyText: { fontFamily: 'Newsreader_400Regular_Italic', fontSize: 18, lineHeight: 24 },
+    emptyText: { ...Type.body },
 });
