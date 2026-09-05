@@ -29,8 +29,11 @@ type RecordInput = { client_nonce: string; restaurant_id?: string; restaurant?: 
 export function useRestaurantVisitMutations(userId: string | undefined, pageId: string) {
     const qc = useQueryClient();
     const patchPage = (entry: SavedVisit | null, entryId: string, restaurantId: string) => {
-        qc.setQueriesData<RestaurantPageData>({ queryKey: queryKeys.restaurants.pageAll() }, (page) => {
-            if (!page?.restaurant || (![restaurantId, pageId].includes(page.restaurant.id) && page.restaurant.external_id !== pageId)) return page;
+        for (const [key, page] of qc.getQueriesData<RestaurantPageData>({ queryKey: queryKeys.restaurants.pageAll() })) {
+            // A Places route has restaurant:null until its first write. The
+            // exact route key still identifies the page that needs this visit.
+            if (!page || (key[1] !== pageId && (!page.restaurant ||
+                (page.restaurant.id !== restaurantId && page.restaurant.external_id !== pageId)))) continue;
             const old = page.self_log ?? [];
             const previous = old.find((row) => row.entry_id === entryId);
             const rows = old.filter((row) => row.entry_id !== entryId);
@@ -41,8 +44,8 @@ export function useRestaurantVisitMutations(userId: string | undefined, pageId: 
                     ? [{ id: `hero:${entry.id}`, url: entry.photo_url }, ...entry.photos] : entry.photos, is_bare: entry.is_bare,
                 supper_id: entry.supper_id ?? null, companions: previous?.companions ?? [],
             } as SelfLogRow);
-            return { ...page, self_log: rows, personal: { ...page.personal, visit_count: rows.length } };
-        });
+            qc.setQueryData(key, { ...page, self_log: rows, personal: { ...page.personal, visit_count: rows.length } });
+        }
     };
     const reconcile = (entryId: string, restaurantId: string) => {
         if (!userId) return;

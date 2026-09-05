@@ -31,7 +31,9 @@ BEGIN
     WHERE tm.table_id = p_table_id AND tm.member_id = p_actor_user_id
     FOR UPDATE;
 
-    SELECT e.* INTO v_entry_a FROM public.entries e WHERE e.id = p_entry_a_id;
+    -- Lock the candidate until the round is linked so a date edit cannot
+    -- invalidate this check between the read and the membership insert.
+    SELECT e.* INTO v_entry_a FROM public.entries e WHERE e.id = p_entry_a_id FOR UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'round_conflict: entry_a not found' USING ERRCODE = 'P0001';
     END IF;

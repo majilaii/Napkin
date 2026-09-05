@@ -49,3 +49,5 @@ CREATE TABLE public.wishlist_items (id uuid PRIMARY KEY DEFAULT gen_random_uuid(
 CREATE FUNCTION public.is_table_member(p_table uuid, p_user uuid) RETURNS boolean LANGUAGE sql AS $$
     SELECT EXISTS (SELECT 1 FROM public.table_members WHERE table_id=p_table AND member_id=p_user);
 $$;
+
+CREATE UNIQUE INDEX idx_entry_photos_entry_sort ON public.entry_photos(entry_id, sort_order);

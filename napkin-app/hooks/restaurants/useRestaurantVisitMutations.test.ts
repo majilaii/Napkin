@@ -41,3 +41,20 @@ it('keeps an existing visit after a refused undo; successful undo removes only i
     expect(client.getQueryData<any>(pageKey).self_log.map((v: any) => v.id)).toEqual(['v1']);
     client.clear();
 });
+
+
+it('shows the authoritative visit on an unpersisted Places page while its refresh has not completed', async () => {
+    const routeId = 'places-external-id';
+    const key = queryKeys.restaurants.page(routeId);
+    const { result, client } = renderHookWithClient(() => useRestaurantVisitMutations('u', routeId));
+    client.setQueryData(key, { restaurant: null, self_log: [], personal: { visit_count: 0, average: null } });
+    const unrelated = queryKeys.restaurants.page('other-ghost');
+    client.setQueryData(unrelated, { restaurant: null, self_log: [], personal: { visit_count: 0 } });
+    const refresh = jest.spyOn(client, 'invalidateQueries').mockImplementation(() => new Promise(() => {}));
+    invoke.mockResolvedValueOnce({ entry: visit('v1') });
+    await act(async () => { await result.current.record.mutateAsync({ restaurant_id: 'r', client_nonce: 'nonce' }); });
+    expect(client.getQueryData<any>(key)).toMatchObject({ self_log: [{ entry_id: 'v1', visited_at: null }], personal: { visit_count: 1 } });
+    expect(client.getQueryData<any>(unrelated).self_log).toEqual([]);
+    refresh.mockRestore();
+    client.clear();
+});

@@ -95,6 +95,7 @@ DECLARE
     v_photo_ids uuid[] := '{}'::uuid[];
     v_photo_id uuid;
     v_order integer := 0;
+    v_sort_offset integer;
     v_date timestamptz;
     v_legacy_hero text;
     v_current_hero text;
@@ -194,6 +195,12 @@ BEGIN
             WHERE p.entry_id = p_entry_id AND NOT (p.id = ANY(v_photo_ids)) ORDER BY p.sort_order, p.id LOOP
             PERFORM public.fn_delete_entry_photo(p_user_id, v_photo.id);
         END LOOP;
+        -- The real schema has a unique (entry_id, sort_order) index. Move
+        -- retained rows above the occupied range before assigning final slots.
+        SELECT COALESCE(max(p.sort_order), -1) + 1 INTO v_sort_offset
+        FROM public.entry_photos p WHERE p.entry_id = p_entry_id;
+        UPDATE public.entry_photos p SET sort_order = p.sort_order + v_sort_offset
+        WHERE p.entry_id = p_entry_id;
         FOREACH v_photo_id IN ARRAY v_photo_ids LOOP
             UPDATE public.entry_photos p SET sort_order = v_order WHERE p.id = v_photo_id;
             v_order := v_order + 1;

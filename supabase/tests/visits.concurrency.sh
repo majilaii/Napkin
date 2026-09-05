@@ -71,3 +71,34 @@ for scenario in scalar share; do
   [[ "$(query "SELECT count(*) FROM public.entries WHERE id='$VISIT_ENTRY'")" == 1 ]]
   echo "PASS visits concurrency: undo waits for concurrent $scenario enrichment and refuses deletion"
 done
+
+# A candidate's author can clear its date while another member links a meal.
+# The candidate row must be locked and the committed date rechecked first.
+VISIT_ACTOR=95110000-0000-4000-8000-000000000002
+VISIT_TABLE=95310000-0000-4000-8000-000000000001
+query "INSERT INTO auth.users(id) VALUES('$VISIT_ACTOR');
+INSERT INTO public.profiles(user_id,display_name) VALUES('$VISIT_ACTOR','Merge actor') ON CONFLICT DO NOTHING;
+INSERT INTO public.table_members(table_id,member_id,role) VALUES
+('$VISIT_TABLE','$VISIT_USER','admin'),('$VISIT_TABLE','$VISIT_ACTOR','member');" >/dev/null
+VISIT_ENTRY="$(query "SELECT public.fn_record_visit('$VISIT_USER','$VISIT_RESTAURANT',gen_random_uuid())->>'id'")"
+query "SELECT public.fn_save_visit('$VISIT_USER','$VISIT_ENTRY','{\"visited_at\":\"2020-01-01T00:00:00Z\"}');
+INSERT INTO public.entry_tables(entry_id,table_id) VALUES('$VISIT_ENTRY','$VISIT_TABLE');" >/dev/null
+start_barrier
+"${PSQL[@]}" -q -c "SET application_name='visit-race-clear-date'; BEGIN;
+SELECT public.fn_save_visit('$VISIT_USER','$VISIT_ENTRY','{\"visited_at\":null}');
+SELECT pg_advisory_xact_lock(95110001); COMMIT" >"$VISIT_RACE_TMP/clear-date.out" 2>&1 &
+VISIT_FIRST_PID=$!
+wait_query "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='visit-race-clear-date' AND wait_event_type='Lock')"
+"${PSQL[@]}" -q -c "SET application_name='visit-race-merge';
+SELECT public.fn_create_entry_and_merge_round('$VISIT_ACTOR','$VISIT_TABLE','$VISIT_RESTAURANT',
+'2020-01-01T00:00:00Z','$VISIT_ENTRY',jsonb_build_object('restaurant_id','$VISIT_RESTAURANT',
+'visited_at','2020-01-01T00:00:00Z','client_nonce',gen_random_uuid()),NULL)" >"$VISIT_RACE_TMP/merge.out" 2>&1 &
+VISIT_SECOND_PID=$!
+wait_query "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='visit-race-merge' AND wait_event_type='Lock')"
+release_barrier
+wait "$VISIT_FIRST_PID"
+if wait "$VISIT_SECOND_PID"; then echo 'Meal linked after candidate date was cleared' >&2; exit 1; fi
+rg -q 'visited_at outside 18h window' "$VISIT_RACE_TMP/merge.out"
+[[ "$(query "SELECT count(*) FROM public.entries WHERE user_id='$VISIT_ACTOR'")" == 0 ]]
+[[ "$(query "SELECT count(*) FROM public.round_entries WHERE entry_id='$VISIT_ENTRY'")" == 0 ]]
+echo 'PASS visits concurrency: meal linking waits for a candidate date edit and refuses an undated meal'
