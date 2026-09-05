@@ -500,7 +500,10 @@ Deno.test('buildMultiSystemPrompt: video + video text → noise block AND author
     });
 
     assertStringIncludes(prompt, 'VIDEO IMPORT MODE');
-    assertStringIncludes(prompt, 'inside the [video text] section are scene');
+    assertStringIncludes(prompt, 'are scene noise');
+    assertStringIncludes(prompt, 'location-pin prefix');
+    assertStringIncludes(prompt, '"* LOTTA"');
+    assertStringIncludes(prompt, 'An ordinary capitalized name elsewhere is NOT an end card');
     assertStringIncludes(prompt, 'subtitles of');
     assertStringIncludes(prompt, 'channel watermarks');
     assertStringIncludes(prompt, 'exhaustive and authoritative');
@@ -527,8 +530,8 @@ Deno.test('buildMultiSystemPrompt: caption-only video (no video text) drops the 
     // 100% of Instagram imports and every ASR-less TikTok land here: a noise
     // block written for a fused OCR channel must not suppress the ONE channel
     // those requests actually carry.
-    assertEquals(prompt.includes('[video text] section are scene'), false);
-    assertEquals(prompt.includes('incidental scene text, OMIT it'), false);
+    assertEquals(prompt.includes('location-pin prefix'), false);
+    assertEquals(prompt.includes('Bottle labels'), false);
 });
 
 Deno.test('buildMultiSystemPrompt: caption cap adds the count sentence and the numeric cap', async () => {
@@ -558,13 +561,8 @@ Deno.test('buildMultiSystemPrompt: photo block gains the caption authority rule 
     assertEquals(prompt.includes('VIDEO IMPORT MODE'), false);
 });
 
-Deno.test('buildMultiSystemPrompt: video WITHOUT caption → byte-equal to the zero-context prompt (review R1 fix)', async () => {
+Deno.test('buildMultiSystemPrompt: caption-free video retains noise and ending rules without caption authority', async () => {
     const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
-    // Old clients, the paste-a-link sheet and the shared-.mov branch fuse the
-    // caption inside extracted_text with NO caption field: no labels are
-    // painted, so labeled-section rules must be withheld entirely — otherwise
-    // the caption content is judged as OCR noise against an unsatisfiable
-    // "[caption]" whitelist.
     for (const cap of [6, 10, 12]) {
         const noCaption = buildMultiSystemPrompt(cap, {
             sourceKind: 'video',
@@ -572,6 +570,11 @@ Deno.test('buildMultiSystemPrompt: video WITHOUT caption → byte-equal to the z
             hasVideoText: true,
             captionCap: null,
         });
-        assertEquals(noCaption, buildMultiSystemPrompt(cap));
+        assertStringIncludes(noCaption, 'VIDEO IMPORT MODE');
+        assertStringIncludes(noCaption, 'No caption is required');
+        assertStringIncludes(noCaption, 'location-pin prefix');
+        assertStringIncludes(noCaption, 'Bottle labels');
+        assertEquals(noCaption.includes('exhaustive and authoritative'), false);
+        assertEquals(noCaption.includes('PHOTO CAROUSEL MODE'), false);
     }
 });

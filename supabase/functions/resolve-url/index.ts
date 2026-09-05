@@ -105,6 +105,11 @@ import { hasCompleteRestaurantFacts } from "../_shared/completeness.ts";
 // shared with handoff/share-page) so it pins against the CURRENT spot set, never a
 // stale client-sent list.
 import { loadHandoffWriteAuthorization } from "../handoff/snapshot.ts";
+import {
+  buildPlacesPayloadFromDb,
+  RESTAURANT_PLACE_SELECT,
+  reuseVerifiedRejectedPlace,
+} from "./verifiedPlaceReuse.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -647,7 +652,7 @@ function callImportPlacesSearch(
   internalSecret?: string,
   internalOwnerId?: string,
   locality?: { city?: string | null; area?: string | null },
-): Promise<{ candidates: PlacesPayload[]; typeRejected: boolean }> {
+): Promise<ImportPlaceSearchResult<PlacesPayload>> {
   return resolveImportPlaceSearch(() =>
     callPlacesSearch(
       query,
@@ -678,6 +683,7 @@ import {
   buildVerifiedUpsertInput,
   // TICKET-209: caption-authority fusion + cap derivation + route gate.
   buildVideoFusion,
+  canonicalVideoCacheText,
   dedupeSuccessfulRestaurantIds,
   deriveCaptionCap,
   detectSourceTypeFromHost,
@@ -685,6 +691,7 @@ import {
   exhaustedInlineRoute,
   expectedImportOwnerDecision,
   filterUnauthorizedTableIds,
+  type ImportPlaceSearchResult,
   type ImportResolutionDecision,
   isGhostExternalId,
   isGhostOnlyMode,
@@ -842,8 +849,8 @@ async function callPlacesDetails(
  *   then Places Details by id on miss (NEVER text-search for a place_id candidate).
  * - Otherwise: text search by name+city.
  * - Never-block: ordinary failures return { place: null, typeRejected: false }.
- * - A text-search top result outside the food/drink allowlist is distinguishable
- *   so callers can DROP it instead of turning it into a ghost.
+ * - A text-search top result outside the food/drink allowlist can only reuse an
+ *   exact verified DB identity. Otherwise preserve the type-rejected ghost path.
  */
 interface CandidatePlaceResolution {
   place: PlacesPayload | null;
@@ -893,7 +900,7 @@ async function resolveCandidateToPlace(
   if (candidate.google_place_id) {
     const { data: existing } = await supabase
       .from("restaurants")
-      .select("id, external_id, name, city, address, verification")
+      .select(RESTAURANT_PLACE_SELECT)
       .eq("external_id", candidate.google_place_id)
       .maybeSingle();
     if (existing) {
@@ -958,24 +965,35 @@ async function resolveCandidateToPlace(
   // same-name venues and ASR-denoised names without double-welding locality.
   const query = candidate.name;
   try {
-    const { candidates: results, typeRejected } = await callImportPlacesSearch(
-      query,
-      authHeader,
-      supabaseUrl,
-      supabaseAnonKey,
-      signal,
-      internalSecret,
-      internalOwnerId,
-      {
-        city: candidate.city,
-        area: (candidate as { area?: string | null }).area ?? null,
-      },
-    );
+    const { candidates: results, typeRejected, rejectedCandidate } =
+      await callImportPlacesSearch(
+        query,
+        authHeader,
+        supabaseUrl,
+        supabaseAnonKey,
+        signal,
+        internalSecret,
+        internalOwnerId,
+        {
+          city: candidate.city,
+          area: (candidate as { area?: string | null }).area ?? null,
+        },
+      );
     if (typeRejected) {
+      const existingPlace = await reuseVerifiedRejectedPlace(
+        candidate,
+        rejectedCandidate,
+        async (externalId) => await supabase
+          .from("restaurants")
+          .select(RESTAURANT_PLACE_SELECT)
+          .eq("external_id", externalId)
+          .abortSignal(signal)
+          .maybeSingle(),
+      );
       return {
-        place: null,
-        typeRejected: true,
-        decision: "no_result",
+        place: existingPlace,
+        typeRejected: existingPlace === null,
+        decision: existingPlace ? "matched" : "no_result",
         upstreamFailure: null,
       };
     }
@@ -997,34 +1015,6 @@ async function resolveCandidateToPlace(
   } catch (error) {
     return failedCandidateResolution(error);
   }
-}
-
-function buildPlacesPayloadFromDb(
-  row: any,
-  fallback: ExtractedCandidate,
-): PlacesPayload {
-  return {
-    id: row.external_id ?? "",
-    name: row.name ?? fallback.name,
-    formattedAddress: row.address ?? fallback.address,
-    city: row.city ?? fallback.city,
-    country: null,
-    latitude: null,
-    longitude: null,
-    categories: [],
-    cuisine: fallback.cuisine,
-    googleRating: null,
-    googleRatingCount: null,
-    priceLevel: null,
-    photoReference: null,
-    website: null,
-    link: null,
-    external_id: row.external_id ?? "",
-    location: {
-      address: row.address ?? undefined,
-      locality: row.city ?? undefined,
-    },
-  };
 }
 
 // ── Shared staged→Places resolution core (TICKET-152) ─────────────────────────
@@ -3679,7 +3669,7 @@ async function handleVideoText(
   // real ceiling. The cheap tier (TICKET-164 fast path) sends caption=desc +
   // extracted_text=transcript, so this fusion is still [desc, transcript] —
   // never double-fused (R6).
-  const { fullText, hasVideoText } = buildVideoFusion(caption, extractedText);
+  const { fullText, hasVideoText } = buildVideoFusion(caption, extractedText, photoContext !== undefined);
   // Derived from the caption BODY FIELD only (never the fused text, never OCR),
   // and never in photo mode — see deriveCaptionCap for the TICKET-204 rationale.
   // An INVALID photo context still counts as photo mode: it keeps today's
@@ -3687,10 +3677,8 @@ async function handleVideoText(
   const hasPhotoContext = photoContext !== undefined;
   const captionCap = deriveCaptionCap(caption, hasPhotoContext);
   const effectiveCap = captionCap ?? CAP;
-  // captionPresent gates the entire video prompt block: a no-caption body (old
-  // client / paste sheet / shared-.mov) has NO labeled sections painted, so it
-  // must run on the pre-209 generic prompt — labeled-section rules against
-  // unlabeled text would judge the fused caption as OCR noise.
+  // Only caption authority needs a caption. Scene-noise and final-reveal rules
+  // also apply to silent, caption-free videos.
   const captionPresent = typeof caption === "string" &&
     caption.trim().length > 0;
   const extractionContext: ExtractionContext = hasPhotoContext
@@ -3707,16 +3695,14 @@ async function handleVideoText(
   // Namespace photo rows by mode + validated count + candidate-cap contract.
   // Including the cap invalidates TICKET-195 rows that were already truncated to
   // slide count; otherwise a repeat import would bypass this fix via cache.
-  // TICKET-209: BOTH namespaces gain the `g2` extraction-contract token (the
-  // prompt's caption-authority/noise blocks changed video AND photo results),
-  // and the video namespace ALWAYS embeds the effective cap — including the
-  // default 12 — so a future cap-derivation change can never serve stale rows.
+  // Video g3 invalidates the previous scene-noise prompt. Photo fusion/prompt
+  // remain unchanged, including the legacy invalid-photo-context namespace.
   const cacheNamespace = photoSlideCount === null
-    ? `video:g2:cap${effectiveCap}`
+    ? `video:${hasPhotoContext ? "g2" : "g3"}:cap${effectiveCap}`
     : `photo:listicle-${CAP}:g2:${photoSlideCount}`;
   const hashBuf = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(`${cacheNamespace}:${fullText}`)
+    new TextEncoder().encode(`${cacheNamespace}:${hasPhotoContext ? fullText : canonicalVideoCacheText(fullText)}`)
       .buffer as ArrayBuffer,
   );
   const contentHash = Array.from(new Uint8Array(hashBuf))

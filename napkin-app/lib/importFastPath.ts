@@ -24,7 +24,8 @@ export type FastPathGate =
     | 'ghost' //             content: a candidate never resolved to a real Place
     | 'low_conf' //          content: a candidate resolved at 'low' confidence
     | 'stance' //            content: a candidate is neutral / warned / missing stance
-    | 'no_asr_ambiguous'; // structural: multi-candidate with no corroborating ASR
+    | 'no_asr_ambiguous' // structural: multi-candidate with no corroborating ASR
+    | 'caption_uncorroborated'; // text-only identity is not grounded in the caption
 
 /**
  * The CONTENT-reason rejections. R3: a content-reason reject that escalation could
@@ -37,6 +38,7 @@ const CONTENT_GATES: ReadonlySet<string> = new Set([
     'ghost',
     'low_conf',
     'stance',
+    'caption_uncorroborated',
 ]);
 
 /** True when the gate rejected for a content reason (feeds the R3 guard). */
@@ -47,7 +49,7 @@ export function isContentGate(gate: string): boolean {
 /** The candidate fields the gate reads — a structural subset of ResolvedCandidate. */
 export interface FastPathCandidate {
     restaurant_id: string | null;
-    restaurant: { external_id: string | null };
+    restaurant: { external_id: string | null; name?: string | null; city?: string | null };
     confidence: 'exact' | 'high' | 'low';
     stance?: 'recommended' | 'warned' | 'neutral' | null;
 }
@@ -60,6 +62,32 @@ export interface FastPathInput {
     /** RESERVED (kept for a future IG-ASR gate): no longer consulted —
      * TICKET-175 made the TikTok fast path single-candidate-only. */
     transcriptChars: number;
+    /** Required evidence for a TikTok to skip video OCR. */
+    caption?: string;
+}
+
+const GENERIC_VENUE_WORDS = new Set([
+    'the', 'and', 'restaurant', 'restaurante', 'restaurantes', 'cafe', 'caff',
+    'bar', 'pub', 'kitchen', 'deli', 'bakery', 'grill', 'house', 'asador',
+    'casa', 'trattoria', 'brasserie', 'bistro', 'ristorante', 'coffee', 'shop',
+]);
+
+function evidenceWords(text: string): string[] {
+    return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+}
+
+/** Matching a generic word or a city cannot justify skipping the actual video. */
+export function captionCorroboratesVenue(
+    caption: string | undefined,
+    venue: FastPathCandidate['restaurant'],
+): boolean {
+    if (!caption || !venue.name) return false;
+    const city = new Set(evidenceWords(venue.city ?? ''));
+    const distinctive = evidenceWords(venue.name)
+        .filter(word => word.length >= 4 && !GENERIC_VENUE_WORDS.has(word) && !city.has(word));
+    const captionWords = new Set(evidenceWords(caption));
+    return distinctive.length > 0 && distinctive.every(word => captionWords.has(word));
 }
 
 /**
@@ -112,6 +140,9 @@ export function evaluateFastPath(input: FastPathInput): FastPathGate {
     //    marker).
     if (provider === 'tiktok') {
         if (candidates.length !== 1) return 'no_asr_ambiguous';
+        if (!captionCorroboratesVenue(input.caption, candidates[0].restaurant)) {
+            return 'caption_uncorroborated';
+        }
     } else {
         const markerSatisfied = listCountRaw != null && candidates.length >= listCountRaw;
         if (candidates.length !== 1 && !markerSatisfied) return 'no_asr_ambiguous';

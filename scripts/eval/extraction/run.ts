@@ -12,7 +12,7 @@
  *   ANTHROPIC_API_KEY=sk-… npm run eval:extraction
  *   # optionally: EXTRACTION_MODEL=claude-sonnet-5 npm run eval:extraction
  *
- * Skips green when no key is set (safe for CI / pre-commit shells).
+ * Requires a key. A missing credential is not a successful model evaluation.
  * Deliberately OUTSIDE supabase/functions/ — the pre-commit deno pass runs
  * without --allow-net and must never hit the Anthropic API. The scoring rules
  * live in score.ts (pure, unit-tested by score.test.ts).
@@ -46,8 +46,8 @@ import { extractFromTextMulti } from '../../../supabase/functions/_shared/vision
 import { type Fixture, scoreFixture, toExtractionContext } from './score.ts';
 
 if (!Deno.env.get('ANTHROPIC_API_KEY')) {
-    console.log('eval:extraction — ANTHROPIC_API_KEY not set, skipping (export it to run).');
-    Deno.exit(0);
+    console.error('eval:extraction — NOT RUN: ANTHROPIC_API_KEY is not set.');
+    Deno.exit(2);
 }
 
 const model = Deno.env.get('EXTRACTION_MODEL') ?? '(default)';

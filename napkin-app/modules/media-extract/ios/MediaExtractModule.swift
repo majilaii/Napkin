@@ -22,12 +22,14 @@ public class MediaExtractModule: Module {
     // TICKET-176: bumped to 3 when extractFromImages was ADDED — the JS wrapper
     // calls it only on a >= 3 binary, else returns null so photo-slide OCR falls
     // back to the {url} resolve (a v2 binary lacks the function entirely).
+    // TICKET-245: v4 adds optional timestamped `frames` to the result, retaining
+    // the v2 seven-argument signature and legacy `ocr` field.
     Constants([
-      "apiVersion": 3
+      "apiVersion": 4
     ])
 
     // uri: file:// or absolute path to the picked/shared video.
-    // Returns { ocr: [String], transcript: String, durationSec: Double }.
+    // Returns legacy ocr/transcript/durationSec plus timestamped frame evidence.
     // TICKET-164: the trailing three params are the wall-clock budgets (nil → the
     // Self.default* fallbacks that mirror lib/importBudgets.ts). No stage can hang.
     AsyncFunction("extractFromVideo") {
@@ -37,13 +39,13 @@ public class MediaExtractModule: Module {
         throw Exception(name: "ERR_BAD_URI", description: "Could not resolve video uri: \(uri)")
       }
       let asset = AVURLAsset(url: url)
-      let cap = max(1, maxFrames ?? 60)
-      let rate = (fps ?? 1.0) > 0 ? (fps ?? 1.0) : 1.0
+      let cap = maxFrames ?? VideoFrameOCR.defaultMaxFrames
+      let rate = fps ?? VideoFrameOCR.defaultFPS
       let durationSec = CMTimeGetSeconds(asset.duration)
 
       // OCR under a wall-clock budget spanning frame GENERATION + the Vision pass.
       let ocrBudget = max(1000, ocrBudgetMs ?? Self.defaultOcrBudgetMs)
-      let ocr = try await Self.ocrFrames(asset: asset, fps: rate, maxFrames: cap, budgetMs: ocrBudget)
+      let frames = await VideoFrameOCR.extract(asset: asset, fps: rate, maxFrames: cap, budgetMs: ocrBudget)
 
       // STT: skipped entirely above the duration ceiling (its real-time tail
       // dominates wall clock; OCR still carries the spots), else bounded by a hard
@@ -56,7 +58,8 @@ public class MediaExtractModule: Module {
       }
 
       return [
-        "ocr": ocr,
+        "ocr": VideoFrameOCR.legacyLines(frames),
+        "frames": frames.map { ["timeSec": $0.timeSec, "lines": $0.lines] as [String: Any] },
         "transcript": transcript,
         "durationSec": durationSec.isFinite ? durationSec : 0,
       ]
@@ -71,7 +74,7 @@ public class MediaExtractModule: Module {
     //
     // Deliberately a fully synchronous loop inside the async function: there is
     // nothing async to bound (Vision's perform is synchronous per image), so NO
-    // continuation / generator / watchdog machinery is needed (unlike ocrFrames,
+    // continuation / generator / watchdog machinery is needed (unlike VideoFrameOCR,
     // which bounds AVAssetImageGenerator). A single wall-clock deadline is checked
     // BETWEEN images and the lines gathered so far are returned on expiry —
     // partial OCR still carries most spots.
@@ -80,7 +83,7 @@ public class MediaExtractModule: Module {
       let budget = max(1000, ocrBudgetMs ?? Self.defaultOcrBudgetMs)
       let deadline = Date().addingTimeInterval(Double(budget) / 1000.0)
       // Cross-image dedupe (persistent handles/watermarks repeat across slides),
-      // preserving first-seen order — same Set pattern as ocrFrames.
+      // preserving first-seen order — same Set pattern as VideoFrameOCR.
       var seen = Set<String>()
       var ordered: [String] = []
       for uri in uris {
@@ -223,7 +226,7 @@ public class MediaExtractModule: Module {
   // Used ONLY when a budget param arrives nil — the JS caller threads the
   // canonical values from lib/importBudgets.ts, which are authoritative. Kept in
   // sync with that file by hand (no shared source across the language boundary).
-  private static let defaultOcrBudgetMs = 45_000
+  private static let defaultOcrBudgetMs = VideoFrameOCR.defaultBudgetMs
   private static let defaultSttTimeoutMs = 90_000
   private static let defaultSttMaxDurationSec = 300
 
@@ -249,128 +252,6 @@ public class MediaExtractModule: Module {
       return URL(fileURLWithPath: uri)
     }
     return URL(string: uri)
-  }
-
-  // MARK: - Frame OCR
-
-  private static func ocrFrames(asset: AVURLAsset, fps: Double, maxFrames: Int, budgetMs: Int) async throws -> [String] {
-    // Synchronous duration — AVAsset.duration works on iOS 15 (the async
-    // load(.duration) API is iOS 16+; the app's deployment target is 15.1).
-    let totalSec = CMTimeGetSeconds(asset.duration)
-    guard totalSec.isFinite, totalSec > 0 else { return [] }
-
-    // TICKET-164 [R8]: ONE wall-clock deadline for the WHOLE stage — frame
-    // generation AND the Vision loop below. A long clip on a busy Neural Engine
-    // could otherwise stall either phase and hang the import; on expiry we cancel
-    // in-flight generation and return whatever lines we have (partial OCR still
-    // carries most spots).
-    let deadline = Date().addingTimeInterval(Double(budgetMs) / 1000.0)
-
-    // Spread up to `maxFrames` samples EVENLY across the whole clip so a spot in
-    // the last 10s is captured just like one in the first 10s (a fixed 1fps would
-    // otherwise blow past the cap and only cover the opening seconds).
-    let stepByRate = 1.0 / fps
-    let stepEven = totalSec / Double(maxFrames)
-    let step = max(stepByRate, stepEven)
-
-    var times: [NSValue] = []
-    var t = 0.0
-    while t < totalSec, times.count < maxFrames {
-      times.append(NSValue(time: CMTime(seconds: t, preferredTimescale: 600)))
-      t += step
-    }
-    if times.isEmpty { times.append(NSValue(time: .zero)) }
-
-    let generator = AVAssetImageGenerator(asset: asset)
-    generator.appliesPreferredTrackTransform = true
-    generator.requestedTimeToleranceBefore = CMTime(seconds: 0.4, preferredTimescale: 600)
-    generator.requestedTimeToleranceAfter = CMTime(seconds: 0.4, preferredTimescale: 600)
-    // Cap decode size — Vision is plenty accurate at ~1080px and it keeps OCR fast.
-    generator.maximumSize = CGSize(width: 1080, height: 1080)
-
-    // Frame generation under the deadline. `collected`/`remaining` are touched by
-    // the generator callback thread AND the watchdog thread, so an NSLock guards
-    // every access; the continuation resumes EXACTLY once (a double-resume on a
-    // CheckedContinuation is a hard crash) via the `resumed` check-and-set.
-    let images: [CGImage] = await withCheckedContinuation { (cont: CheckedContinuation<[CGImage], Never>) in
-      let lock = NSLock()
-      var resumed = false
-      var collected: [CGImage] = []
-      var remaining = times.count
-
-      func finish(_ result: [CGImage]) {
-        lock.lock()
-        if resumed { lock.unlock(); return }
-        resumed = true
-        lock.unlock()
-        cont.resume(returning: result)
-      }
-
-      // [review-1 Codex-6] Deadline already spent (e.g. the app was suspended
-      // between computing it and reaching here) → never START generation; an
-      // unstarted generator has nothing to cancel and no watchdog would bound it.
-      let remainingSec = deadline.timeIntervalSinceNow
-      if remainingSec <= 0 {
-        finish([])
-        return
-      }
-
-      // Watchdog: at the deadline, cancel in-flight generation + resume the
-      // partial. A DispatchWorkItem so normal completion CANCELS it — otherwise
-      // the closure retains every decoded frame until the deadline fires
-      // (review-1 NIT-1: up to 240 CGImages held ~42s after a fast pass).
-      let watchdog = DispatchWorkItem {
-        lock.lock(); let already = resumed; let snapshot = collected; lock.unlock()
-        if already { return }
-        generator.cancelAllCGImageGeneration()
-        finish(snapshot)
-      }
-      DispatchQueue.global().asyncAfter(deadline: .now() + remainingSec, execute: watchdog)
-
-      generator.generateCGImagesAsynchronously(forTimes: times) { _, image, _, result, _ in
-        lock.lock()
-        if result == .succeeded, let image = image { collected.append(image) }
-        remaining -= 1
-        let done = remaining == 0
-        let snapshot = collected
-        lock.unlock()
-        // A cancelled generation still fires per remaining time with .cancelled,
-        // so `remaining` reaches 0 either way; `finish` is idempotent.
-        if done {
-          watchdog.cancel()
-          finish(snapshot)
-          // [review-2 Codex-2] cancel() prevents EXECUTION but the queue still
-          // retains the cancelled closure — and its captured vars — until the
-          // deadline passes. Rebind `collected` so that capture stops pinning
-          // up to 240 decoded frames for the rest of the budget (`snapshot`
-          // carries them forward to the Vision loop, which is their real user).
-          lock.lock(); collected = []; lock.unlock()
-        }
-      }
-    }
-
-    // Dedupe exact repeats (handles, persistent captions) while preserving order.
-    // Also bounded by the SAME deadline — a 240-frame .accurate pass can itself
-    // outrun the budget; stop early and return the partial lines.
-    var seen = Set<String>()
-    var ordered: [String] = []
-    for cg in images {
-      if Date() >= deadline { break }
-      let req = VNRecognizeTextRequest()
-      req.recognitionLevel = .accurate
-      req.usesLanguageCorrection = true
-      let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-      try? handler.perform([req])
-      for obs in (req.results ?? []) {
-        guard let s = obs.topCandidates(1).first?.string else { continue }
-        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty, !seen.contains(trimmed) {
-          seen.insert(trimmed)
-          ordered.append(trimmed)
-        }
-      }
-    }
-    return ordered
   }
 
   // MARK: - Voiceover transcription (on-device when supported)

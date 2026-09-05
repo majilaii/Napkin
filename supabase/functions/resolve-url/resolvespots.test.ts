@@ -340,6 +340,7 @@ Deno.test('resolveImportPlaceSearch: non-venue top result is rejected and lower 
     assertEquals(result, {
         candidates: [],
         typeRejected: true,
+        rejectedCandidate: foundation,
     }, 'the top result is authoritative; scene-text junk must not fall through');
 });
 

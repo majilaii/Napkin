@@ -1,0 +1,29 @@
+{
+  "cap": 12,
+  "context": {
+    "source_kind": "video",
+    "caption_present": false,
+    "has_video_text": true
+  },
+  "fail_on_extras": true,
+  "min_recall": 1,
+  "name": "caption-free-ending-versus-scene-noise",
+  "source_url": "https://www.tiktok.com/@lifeofdden/video/7659003053483330849",
+  "notes": "Synthetic negative-control variant inspired by the founder clip; not a production capture. Remove all caption and speech, add a middle storefront and bottle label, retain an explicitly pin-prefixed ending. Only LOTTA should be extracted.",
+  "fused_text": "[video text]\n[on-screen text]\n[frame 2.0s]\nParis\n[frame 5.0s]\nABATILLES\n[frame 7.0s]\nNICOLAS\nVINS ET SPIRITUEUX\n[frame 15.6s; ending]\n* LOTTA",
+  "expected": [
+    {
+      "name": "LOTTA"
+    }
+  ],
+  "forbidden": [
+    {
+      "name": "Abatilles",
+      "why": "bottle label"
+    },
+    {
+      "name": "Nicolas",
+      "why": "middle storefront; no featured-venue evidence"
+    }
+  ]
+}

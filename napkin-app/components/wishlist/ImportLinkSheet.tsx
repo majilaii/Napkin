@@ -84,6 +84,7 @@ import {
 } from '@/lib/importProtocol';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
 import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
+import { buildVideoImportEvidence } from '@/lib/videoImportEvidence';
 import {
     buildImportEditMatchSearchBody,
     initialImportEditMatchQuery,
@@ -691,12 +692,9 @@ export function ImportLinkSheet({
         }
         setSheetState('video-extracting');
         try {
-            const { ocr, transcript } = await extractFromVideo(uri);
+            const evidence = await extractFromVideo(uri);
             if (videoReqRef.current !== myId) return; // cancelled / dismissed mid-extract
-            const extractedText = [ocr.join('\n'), transcript]
-                .filter((s) => s && s.trim())
-                .join('\n\n')
-                .trim();
+            const extractedText = buildVideoImportEvidence(evidence);
             if (!extractedText) {
                 setErrorCode('VIDEO_EMPTY');
                 setSheetState('error');

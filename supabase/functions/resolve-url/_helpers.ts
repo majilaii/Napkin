@@ -293,6 +293,8 @@ export interface ImportPlaceSearchResult<T> {
   candidates: T[];
   /** True only when a top result existed but failed the venue-type allowlist. */
   typeRejected: boolean;
+  /** Exact rejected identity, retained only for guarded verified-record reuse. */
+  rejectedCandidate?: T;
 }
 
 /** True when a Places result carries at least one allowed food/drink type. */
@@ -322,7 +324,7 @@ export async function resolveImportPlaceSearch<
   const top = candidates[0];
   if (!top) return { candidates, typeRejected: false };
   if (!hasAllowedImportPlaceType(top.categories)) {
-    return { candidates: [], typeRejected: true };
+    return { candidates: [], typeRejected: true, rejectedCandidate: top };
   }
   return { candidates, typeRejected: false };
 }
@@ -1021,11 +1023,13 @@ export interface VideoFusion {
  * section is non-empty, so the prompt never references a section that isn't
  * painted and `hasVideoText` always agrees with what the model actually sees.
  *
- * No caption → today's bare join (byte-identical to the pre-209 behaviour).
+ * Caption-free video still gets a channel label. Photo fusion keeps its
+ * existing pre-labelled document and cache contract.
  */
 export function buildVideoFusion(
   caption: string | null | undefined,
   extractedText: string | null | undefined,
+  preservePhotoFusion = false,
 ): VideoFusion {
   // typeof guards, not `?? ""`: the caption arrives straight off an untrusted
   // JSON body, and a non-string used to be harmlessly dropped by filter(Boolean).
@@ -1038,7 +1042,14 @@ export function buildVideoFusion(
     : "";
 
   if (!captionText) {
-    const fullText = videoText.slice(0, VIDEO_FUSION_CAP);
+    if (preservePhotoFusion) {
+      const fullText = videoText.slice(0, VIDEO_FUSION_CAP);
+      return { fullText, hasVideoText: fullText.length > 0 };
+    }
+    const header = "[video text]\n";
+    const fullText = videoText
+      ? header + preserveVideoTextEnding(videoText, VIDEO_FUSION_CAP - header.length)
+      : "";
     return { fullText, hasVideoText: fullText.length > 0 };
   }
 
@@ -1050,10 +1061,25 @@ export function buildVideoFusion(
   }
   return {
     fullText: `${captionBlock}${VIDEO_TEXT_HEADER}${
-      videoText.slice(0, remaining)
+      preservePhotoFusion
+        ? videoText.slice(0, remaining)
+        : preserveVideoTextEnding(videoText, remaining)
     }`,
     hasVideoText: true,
   };
+}
+
+/** Old clients send an unbounded mixed blob; never silently cut off its ending. */
+export function preserveVideoTextEnding(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const marker = "\n[... omitted text ...]\n";
+  const head = Math.floor((cap - marker.length) / 2);
+  return text.slice(0, head) + marker + text.slice(-(cap - marker.length - head));
+}
+
+/** Decode jitter must not invalidate otherwise identical extraction evidence. */
+export function canonicalVideoCacheText(text: string): string {
+  return text.replace(/^\[frame \d+(?:\.\d+)?s(; ending)?\]$/gm, "[frame$1]");
 }
 
 /**

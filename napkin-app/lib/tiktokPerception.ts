@@ -333,13 +333,22 @@ export async function downloadTikTokVideo(
     playAddr: string,
     pageUrl: string,
     timeoutMs: number = VIDEO_DOWNLOAD_TIMEOUT_MS,
+    signal?: AbortSignal,
+    // Injectable only for hermetic native-boundary tests. Production retains
+    // lazy filesystem loading, including that wait in the original deadline.
+    loadFileSystem: () => Promise<Pick<typeof import('expo-file-system/legacy'),
+        'cacheDirectory' | 'createDownloadResumable' | 'deleteAsync'>> =
+        () => import('expo-file-system/legacy'),
 ): Promise<string | null> {
-    if (timeoutMs <= 0) return null; // stage budget already spent → skip
+    if (timeoutMs <= 0 || signal?.aborted) return null;
+    const deadlineAt = Date.now() + timeoutMs;
     try {
-        const FileSystem = await import('expo-file-system/legacy');
+        const FileSystem = await loadFileSystem();
+        const remainingMs = deadlineAt - Date.now();
+        if (remainingMs <= 0 || signal?.aborted) return null;
         const dir = FileSystem.cacheDirectory;
         if (!dir) return null;
-        const uri = `${dir}tiktok-import-${Date.now()}.mp4`;
+        const uri = `${dir}tiktok-import-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;
 
         const task = FileSystem.createDownloadResumable(playAddr, uri, {
             headers: { 'User-Agent': MOBILE_UA, Referer: pageUrl },
@@ -347,20 +356,32 @@ export async function downloadTikTokVideo(
 
         let timedOut = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
+        let onAbort: (() => void) | undefined;
         const timeout = new Promise<null>((resolve) => {
-            timer = setTimeout(() => {
+            const stop = () => {
+                if (timedOut) return;
                 timedOut = true;
                 // Cancel the in-flight download; the raced downloadAsync then
                 // resolves undefined and we clean the partial below.
                 task.cancelAsync().catch(() => {});
                 resolve(null);
-            }, timeoutMs);
+            };
+            timer = setTimeout(stop, remainingMs);
+            onAbort = stop;
+            signal?.addEventListener('abort', stop, { once: true });
+            if (signal?.aborted) stop();
         });
 
         try {
             // .catch guard (R8): a cancelled/failed download must not surface as an
             // unhandled rejection into the race.
-            const download = task.downloadAsync().catch(() => null);
+            const download = timedOut ? Promise.resolve(null) : task.downloadAsync().catch(() => null)
+                .then(async result => {
+                    // A late native download completion must not leave a file
+                    // behind after the timeout/abort race has already returned.
+                    if (timedOut) await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+                    return result;
+                });
             const result = await Promise.race([download, timeout]);
             // status >= 400 = an expired/forbidden signed URL wrote an error body to
             // disk — never feed that to OCR (mirrors the old `!res.ok` guard).
@@ -370,7 +391,8 @@ export async function downloadTikTokVideo(
             }
             return result.uri;
         } finally {
-            if (timer) clearTimeout(timer);
+            if (timer !== null) clearTimeout(timer);
+            if (onAbort) signal?.removeEventListener('abort', onAbort);
         }
     } catch {
         return null;

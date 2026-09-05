@@ -1,0 +1,29 @@
+{
+  "cap": 12,
+  "context": {
+    "source_kind": "video",
+    "has_video_text": true,
+    "caption_cap": null
+  },
+  "fail_on_extras": true,
+  "min_recall": 1,
+  "name": "lotta-paris-real-cache",
+  "source_url": "https://www.tiktok.com/@lifeofdden/video/7659003053483330849",
+  "notes": "Founder repro 2026-09-05. Verbatim raw_text from the failing extraction_cache row at 13:47:58 UTC. Production extracted Abatilles and Rouse Santant; the video independently confirms the final location-pin reveal is LOTTA. No synthetic evidence added.",
+  "fused_text": "[caption]\nSave this spot for your next dinner in Paris\n\n[video text]\n20%\nWE SNEA\nABATILLES\nanother\nnew restaurant\nto try in Paris\nILLES\n00%\nROUSE SANTANT\nanother=\nto try in Parisi\nto tryin Paris y\nnew restauran\nnew restaurantồỊẠ\nto try in Paris .\n40.00\n* LOTTA",
+  "expected": [
+    {
+      "name": "LOTTA"
+    }
+  ],
+  "forbidden": [
+    {
+      "name": "Abatilles",
+      "why": "water bottle label"
+    },
+    {
+      "name": "Rouse Santant",
+      "why": "garbled scene fragment"
+    }
+  ]
+}

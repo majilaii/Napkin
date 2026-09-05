@@ -1,0 +1,28 @@
+{
+  "name": "lotta-paris-native-frames",
+  "source_url": "https://www.tiktok.com/@lifeofdden/video/7659003053483330849",
+  "notes": "Actual AVFoundation/Vision OCR from the supplied clip on 2026-09-05, rendered by the production client evidence helper and server fusion helper. OCR-only capture; no fabricated speech. Vision does not retain the pin glyph: LOTTA appears in the final frames, with a stray T. This complements the legacy production-cache fixture.",
+  "fused_text": "[caption]\nSave this spot for your next dinner in Paris\n\n[video text]\n[on-screen text]\n[frame 0.0s]\n00%\nABATILLES\nanother\nnew restaurant\nto try in Paris\n[frame 0.5s]\n100%\nзє\n[frame 3.5s]\nILLES\natta\n[frame 4.1s]\nHONCE LALAOM\nABATILLE\n[frame 4.6s]\nTONGE MALAN\n[frame 7.6s]\nto\nn Paris\n[frame 8.1s; ending]\nto\nParis\n[frame 13.6s; ending]\n40.00\n[frame 14.6s; ending]\nanother\nnew restaurant\nto try in Paris\n[frame 15.1s; ending]\nLOTTA\n[frame 15.6s; ending]\nT\nLOTTA",
+  "cap": 12,
+  "context": {
+    "source_kind": "video",
+    "has_video_text": true
+  },
+  "expected": [
+    {
+      "name": "LOTTA"
+    }
+  ],
+  "forbidden": [
+    {
+      "name": "Abatilles",
+      "why": "water bottle label"
+    },
+    {
+      "name": "Rouse Santant",
+      "why": "garbled scene text"
+    }
+  ],
+  "fail_on_extras": true,
+  "min_recall": 1
+}

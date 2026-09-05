@@ -29,6 +29,10 @@
  */
 export const VIDEO_DOWNLOAD_TIMEOUT_MS = 90_000;
 
+/** Shared by URL, shared-file and picked-file imports; native also caps at 240. */
+export const VIDEO_OCR_MAX_FRAMES = 240;
+export const VIDEO_OCR_FPS = 2;
+
 /**
  * OCR wall-clock budget: bounds the frame-GENERATION phase AND the 240-frame
  * `.accurate` Vision pass together. On expiry the generator is cancelled and the

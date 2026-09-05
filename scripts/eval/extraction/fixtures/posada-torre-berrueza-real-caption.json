@@ -1,0 +1,19 @@
+{
+  "cap": 12,
+  "context": {
+    "source_kind": "video",
+    "has_video_text": false
+  },
+  "fail_on_extras": true,
+  "min_recall": 1,
+  "name": "posada-torre-berrueza-real-caption",
+  "source_url": "https://www.tiktok.com/@piquillopeppers/video/7675097447651167510",
+  "notes": "Founder second repro, public TikTok caption captured 2026-09-05. Extraction correctly names Posada; the mapping regression is separately covered by verifiedPlaceReuse.test.ts. No invented OCR or speech.",
+  "fused_text": "[caption]\nAn insider guide to Northern Spain’s foodie spots from someone who grew up coming here every summer ☀️ if you want incredible food without standing in pintxos queues all night, head an hour south of Bilbao to this peaceful spot in Espinosa de los Monteros. The mushroom carpaccio and local beef were unreal, and make sure to also get some original ice creams. Save this hidden gem for your next trip to Northern Spain  📍 Posada Real Torre Berrueza",
+  "expected": [
+    {
+      "name": "Posada Real Torre Berrueza"
+    }
+  ],
+  "forbidden": []
+}

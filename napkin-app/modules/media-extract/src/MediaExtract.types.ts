@@ -1,7 +1,7 @@
 export interface ExtractOptions {
-    /** Max frames to sample across the whole clip (default 60). */
+    /** Max frames across the whole clip (default and native hard cap 240). */
     maxFrames?: number;
-    /** Sampling rate ceiling in frames/sec (default 1). Even-spread caps at maxFrames. */
+    /** Target frames/sec (default 2); final eight seconds receive priority at 2fps. */
     fps?: number;
     /** Run on-device voiceover transcription too (default true). */
     transcribe?: boolean;
@@ -21,11 +21,18 @@ export interface ExtractOptions {
      * apiVersion >= 2 only.
      */
     sttMaxDurationSec?: number;
+    /**
+     * JS-only cancellation. A queued call aborts before native starts; an active
+     * call waits for native to finish before rejecting, so its file stays alive.
+     */
+    signal?: AbortSignal;
 }
 
 export interface ExtractResult {
     /** Deduped on-screen text lines, in appearance order (Vision OCR). */
     ocr: string[];
+    /** v4+: chronological actual decoded timestamps; absent on older binaries. */
+    frames?: { timeSec: number; lines: string[] }[];
     /** Voiceover transcript (SFSpeechRecognizer); '' when unavailable/denied. */
     transcript: string;
     /** Clip duration in seconds. */

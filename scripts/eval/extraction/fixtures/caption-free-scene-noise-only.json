@@ -1,0 +1,25 @@
+{
+  "cap": 12,
+  "context": {
+    "source_kind": "video",
+    "caption_present": false,
+    "has_video_text": true
+  },
+  "fail_on_extras": true,
+  "min_recall": 1,
+  "name": "caption-free-scene-noise-only",
+  "source_url": "",
+  "notes": "Synthetic negative control: incidental bottle/storefront text, including a bottle name near the end, with no location pin, venue title or speech. Late timing alone must not create a restaurant.",
+  "fused_text": "[video text]\n[on-screen text]\n[frame 3.0s]\nNICOLAS\nVINS ET SPIRITUEUX\n[frame 15.0s; ending]\nABATILLES\nEAU MINERALE NATURELLE\n75 cl",
+  "expected": [],
+  "forbidden": [
+    {
+      "name": "Abatilles",
+      "why": "bottle label, even late"
+    },
+    {
+      "name": "Nicolas",
+      "why": "incidental storefront"
+    }
+  ]
+}
