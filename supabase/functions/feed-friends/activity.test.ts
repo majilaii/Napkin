@@ -10,6 +10,8 @@ Deno.test('activity cursor preserves precision and rejects legacy and malformed 
     assertEquals(activityCursor(null), null);
     for (const value of ['', {}, 5, 'bad', encodeCursor({ sort_date: date, id: uuid }),
         encodeCursor({ sort_date: 'yesterday', id: `pin:${uuid}` }),
+        encodeCursor({ sort_date: '2026-02-30T12:00:00Z', id: `pin:${uuid}` }),
+        encodeCursor({ sort_date: '0000-01-01T12:00:00Z', id: `pin:${uuid}` }),
         encodeCursor({ sort_date: date, id: `pin:${uuid}|OR true` })]) {
         assertThrows(() => activityCursor(value));
     }

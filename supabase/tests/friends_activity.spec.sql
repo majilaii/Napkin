@@ -30,13 +30,13 @@ INSERT INTO public.entries(id,user_id,restaurant_id,rating,content,visibility,cr
 SELECT ('66903333-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,
     ('66900000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,
     '66901111-0000-0000-0000-000000000001', 4,
-    CASE WHEN i=1 THEN NULL ELSE 'A full public review long enough to qualify' END,
+    CASE WHEN i=1 THEN NULL WHEN i=2 THEN 'A' ELSE 'A full public review long enough to qualify' END,
     CASE WHEN i=1 THEN 'private' ELSE 'friends' END,
     '2026-09-01T12:00:00.123456Z', '2020-01-01', 'https://test.invalid/primary.jpg'
 FROM generate_series(1,6) i;
 INSERT INTO public.entry_photos(entry_id,photo_url,sort_order) VALUES
     ('66903333-0000-0000-0000-000000000001','https://test.invalid/extra.jpg',1);
-INSERT INTO public.wishlist_items(id,user_id,restaurant_id,created_at,notes,source)
+INSERT INTO public.wishlist_items(id,user_id,restaurant_id,created_at,note,source)
 SELECT ('66904444-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,
     ('66900000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,
     '66901111-0000-0000-0000-000000000001','2026-09-01T12:00:00.123456Z',
@@ -60,7 +60,7 @@ INSERT INTO public.lists(owner_id,title,privacy,table_id) VALUES
 INSERT INTO public.entries(user_id,restaurant_id,rating,content,visibility)
 SELECT '66900000-0000-0000-0000-000000000002','66901111-0000-0000-0000-000000000001',rating,content,visibility
 FROM (VALUES (4::float8,'Private review with sufficient length','private'),
-    (4,'A','friends'), (NULL,'Unrated review with sufficient length','friends'),
+    (4,'   ','friends'), (NULL,'Unrated review with sufficient length','friends'),
     (4,'Unknown visibility with sufficient length',NULL)) AS v(rating,content,visibility);
 
 SET LOCAL ROLE service_role;
@@ -87,8 +87,13 @@ BEGIN
     ASSERT (SELECT count(*)=2 FROM public.fn_friends_activity(viewer,NULL,NULL,2)), 'Exact SQL page size';
     ASSERT NOT EXISTS(SELECT 1 FROM public.fn_friends_activity(NULL,NULL,NULL,51)), 'Null viewer denied';
     ASSERT NOT EXISTS(SELECT 1 FROM public.fn_friends_feed(viewer,NULL,NULL,51) WHERE user_id=viewer), 'Legacy self exclusion unchanged';
+    ASSERT (SELECT array_agg(id ORDER BY id) FROM public.fn_friends_feed(viewer,NULL,NULL,51)) =
+        (SELECT array_agg((payload->>'id')::uuid ORDER BY payload->>'id') FROM public.fn_friends_activity(viewer,NULL,NULL,51)
+            WHERE kind='entry' AND payload->>'user_id'<>viewer::text), 'Peer entries match current legacy eligibility including one-character notes';
+    ASSERT EXISTS(SELECT 1 FROM public.fn_friends_activity(viewer,NULL,NULL,51)
+        WHERE kind='entry' AND payload->>'content'='A'), 'One-character peer review is visible';
     ASSERT NOT EXISTS(SELECT 1 FROM public.fn_friends_activity(viewer,NULL,NULL,51)
-        WHERE payload ?| ARRAY['table_id','source','notes','table_name','table_members']), 'No Table context or raw pin data';
+        WHERE payload ?| ARRAY['table_id','source','note','table_name','table_members']), 'No Table context or raw pin data';
     SELECT * INTO r FROM public.fn_friends_activity(viewer,NULL,NULL,51)
         WHERE activity_key='entry:66903333-0000-0000-0000-000000000001';
     ASSERT r.payload->>'id'='66903333-0000-0000-0000-000000000001', 'Entry cache id preserved';

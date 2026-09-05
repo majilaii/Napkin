@@ -17,6 +17,13 @@ export function activityCursor(value: unknown): CursorTuple | null {
         || !/^(entry|pin|list):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(decoded.id)) {
         throw new Error('Invalid activity cursor');
     }
+    // Date.parse normalizes invalid dates such as February 30; PostgreSQL rejects
+    // them. Reject them here so a malformed cursor remains a 400, not a SQL 500.
+    const [year, month, day] = decoded.sort_date.slice(0, 10).split('-').map(Number);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (year < 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth) {
+        throw new Error('Invalid activity cursor');
+    }
     return decoded;
 }
 

@@ -27,7 +27,8 @@ AS $$
         WHERE e.restaurant_id IS NOT NULL
           AND (e.user_id = p_viewer OR (
               e.visibility <> 'private' AND e.rating IS NOT NULL
-              AND char_length(trim(COALESCE(e.content, ''))) >= 20
+              -- Match the current public-review floor (20260722215106): any written note.
+              AND char_length(trim(COALESCE(e.content, ''))) >= 1
           ))
         UNION ALL
         SELECT 'pin:' || w.id, 'pin', w.created_at, w.id, w.user_id

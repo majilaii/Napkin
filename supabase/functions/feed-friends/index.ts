@@ -14,7 +14,7 @@
  * Eligibility lives in ONE shared SQL helper (fn_public_eligible_entries,
  * called via fn_friends_feed):
  *   restaurant_id IS NOT NULL AND visibility <> 'private'
- *   AND rating IS NOT NULL AND trim(content) >= 20 chars   -- engagement gate,
+ *   AND rating IS NOT NULL AND trim(content) >= 1 char   -- engagement gate,
  *       synced with is_entry_publicly_eligible so no feed card is ever a
  *       dead card (displayable but not tappable/reactable)
  *   AND author account public AND no either-direction block.
