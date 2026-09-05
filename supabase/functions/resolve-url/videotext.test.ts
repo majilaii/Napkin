@@ -10,6 +10,7 @@ import {
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
   buildVideoFusion,
+  canonicalVideoCacheText,
   CAPTION_SECTION_CAP,
   deriveCaptionCap,
   routesToVideoText,
@@ -89,9 +90,9 @@ Deno.test("fusion: caption-only body paints NO [video text] header", () => {
   assertEquals(hasVideoText, false);
 });
 
-Deno.test("fusion: no caption → today's bare join, no labels", () => {
+Deno.test("fusion: no caption still labels video evidence", () => {
   const { fullText, hasVideoText } = buildVideoFusion(null, "CASA UROLA\nAkerbetlz");
-  assertEquals(fullText, "CASA UROLA\nAkerbetlz");
+  assertEquals(fullText, "[video text]\nCASA UROLA\nAkerbetlz");
   assertEquals(hasVideoText, true);
 });
 
@@ -191,7 +192,7 @@ Deno.test("cap: a caption with no marker leaves the shared 12 cap in place", () 
 Deno.test("fusion + cap tolerate a non-string caption (untrusted body)", () => {
   const junk = 42 as unknown as string;
   assertEquals(buildVideoFusion(junk, "CASA UROLA"), {
-    fullText: "CASA UROLA",
+    fullText: "[video text]\nCASA UROLA",
     hasVideoText: true,
   });
   assertEquals(deriveCaptionCap(junk, false), null);
@@ -199,4 +200,29 @@ Deno.test("fusion + cap tolerate a non-string caption (untrusted body)", () => {
     buildVideoFusion(REPRO_CAPTION, 42 as unknown as string).hasVideoText,
     false,
   );
+});
+
+Deno.test("fusion: both caption-free and captioned long input retain the final reveal", () => {
+  const text = "Paris\n" + "bottle label\n".repeat(1500) + "\n* LOTTA";
+  for (const caption of [null, "Save this dinner spot in Paris"]) {
+    const { fullText } = buildVideoFusion(caption, text);
+    assertEquals(fullText.length <= VIDEO_FUSION_CAP, true);
+    assertStringIncludes(fullText, "Paris");
+    assertEquals(fullText.endsWith("* LOTTA"), true);
+  }
+});
+
+Deno.test("fusion: photo documents preserve their original fusion and cap", () => {
+  const photo = "[slide 1 of 2]\nCasa Urola\n" + "x".repeat(9000);
+  assertEquals(buildVideoFusion(null, photo, true).fullText, photo.slice(0, VIDEO_FUSION_CAP));
+  const prefix = "[caption]\nMy two spots\n\n[video text]\n";
+  assertEquals(buildVideoFusion("My two spots", photo, true).fullText,
+    prefix + photo.slice(0, VIDEO_FUSION_CAP - prefix.length));
+});
+
+Deno.test("cache: decode timestamp jitter is ignored but evidence and ending status are not", () => {
+  const text = "[on-screen text]\n[frame 2.0s]\nABATILLES\n[frame 15.6s; ending]\n* LOTTA";
+  assertEquals(canonicalVideoCacheText(text), canonicalVideoCacheText(text.replace("2.0s", "2.1s").replace("15.6s", "15.5s")));
+  assertEquals(canonicalVideoCacheText(text) === canonicalVideoCacheText(text.replace("LOTTA", "OTHER")), false);
+  assertEquals(canonicalVideoCacheText(text) === canonicalVideoCacheText(text.replace("; ending", "")), false);
 });

@@ -15,6 +15,8 @@ import {
     OCR_WALLCLOCK_BUDGET_MS,
     STT_TIMEOUT_MS,
     STT_MAX_DURATION_SEC,
+    VIDEO_OCR_MAX_FRAMES,
+    VIDEO_OCR_FPS,
 } from '@/lib/importBudgets';
 
 export * from './src/MediaExtract.types';
@@ -68,6 +70,16 @@ type NativeMediaExtract = {
 };
 
 let cached: NativeMediaExtract | null = null;
+// All callers share one native lane. Cancellation cannot stop native extraction,
+// so a replacement request must wait before starting another OCR/STT workload.
+let videoExtractionLane: Promise<void> = Promise.resolve();
+
+function throwIfVideoAborted(signal?: AbortSignal): void {
+    if (!signal?.aborted) return;
+    const error = new Error('Video extraction cancelled');
+    error.name = 'AbortError';
+    throw error;
+}
 
 function getNative(): NativeMediaExtract {
     if (!cached) {
@@ -106,9 +118,24 @@ export async function extractFromVideo(
     uri: string,
     opts?: ExtractOptions,
 ): Promise<ExtractResult> {
+    const previous = videoExtractionLane;
+    let release!: () => void;
+    videoExtractionLane = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+        throwIfVideoAborted(opts?.signal);
+        const result = await extractVideoInLane(uri, opts);
+        throwIfVideoAborted(opts?.signal);
+        return result;
+    } finally {
+        release();
+    }
+}
+
+async function extractVideoInLane(uri: string, opts?: ExtractOptions): Promise<ExtractResult> {
     const native = getNative();
-    const maxFrames = opts?.maxFrames ?? 60;
-    const fps = opts?.fps ?? 1;
+    const maxFrames = opts?.maxFrames ?? VIDEO_OCR_MAX_FRAMES;
+    const fps = opts?.fps ?? VIDEO_OCR_FPS;
     const transcribe = opts?.transcribe ?? true;
     // R4: the native module grew OCR/STT budget params in apiVersion 2. On an
     // OLDER binary (OTA JS ahead of native) the 7-arg call throws an arg-count

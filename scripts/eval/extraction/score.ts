@@ -64,8 +64,8 @@ export function toExtractionContext(
     return {
         sourceKind: 'video',
         // Fixtures model the post-209 labeled-body shape; a fused/no-caption
-        // fixture opts out explicitly with caption_present: false and runs on
-        // the generic prompt, mirroring old clients (review R1).
+        // fixture opts out of caption authority explicitly; scene-noise rules
+        // still apply to video without a caption.
         captionPresent: c.caption_present ?? true,
         hasVideoText: c.has_video_text ?? true,
         captionCap: c.caption_cap ?? null,

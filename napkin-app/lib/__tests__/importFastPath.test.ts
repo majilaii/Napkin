@@ -1,4 +1,4 @@
-import { evaluateFastPath, isContentGate, type FastPathCandidate } from '../importFastPath';
+import { captionCorroboratesVenue, evaluateFastPath, isContentGate, type FastPathCandidate } from '../importFastPath';
 // The server's caption-count detector — imported directly so the fast-path
 // impact of TICKET-209's widened pattern is proven, not assumed.
 import { detectListMarker } from '../../../supabase/functions/_shared/listicle';
@@ -9,18 +9,35 @@ import { detectListMarker } from '../../../supabase/functions/_shared/listicle';
 function ok(overrides: Partial<FastPathCandidate> = {}): FastPathCandidate {
     return {
         restaurant_id: 'r1',
-        restaurant: { external_id: 'ext1' },
+        restaurant: { external_id: 'ext1', name: 'Lotta', city: 'Paris' },
         confidence: 'high',
         stance: 'recommended',
         ...overrides,
     };
 }
 
+test('a high-confidence ASR-only identity must still inspect the video', () => {
+    for (const caption of ['', 'Save this dinner spot in Paris']) {
+        expect(evaluateFastPath({ provider: 'tiktok', candidates: [ok()],
+            listCountRaw: null, transcriptChars: 1000, caption })).toBe('caption_uncorroborated');
+    }
+    expect(isContentGate('caption_uncorroborated')).toBe(true);
+});
+
+test('caption corroboration needs distinctive whole words, with accent normalization', () => {
+    expect(captionCorroboratesVenue('We loved LOTTA in Paris', { external_id: 'x', name: 'Lotta', city: 'Paris' })).toBe(true);
+    expect(captionCorroboratesVenue('Cafe de Flore', { external_id: 'x', name: 'Café de Flore', city: 'Paris' })).toBe(true);
+    expect(captionCorroboratesVenue('best asador near the city', { external_id: 'x', name: 'Asador Patxikuenea' })).toBe(false);
+    expect(captionCorroboratesVenue('the Paris restaurant', { external_id: 'x', name: 'Paris Restaurant', city: 'Paris' })).toBe(false);
+    expect(captionCorroboratesVenue('Carlotta', { external_id: 'x', name: 'Lotta' })).toBe(false);
+});
+
 describe('evaluateFastPath — gates in order', () => {
     it('old_server: list_count_raw absent (undefined) → escalate [structural]', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok()],
                 listCountRaw: undefined,
                 transcriptChars: 200,
@@ -32,6 +49,7 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [],
                 listCountRaw: null,
                 transcriptChars: 200,
@@ -43,6 +61,7 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok(), ok()], // 2
                 listCountRaw: 3, //          advertised 3
                 transcriptChars: 200,
@@ -57,6 +76,7 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok()],
                 listCountRaw: null,
                 transcriptChars: 200,
@@ -68,6 +88,7 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok(), ok({ restaurant_id: null, restaurant: { external_id: null } })],
                 listCountRaw: null,
                 transcriptChars: 200,
@@ -80,7 +101,8 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
-                candidates: [ok({ restaurant_id: 'r9', restaurant: { external_id: null } })],
+                caption: 'Dinner at Lotta in Paris',
+                candidates: [ok({ restaurant_id: 'r9', restaurant: { external_id: null, name: 'Lotta', city: 'Paris' } })],
                 listCountRaw: null,
                 transcriptChars: 200,
             }),
@@ -91,6 +113,7 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok({ confidence: 'low' })],
                 listCountRaw: null,
                 transcriptChars: 200,
@@ -102,6 +125,7 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok({ stance: 'neutral' })],
                 listCountRaw: null,
                 transcriptChars: 200,
@@ -113,6 +137,7 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok({ stance: 'warned' })],
                 listCountRaw: null,
                 transcriptChars: 200,
@@ -124,6 +149,7 @@ describe('evaluateFastPath — gates in order', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok({ stance: undefined })],
                 listCountRaw: null,
                 transcriptChars: 200,
@@ -137,6 +163,7 @@ describe('evaluateFastPath — ASR / ambiguity gate', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok(), ok()],
                 listCountRaw: null,
                 transcriptChars: 40,
@@ -148,6 +175,7 @@ describe('evaluateFastPath — ASR / ambiguity gate', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok()],
                 listCountRaw: null,
                 transcriptChars: 0,
@@ -162,6 +190,7 @@ describe('evaluateFastPath — ASR / ambiguity gate', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok(), ok(), ok()],
                 listCountRaw: null,
                 transcriptChars: 4000,
@@ -208,6 +237,7 @@ describe('evaluateFastPath — all-pass', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok()],
                 listCountRaw: null,
                 transcriptChars: 0,
@@ -219,6 +249,7 @@ describe('evaluateFastPath — all-pass', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok(), ok(), ok()],
                 listCountRaw: 3,
                 transcriptChars: 500,
@@ -268,6 +299,7 @@ describe('evaluateFastPath — newly countable captions (TICKET-209)', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok()],
                 listCountRaw,
                 transcriptChars: 900,
@@ -296,6 +328,7 @@ describe('evaluateFastPath — newly countable captions (TICKET-209)', () => {
         expect(
             evaluateFastPath({
                 provider: 'tiktok',
+                caption: 'Dinner at Lotta in Paris',
                 candidates: [ok()],
                 listCountRaw,
                 transcriptChars: 0,

@@ -1,0 +1,28 @@
+name: native-media-extract
+
+on:
+  pull_request:
+    paths:
+      - 'napkin-app/modules/media-extract/**'
+      - 'napkin-app/lib/importBudgets.ts'
+      - 'scripts/tests/media-extract/**'
+      - '.github/workflows/native-media-extract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'napkin-app/modules/media-extract/**'
+      - 'napkin-app/lib/importBudgets.ts'
+      - 'scripts/tests/media-extract/**'
+      - '.github/workflows/native-media-extract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-ocr:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test real video scheduling, deadlines and Vision OCR
+        run: bash scripts/tests/media-extract/run.sh

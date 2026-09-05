@@ -8,9 +8,12 @@
  * - signal is passed to callEdgeFn which routes to postWithFetch() for real abort
  */
 import { useRef, useCallback, useState } from 'react';
-import { callEdgeFn } from '@/lib/edgeInvoke';
-import { fetchTikTokPerception, isTikTokUrl } from '@/lib/tiktokPerception';
+import { callEdgeFn, isAuthFailure } from '@/lib/edgeInvoke';
+import { deleteCachedTikTokVideo, downloadTikTokVideo, fetchTikTokPerception, isTikTokUrl } from '@/lib/tiktokPerception';
 import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
+import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
+import { resolveTikTokVideo } from '@/lib/resolveTikTokVideo';
+import { buildVideoImportEvidence } from '@/lib/videoImportEvidence';
 import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -141,10 +144,23 @@ export function useResolveUrl() {
             // own ASR transcript of the voiceover (listicle captions carry no
             // names). Failure of any kind falls through to the caption resolve.
             let tierText = extractedText;
+            let instagramTextTier = false;
             if (!tierText && !imagePath && url && isTikTokUrl(url)) {
-                const perception = await fetchTikTokPerception(url);
+                const result = await resolveTikTokVideo(url, controller.signal, {
+                    perceive: fetchTikTokPerception,
+                    download: downloadTikTokVideo,
+                    extract: extractFromVideo,
+                    remove: deleteCachedTikTokVideo,
+                    available: isVideoImportAvailable,
+                    isAuthFailure,
+                    resolve: (body, signal) => callEdgeFn<ResolveUrlData>('resolve-url', { body, signal }),
+                }, caption);
                 if (myId !== currentRequestIdRef.current) return;
-                if (perception?.hasTranscript) tierText = perception.text;
+                if (result) {
+                    setData(result);
+                    setState('success');
+                    return;
+                }
             }
             // Instagram: the server branch is login-walled by design (returns
             // only an ig_nudge), so the on-device caption IS the resolve tier.
@@ -155,13 +171,19 @@ export function useResolveUrl() {
             if (!tierText && !imagePath && url && isInstagramUrl(url)) {
                 const perception = await fetchInstagramPerception(url);
                 if (myId !== currentRequestIdRef.current) return;
-                if (perception?.text) tierText = perception.text;
+                if (perception?.text) {
+                    instagramTextTier = true;
+                    caption = caption || perception.desc;
+                    tierText = perception.transcript
+                        ? buildVideoImportEvidence({ ocr: [], transcript: perception.transcript })
+                        : undefined;
+                }
             }
 
             // Proven contract (video path): extracted_text rides alone.
             const result = await callEdgeFn<ResolveUrlData>('resolve-url', {
                 body: {
-                    url: tierText ? undefined : url || undefined,
+                    url: tierText || (caption && !imagePath && isInstagramUrl(url)) ? undefined : url || undefined,
                     ...(imagePath ? { image_path: imagePath } : {}),
                     ...(caption ? { caption } : {}),
                     ...(tierText ? { extracted_text: tierText } : {}),
@@ -175,7 +197,7 @@ export function useResolveUrl() {
             // Transcript tier produced nothing actionable → retry the plain
             // caption tier (never worse than the pre-086 behavior).
             if (
-                tierText &&
+                (tierText || instagramTextTier) &&
                 !extractedText &&
                 url &&
                 (result?.candidates?.length ?? 0) === 0

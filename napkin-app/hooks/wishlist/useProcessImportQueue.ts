@@ -72,6 +72,7 @@ import {
     type ImportDestinationTarget,
 } from '@/lib/importProtocol';
 import { evaluateFastPath, isContentGate } from '@/lib/importFastPath';
+import { buildVideoImportEvidence } from '@/lib/videoImportEvidence';
 import { buildVideoTextResolveBody } from '@/lib/importResolveBody';
 import {
     allowsGenericUrlFallback,
@@ -961,7 +962,7 @@ export function useProcessImportQueue() {
                                     // exactly where the caption is most
                                     // reliable.
                                     transcript
-                                        ? { caption: desc || undefined, extracted_text: transcript }
+                                        ? { caption: desc || undefined, extracted_text: buildVideoImportEvidence({ ocr: [], transcript }) }
                                         : { caption: desc },
                                 );
                             } catch (err) {
@@ -977,6 +978,7 @@ export function useProcessImportQueue() {
                                     candidates: cheapCandidates,
                                     listCountRaw: cheap.list_count_raw,
                                     transcriptChars: transcript.length,
+                                    caption: desc,
                                 });
                                 if (fastPathGate === 'pass') {
                                     fastPath = true;
@@ -1159,7 +1161,7 @@ export function useProcessImportQueue() {
                                 // TICKET-180 stage 4/6: on-device OCR + STT of the mp4.
                                 setImportStage(m.jobId, 'reading the video');
                                 try {
-                                    const { ocr, transcript: spoken } = await runOwnerBound(m, () =>
+                                    const videoEvidence = await runOwnerBound(m, () =>
                                         extractFromVideo(
                                             fileUri,
                                             // 2fps: creators flash "Name, Area" overlays
@@ -1179,13 +1181,9 @@ export function useProcessImportQueue() {
                                             },
                                         )
                                     );
-                                    ocrLines = ocr?.length ?? 0;
-                                    sttChars = (spoken ?? '').length;
-                                    ocrText =
-                                        [...(ocr ?? []), perception?.hasTranscript ? '' : (spoken ?? '')]
-                                            .filter(Boolean)
-                                            .join('\n')
-                                            .trim() || null;
+                                    ocrLines = videoEvidence.ocr?.length ?? 0;
+                                    sttChars = (videoEvidence.transcript ?? '').length;
+                                    ocrText = buildVideoImportEvidence(videoEvidence, mergedTranscript) || null;
                                 } catch (error) {
                                     if (isSessionError(error)) throw error;
                                     // OCR channel is best-effort by contract.
@@ -1208,10 +1206,7 @@ export function useProcessImportQueue() {
                             // fusePhotoSlideText already labels its [caption].
                             extractedText = isPhotoPost
                                 ? ocrText
-                                : [ocrText, mergedTranscript]
-                                    .filter(Boolean)
-                                    .join('\n')
-                                    .trim() || null;
+                                : ocrText || buildVideoImportEvidence({ ocr: [], transcript: mergedTranscript }) || null;
                             // R3: did escalation add ANY new perception text? OCR
                             // lines (video frames OR photo slides), on-device STT, or
                             // a page-text CHANNEL the retry recovered that the cheap
@@ -1375,13 +1370,10 @@ export function useProcessImportQueue() {
                     }
                     // TICKET-180 stage 4/6: shared-file video → on-device OCR + STT.
                     setImportStage(m.jobId, 'reading the video');
-                    const { ocr, transcript } = await runOwnerBound(m, () =>
+                    const videoEvidence = await runOwnerBound(m, () =>
                         extractFromVideo(m.videoPath as string)
                     );
-                    const extractedText = [...(ocr ?? []), transcript ?? '']
-                        .filter(Boolean)
-                        .join('\n')
-                        .trim();
+                    const extractedText = buildVideoImportEvidence(videoEvidence);
                     if (!extractedText) {
                         removeImport(m.jobId);
                         safeDeleteMov(m.videoPath);
