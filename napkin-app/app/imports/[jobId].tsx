@@ -44,9 +44,10 @@ export default function ImportBatchScreen() {
     const toast = useToast();
 
     const { jobId } = useLocalSearchParams<{ jobId: string }>();
-    const { data, isLoading, isError, refetch } = useImportBatch(jobId);
+    const { data, isLoading, isError, isRefetching, refetch } = useImportBatch(jobId);
     const checks = useExhaustedCompletenessItems(user?.id, { pollMs: 60_000 });
     const batchChecks = checks.data.filter((item) => item.job_id === jobId);
+    const refreshPlaces = () => { void refetch(); void checks.refetch(); };
 
     const remove = useWishlistRemove(user?.id);
     const repoint = useRepointWishlistItem(user?.id, jobId);
@@ -161,6 +162,8 @@ export default function ImportBatchScreen() {
             ) : (
                 <FlatList
                     data={savedItems}
+                    refreshing={isRefetching || checks.isRefetching}
+                    onRefresh={refreshPlaces}
                     keyExtractor={(it) => it.id}
                     contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + Spacing.xxl }]}
                     ItemSeparatorComponent={() => <View style={{ height: Spacing.sm }} />}
@@ -173,6 +176,8 @@ export default function ImportBatchScreen() {
                                 palette={palette} loading={checks.isLoading} error={checks.isError}
                                 hasMore={!!checks.hasNextPage} loadingMore={checks.isFetchingNextPage}
                                 onRetryLoad={() => void checks.refetch()}
+                                onRefreshPlaces={refreshPlaces}
+                                refreshingPlaces={isRefetching || checks.isRefetching}
                                 onLoadMore={() => void checks.fetchNextPage()} /> : null}
                             {savedItems.length > 0 ? <Text style={[Type.sectionKicker, styles.savedHeading, { color: palette.textMuted }]}>saved places</Text> : null}
                         </View>

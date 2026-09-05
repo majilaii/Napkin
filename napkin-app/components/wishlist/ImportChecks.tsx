@@ -37,10 +37,13 @@ type Props = {
     loadingMore: boolean;
     onRetryLoad: () => void;
     onLoadMore: () => void;
+    onRefreshPlaces: () => void;
+    refreshingPlaces: boolean;
 };
 
 export function ImportChecks({ userId, items, savedRestaurantIds, palette,
-    loading, error, hasMore, loadingMore, onRetryLoad, onLoadMore }: Props) {
+    loading, error, hasMore, loadingMore, onRetryLoad, onLoadMore,
+    onRefreshPlaces, refreshingPlaces }: Props) {
     const correct = useCorrectCompletenessItem(userId);
     const dismiss = useDismissCompletenessItem(userId);
     const retry = useRetryCompletenessItem(userId);
@@ -52,6 +55,7 @@ export function ImportChecks({ userId, items, savedRestaurantIds, palette,
     const [activeItem, setActiveItem] = useState<ExhaustedCompletenessItem | null>(null);
     const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
+    const [matchingQueued, setMatchingQueued] = useState(false);
     const inFlight = useRef(false);
     const displayedItems = activeItem && !items.some((item) => item.id === activeItem.id)
         ? [activeItem, ...items] : items;
@@ -66,7 +70,8 @@ export function ImportChecks({ userId, items, savedRestaurantIds, palette,
         try {
             if (action === 'retry') {
                 await retry.mutateAsync(item.id);
-                setNotice('Matching restarted. This check may return if a match is still uncertain.');
+                setMatchingQueued(true);
+                setNotice('Matching restarted. Refresh places to check progress; this check may return if a match is still uncertain.');
             } else {
                 await dismiss.mutateAsync(item.id);
                 setNotice(item.restaurant_id && savedRestaurantIds.has(item.restaurant_id)
@@ -103,7 +108,8 @@ export function ImportChecks({ userId, items, savedRestaurantIds, palette,
             });
             await correct.mutateAsync({ item_id: item.id, resolution_id: resolutionId });
             setPicker(null);
-            setNotice(`Match chosen: ${result.name}. Place details will update when matching finishes.`);
+            setMatchingQueued(true);
+            setNotice(`Match chosen: ${result.name}. Refresh places to see the latest details after matching.`);
         } catch {
             setPickerError('Could not verify this match. Try again or choose another result.');
         } finally {
@@ -132,6 +138,7 @@ export function ImportChecks({ userId, items, savedRestaurantIds, palette,
             </View> : null}
             {notice ? <View style={[styles.status, { backgroundColor: palette.surfaceJournalLow }]} accessibilityLiveRegion="polite">
                 <Text style={[Type.body, { color: palette.text }]}>{notice}</Text>
+                {matchingQueued ? action(refreshingPlaces ? 'refreshing places…' : 'refresh places', onRefreshPlaces, false, refreshingPlaces) : null}
             </View> : null}
             {displayedItems.length > 0 ? <View style={styles.intro}>
                 <Text style={[Type.sectionTitle, { color: palette.text }]}>

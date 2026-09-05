@@ -31,7 +31,7 @@ const ITEM = {
 function mount(overrides = {}) {
     const props = { userId: 'owner-1', items: [ITEM], savedRestaurantIds: new Set(['restaurant-1']),
         palette: Colors.light, loading: false, error: false, hasMore: false, loadingMore: false,
-        onRetryLoad: jest.fn(), onLoadMore: jest.fn(), ...overrides };
+        onRetryLoad: jest.fn(), onLoadMore: jest.fn(), onRefreshPlaces: jest.fn(), refreshingPlaces: false, ...overrides };
     let renderer: any;
     act(() => { renderer = TestRenderer.create(<ImportChecks {...props} />); });
     return renderer;
@@ -67,7 +67,7 @@ it('mints owner-bound fresh provenance before correcting, and passes imported lo
     expect(mockCorrect).toHaveBeenCalledWith({ item_id: 'check-1', resolution_id: 'fresh-resolution' });
     expect(mockMint.mock.invocationCallOrder[0]).toBeLessThan(mockCorrect.mock.invocationCallOrder[0]);
     expect(r.root.findByType('PlacePickerModal').props.visible).toBe(false);
-    expect(contents(r)).toContain('Place details will update when matching finishes.');
+    expect(contents(r)).toContain('Refresh places to see the latest details after matching.');
     act(() => r.unmount());
 });
 it('blocks duplicate picks, retains an inline failure, and does not dismiss a failed match', async () => {
@@ -95,12 +95,15 @@ it('does not claim all checks are clear on a failed or incomplete read', () => {
     }
 });
 it('retries legacy checks without inventing a match or a saved-place claim', async () => {
-    const r = mount({ items: [{ ...ITEM, import_nonce: null, restaurant_id: null }] });
+    const refresh = jest.fn();
+    const r = mount({ items: [{ ...ITEM, import_nonce: null, restaurant_id: null }], onRefreshPlaces: refresh });
     expect(contents(r)).not.toContain('find correct place');
     expect(contents(r)).toContain('dismiss check');
     await act(async () => { await button(r, 'try matching again').props.onPress(); });
     expect(mockRetry).toHaveBeenCalledWith('check-1');
-    expect(contents(r)).toContain('This check may return');
+    expect(contents(r)).toContain('this check may return');
+    act(() => button(r, 'refresh places').props.onPress());
+    expect(refresh).toHaveBeenCalledTimes(1);
     act(() => r.unmount());
 });
 it('does not expose internal provider errors or falsely assert a missing city', () => {

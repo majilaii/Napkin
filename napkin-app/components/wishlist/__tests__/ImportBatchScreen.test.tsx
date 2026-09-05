@@ -11,6 +11,8 @@ const mockPersistPlace = jest.fn(async (_placeId: string): Promise<string> => PE
 const mockRepoint = jest.fn(async (_input: { item_id: string; restaurant_id: string }) => undefined);
 const mockAddSpot = jest.fn(async (_input: { restaurant_id: string }) => undefined);
 const mockToast = jest.fn();
+const mockRefetchBatch = jest.fn();
+const mockRefetchChecks = jest.fn();
 let mockChecks: any[] = [];
 
 jest.mock('react-native', () => {
@@ -77,6 +79,7 @@ jest.mock('@/hooks/search/usePersistPlace', () => ({
 jest.mock('@/hooks/wishlist/useImportBatch', () => ({
     useImportBatch: () => ({
         isLoading: false,
+        refetch: mockRefetchBatch,
         data: {
             job: {
                 job_id: 'job-1',
@@ -118,7 +121,7 @@ jest.mock('@/hooks/wishlist/useAddSpotToBatch', () => ({
 jest.mock('@/components/lists', () => ({ AddToListSheet: 'AddToListSheet' }));
 jest.mock('@/components/wishlist/ImportChecks', () => ({ ImportChecks: 'ImportChecks' }));
 jest.mock('@/hooks/imports/useCompletenessRetries', () => ({
-    useExhaustedCompletenessItems: () => ({ data: mockChecks, isLoading: false, isError: false }),
+    useExhaustedCompletenessItems: () => ({ data: mockChecks, isLoading: false, isError: false, refetch: mockRefetchChecks }),
 }));
 jest.mock('@/components/wishlist/PlacePickerModal', () => ({
     PlacePickerModal: 'PlacePickerModal',
@@ -157,7 +160,17 @@ describe('/imports/[jobId] place persistence', () => {
         mockRepoint.mockReset().mockResolvedValue(undefined);
         mockAddSpot.mockReset().mockResolvedValue(undefined);
         mockToast.mockReset();
+        mockRefetchBatch.mockReset();
+        mockRefetchChecks.mockReset();
         mockChecks = [];
+    });
+
+    it('refreshes both saved identities and outstanding checks from the matching feedback', () => {
+        const renderer = renderScreen();
+        act(() => renderer.root.findByType('ImportChecks').props.onRefreshPlaces());
+        expect(mockRefetchBatch).toHaveBeenCalledTimes(1);
+        expect(mockRefetchChecks).toHaveBeenCalledTimes(1);
+        act(() => renderer.unmount());
     });
 
     it('shows checks for this batch once, keeping unrelated checks out of the page', () => {
