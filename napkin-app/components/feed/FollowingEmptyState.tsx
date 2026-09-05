@@ -26,8 +26,7 @@ export function FollowingEmptyState({ onSwitchToForYou }: Props) {
     }, []);
 
     return <View style={styles.wrap}>
-        <Text style={[styles.line, { color: palette.textMuted }]}>nothing here yet</Text>
-        <Text style={[styles.line, { color: palette.textMuted }]}>Your meals, pins and lists land here, alongside your friends’.</Text>
+        <Text style={[styles.line, { color: palette.textMuted }]}>Your activity lands here, alongside your friends’.</Text>
         <Pressable onPress={handleInvite} accessibilityRole="button" accessibilityLabel="Invite a friend to Napkin"
             style={({ pressed }) => [styles.inviteBtn, { borderColor: palette.terracottaBorderStrong, opacity: pressed ? 0.7 : 1 }]}>
             <Text style={[styles.inviteText, { color: palette.primary }]}>invite a friend</Text>

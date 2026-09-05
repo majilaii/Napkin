@@ -40,7 +40,7 @@ INSERT INTO public.wishlist_items(id,user_id,restaurant_id,created_at,note,sourc
 SELECT ('66904444-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,
     ('66900000-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,
     '66901111-0000-0000-0000-000000000001','2026-09-01T12:00:00.123456Z',
-    'private pin note', '{"caption":"private raw caption"}'::jsonb
+    'private pin note', '{"type":"tiktok","url":"https://test.invalid/v","caption":"private raw caption"}'::jsonb
 FROM generate_series(1,6) i;
 INSERT INTO public.lists(id,owner_id,title,privacy,created_at,updated_at)
 SELECT ('66905555-0000-0000-0000-' || lpad(i::text,12,'0'))::uuid,
