@@ -1,3 +1,4 @@
+import { knownVisitDate } from '@/lib/visitDates';
 /**
  * DiaryRow — used inside app/diary.tsx.
  * TICKET-025
@@ -26,9 +27,9 @@ export function DiaryRow({ entry }: Props) {
     const palette = Colors[scheme];
     const router = useRouter();
 
-    const d = new Date(entry.visited_at ?? entry.created_at);
-    const day = d.getDate();
-    const weekday = DAYS[d.getDay()];
+    const d = knownVisitDate(entry.visited_at);
+    const day = d?.getDate() ?? '';
+    const weekday = d ? DAYS[d.getDay()] : 'no date';
 
     return (
         <Pressable
@@ -39,11 +40,7 @@ export function DiaryRow({ entry }: Props) {
         >
             {/* Day rail */}
             <View style={styles.dayRail}>
-                <Text
-                    style={[Type.editorialTitle, { color: palette.text }]}
-                >
-                    {day}
-                </Text>
+                {d ? <Text style={[Type.editorialTitle, { color: palette.text }]}>{day}</Text> : null}
                 <Text style={[Type.labelSmall, { color: palette.textMuted, marginTop: 2 }]}>
                     {weekday}
                 </Text>

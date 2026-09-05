@@ -64,7 +64,7 @@ export type PageVisit = {
     user_id?: string;
     avatar_url?: string | null;
     rating: number | null;
-    date: string;
+    date: string | null;
     user_display_names: string[];
     note?: string | null;
     is_self?: boolean;
@@ -94,6 +94,7 @@ export type PublicReviewCard = {
     avatar_url: string | null;
     rating: number;
     note_excerpt: string;
+    photo_urls?: string[];
     photo_url: string | null;
     created_at: string;
     public_reaction_count: number;
@@ -108,9 +109,12 @@ export type SelfLogRow = {
     entry_id: string | null;
     table_night_id: string | null;
     source: 'solo' | 'supper';
+    created_at?: string;
+    is_bare?: boolean;
+    supper_id?: string | null;
     rating: number | null;
     note: string | null;
-    visited_at: string;
+    visited_at: string | null;
     companions: string[];
     photos: { id: string; url: string }[];
 };
@@ -126,7 +130,8 @@ export type TableNoteRow = {
     };
     rating: number | null;
     note: string;
-    visited_at: string;
+    created_at?: string;
+    visited_at: string | null;
 };
 
 export type RegularDetail = {
@@ -176,7 +181,7 @@ export type RestaurantPageData = {
     personal: {
         average: number | null;
         visit_count: number;
-        last_visit?: { date: string; rating: number | null } | null;
+        last_visit?: { date: string | null; rating: number | null } | null;
     };
     table_chip: {
         table_id: string;

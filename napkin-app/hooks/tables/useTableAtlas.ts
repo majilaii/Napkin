@@ -16,7 +16,7 @@ export type AtlasCityRow = {
     name: string;
     spot_count: number;
     member_count: number;
-    last_visit_at: string;
+    last_visit_at: string | null;
     hero_photo_url: string | null;
     /** Optional while older cached/deployed payloads roll over; ambiguity fails closed. */
     hero_photo_source?: 'places' | 'user' | 'table' | 'none' | null;

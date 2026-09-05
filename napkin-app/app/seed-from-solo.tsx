@@ -1,3 +1,4 @@
+import { visitDateLabel } from '@/lib/visitDates';
 /**
  * Seed from Solo — step 2 of the Gather flow. Canvas WF2.
  *
@@ -323,8 +324,7 @@ function SeedRow({
             ? palette.primary
             : palette.secondary
         : 'transparent';
-    const d = new Date(solo.visited_at ?? solo.created_at);
-    const when = d.toLocaleDateString('en-GB', {
+    const when = visitDateLabel(solo.visited_at, {
         weekday: 'short',
         day: '2-digit',
         month: 'short',

@@ -43,7 +43,7 @@ export interface SoloShareActivity {
     /** Supper gathering summary (Wave 2c) — present only when this entry anchors a
      *  Supper AND the viewer is a member. Renders pooled photos + headcount + avg. */
     supper?: SupperSummary | null;
-    visited_at: string;
+    visited_at: string | null;
     created_at: string;
     sort_date: string;
     photo_url: string | null;
@@ -113,7 +113,7 @@ export interface CollaborativeEntryActivity {
     id: string;
     user_id: string;
     restaurant_id: string | null;
-    visited_at: string;
+    visited_at: string | null;
     created_at: string;
     sort_date: string;
     companions?: CompanionProfile[];

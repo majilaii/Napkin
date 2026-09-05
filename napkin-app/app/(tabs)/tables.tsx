@@ -1,3 +1,4 @@
+import { visitDateLabel } from '@/lib/visitDates';
 /**
  * Tables tab — activity feed for the active table.
  * Real data via useTables + useTableActivity hooks.
@@ -108,8 +109,8 @@ function formatRelTime(dateStr: string): string {
 }
 
 /** Format visited_at as "neighborhood · weekday" for tick meta line. */
-function fmtTickMeta(city: string | null | undefined, visitedAt: string): string {
-    const day = new Date(visitedAt).toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
+function fmtTickMeta(city: string | null | undefined, visitedAt: string | null): string {
+    const day = visitDateLabel(visitedAt, { weekday: 'short' }, 'en-US').toLowerCase();
     return [city, day].filter(Boolean).join(' · ');
 }
 
@@ -1078,7 +1079,7 @@ export default function TablesScreen() {
                                                           relativeTime={formatRelTime(solo.sort_date ?? solo.created_at)}
                                                           rating={solo.rating}
                                                           liked={solo.liked}
-                                                          metaLine={fmtTickMeta(solo.restaurants?.city, solo.visited_at ?? solo.created_at)}
+                                                          metaLine={fmtTickMeta(solo.restaurants?.city, solo.visited_at)}
                                                           photoUrl={solo.photo_url}
                                                           note={solo.content}
                                                           dishMeta={dishMeta}

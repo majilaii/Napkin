@@ -41,12 +41,12 @@ interface Props {
 
 /**
  * Format visited_at date to a short lowercase label: "tue", "wed apr 13", etc.
- * Falls back to created_at if visited_at is missing.
+ * Missing visit dates stay explicitly unknown.
  */
 function formatCardDate(dateStr: string | null | undefined): string {
-    if (!dateStr) return '';
+    if (!dateStr) return 'no date';
     const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return '';
+    if (isNaN(d.getTime())) return 'no date';
     const day = d.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase();
     const month = d.toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
     const date = d.getDate();
@@ -80,7 +80,7 @@ export function JournalNoteCard({ item, palette, tableId, lastSeenAt }: Props) {
 
     const sortDate = item.sort_date ?? item.visited_at ?? item.created_at;
     const isUnseen = !lastSeenAt || (!!sortDate && sortDate > lastSeenAt);
-    const dateLabel = formatCardDate(item.visited_at ?? item.sort_date);
+    const dateLabel = formatCardDate(item.visited_at);
 
     // Kicker: "noted · tue · with clara, thomas" (lowercase, middle-dot separated)
     const kickerParts: string[] = ['noted'];

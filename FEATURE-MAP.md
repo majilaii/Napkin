@@ -149,6 +149,21 @@ Entry companion pickers list mutual follows only. Search uses `user-profile?acti
 - Saves are public-by-default profile signals gated by `account_privacy`, read through SECURITY DEFINER RPC `fn_restaurant_saves_visible` (`supabase/functions/restaurant-history/index.ts`, `supabase/migrations/20260710160000_fn_restaurant_saves_visible.sql`).
 - `visibility='private'` entries are hidden; public eligibility is centralized in `is_entry_publicly_eligible` (`supabase/functions/post-interactions/index.ts`, `app/entry-detail.tsx`).
 
+### Reviews and repeat visits (5 September 2026)
+
+- `/restaurant/[id]` adds `components/restaurants/RestaurantVisitActions.tsx` and `VisitReviewSheet.tsx`, fed by `useRestaurantPage.self_log` and `useRestaurantVisitMutations`. `Been here`/`Been again` call authenticated `entry?action=record_visit`; date and review saves call `save_visit`; latest bare undo calls `undo_visit`. New service-role RPCs write `entries`, author `entry_participants`, and approved `entry_photos` through existing image lifecycle writers. Legacy status, likes and pins are preserved.
+- A quick visit has an unknown `visited_at`, no rating or text, and friends visibility. Intentional repeats create distinct entries; retries retain the nonce. Add a review updates the selected entry ID with optional half-stars, words and photos. Photos stage on Save and bind atomically with the review. Cancel discards drafts. Existing full `Log this meal` remains available.
+- The visit plate opens history, ordered by recording time and ID; changing a date does not renumber visits. Dates remain optional, and undated history says `no date`. All-time counts include bare visits, while averages use rated entries and calendar-year/month/90-day awards require a known visit date. Unknown dates cannot join a same-night merge. Existing diary keysets retain their ordering fallback without turning it into a displayed visit date.
+- `/restaurant-reviews` retains `useRestaurantReviews` and `restaurant-history?action=reviews` / `get_public_reviews_page`. The EF batch-loads `entry_photos` only for eligible returned review IDs, adding `photo_urls` with legacy `photo_url` fallback. Light rows display text and 1–3 inline photos, plus overflow count; photos open read-only `PhotoLightbox`. Long text expands in place. Public eligibility and pagination are unchanged.
+- States: initial loading disables visit controls; no visits shows Been here; existing bare visit offers Add a review; reviewed visit shows a read-only summary with explicit edit. History/date/editor sheets have explicit close controls. Network/moderation/save failures retain the draft and show an error; uncertain record failure offers Retry visit. All reviews preserves initial loading/error/empty and subsequent-page retry states. Own bare Feed rows say `been to` among peer activity.
+
+| Control | Refusal conditions | Live verification |
+|---|---|---|
+| Been here / Been again / Retry visit | Signed out, request pending, no restaurant identity; server rejects invalid/reused nonce for another restaurant | WRITE — test fixtures only |
+| Add a review / edit / date / Save | Entry not owned or tied to a supper/round; invalid half-stars/date/text/photos; moderation failure; pending request | WRITE — sheet open/close is read-only; saving uses fixtures only |
+| undo | Only offered for the newly recorded bare visit; server refuses anything except the latest owned, undated, unshared and unenriched entry | DELETE — isolated SQL/component fixtures only |
+| Visit count / choose visit / more / review photo / close | Missing content; disabled while a write is pending | READ-ONLY — native simulator allowed |
+
 ## 3. Per-card states
 
 “Intended-empty” below means the query completed and code received an empty array/zero/null allowed by its contract. “Broken-empty” means a query errored, never enabled, lost identity/parameters, or returned an unexpected shape. Preserve this distinction in screenshots and fixes.
@@ -484,3 +499,7 @@ All recipes are read-only unless they explicitly say **fixture/test only**. Pref
 1. Mock successful wishlist/list rows with null coordinates; open Map and the unmappable repair sheet (`components/wishlist/UnmappedSpotsSheet.tsx`).
 2. Mock the same source request failing to distinguish broken-empty from unmappable data.
 3. Set simulator location permission to denied and confirm the global map remains usable while nearby UI explains/requests permission (`hooks/useNearbyLocation.ts`).
+
+### Reviews and visits verification — 5 September 2026
+
+Native iPhone 16e / iOS 26.2 dev client evidence: live restaurant and All reviews read-only; isolated local query/mutation fixtures for bare/repeat visit, older-visit selection, combined rating/text/photos, optional calendar and cleared date, stable history, error/retry/undo, inline review photos and gallery overflow, more/less, empty/error/loading, own bare Feed among peers, and undated Diary. Screenshots: `.kanban/screens/reviews-visits/`. Fixture routes and adapters were removed after capture; production writes were never exercised. RPC writes and competing updates are covered by `scripts/test-visits-native.sh` and the visit SQL specs; real schema replay runs in migration CI.

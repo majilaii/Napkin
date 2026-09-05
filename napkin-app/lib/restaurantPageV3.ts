@@ -1,3 +1,4 @@
+import { visitDateLabel, visitOrderDate } from '@/lib/visitDates';
 import { todaysHoursLine } from '@/lib/restaurantHours';
 import type {
     PublicReviewCard,
@@ -153,7 +154,7 @@ export function chooseTableNotesGroup(
 
     for (const groupRows of groups.values()) {
         groupRows.sort((a, b) => {
-            if (a.visited_at !== b.visited_at) return a.visited_at < b.visited_at ? 1 : -1;
+            if (visitOrderDate(a) !== visitOrderDate(b)) return visitOrderDate(a) < visitOrderDate(b) ? 1 : -1;
             return b.entry_id.localeCompare(a.entry_id);
         });
     }
@@ -164,8 +165,8 @@ export function chooseTableNotesGroup(
     if (!tableId) {
         tableId = [...groups.entries()]
             .sort(([idA, rowsA], [idB, rowsB]) => {
-                const dateA = rowsA[0]?.visited_at ?? '';
-                const dateB = rowsB[0]?.visited_at ?? '';
+                const dateA = visitOrderDate(rowsA[0] ?? {});
+                const dateB = visitOrderDate(rowsB[0] ?? {});
                 if (dateA !== dateB) return dateA < dateB ? 1 : -1;
                 return idA.localeCompare(idB);
             })[0][0];
@@ -179,6 +180,6 @@ export function chooseTableNotesGroup(
     };
 }
 
-export function monthLabel(date: string): string {
-    return new Date(date).toLocaleDateString('en-US', { month: 'short' }).toLowerCase();
+export function monthLabel(date: string | null): string {
+    return visitDateLabel(date, { month: 'short' }, 'en-US').toLowerCase();
 }

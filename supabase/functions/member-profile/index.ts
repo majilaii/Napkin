@@ -41,7 +41,7 @@ type TopEntry = {
     id: string;
     restaurant_name: string;
     rating: number;
-    visited_at: string;
+    visited_at: string | null;
 };
 
 type RecentActivityItem = {
@@ -49,7 +49,8 @@ type RecentActivityItem = {
     id: string; // entry_id or table_night_id
     restaurant_name: string;
     rating: number | null;
-    date: string; // ISO
+    date: string | null;
+    created_at?: string; // ISO
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -177,7 +178,7 @@ serve(async (req) => {
             .is('table_night_id', null)
             .neq('visibility', 'private')
             .order('rating', { ascending: false })
-            .order('visited_at', { ascending: false });
+            .order('visited_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).order('id', { ascending: false });
         if (entryStatsErr) throw entryStatsErr;
 
         const allEntries = (entryRows ?? []) as Array<{
@@ -253,7 +254,7 @@ serve(async (req) => {
                     id: e.id,
                     restaurant_name: restaurantName,
                     rating: e.rating as number,
-                    visited_at: e.visited_at ?? e.created_at,
+                    visited_at: e.visited_at ?? null,
                 };
             });
 
@@ -266,7 +267,7 @@ serve(async (req) => {
             .eq('table_id', tableId)
             .is('table_night_id', null)
             .neq('visibility', 'private')
-            .order('visited_at', { ascending: false })
+            .order('created_at', { ascending: false }).order('id', { ascending: false })
             .limit(10);
         if (recentEntryErr) throw recentEntryErr;
 
@@ -288,7 +289,8 @@ serve(async (req) => {
                 id: e.id,
                 restaurant_name: restaurantName,
                 rating: e.rating,
-                date: e.visited_at ?? e.created_at,
+                date: e.visited_at ?? null,
+                created_at: e.created_at,
             };
         });
 
@@ -310,12 +312,13 @@ serve(async (req) => {
                     restaurant_name: restaurantName,
                     rating: myParticipation?.rating ?? null,
                     date: r.revealed_at ?? r.created_at,
+                    created_at: r.created_at,
                 };
             });
 
         // Merge, sort by date desc, slice to 10
         const recentActivity = [...entryActivity, ...roundActivity]
-            .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+            .sort((a, b) => (b.date ?? b.created_at ?? '').localeCompare(a.date ?? a.created_at ?? '') || b.id.localeCompare(a.id))
             .slice(0, 10);
 
         return json({

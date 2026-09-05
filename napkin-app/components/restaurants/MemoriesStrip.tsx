@@ -1,3 +1,4 @@
+import { compareVisitRecords } from '@/lib/visitDates';
 import React, { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
@@ -44,10 +45,7 @@ export function buildMemoryTiles(
         tiles.push({ url: normalizedUrl, entryId: entryId ?? null, viewAs });
     };
 
-    const selfLog = [...(payload.self_log ?? [])].sort((a, b) => {
-        if (a.visited_at !== b.visited_at) return a.visited_at < b.visited_at ? 1 : -1;
-        return b.id.localeCompare(a.id);
-    });
+    const selfLog = [...(payload.self_log ?? [])].sort(compareVisitRecords);
     for (const row of selfLog) {
         for (const photo of row.photos) add(photo.url, row.entry_id);
     }

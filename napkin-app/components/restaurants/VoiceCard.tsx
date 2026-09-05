@@ -23,7 +23,7 @@ interface Voice {
     avatarUrl?: string | null;
     displayName: string;
     rating: number | null;
-    date: string;
+    date: string | null;
     note?: string | null;
 }
 
@@ -32,7 +32,8 @@ interface Props {
     onPress?: () => void;
 }
 
-function shortDate(iso: string): string {
+function shortDate(iso: string | null): string {
+    if (!iso) return 'no date';
     try {
         const d = new Date(iso);
         return d.toLocaleDateString(undefined, { month: 'short' });

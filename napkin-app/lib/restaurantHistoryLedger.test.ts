@@ -39,6 +39,18 @@ describe('restaurant history ledger', () => {
         expect(deriveLedgerStats([row({ rating: null })]).average).toBeNull();
     });
 
+    it('counts undated visits without inventing first/last dates or a rating', () => {
+        const stats = deriveLedgerStats([
+            row({ id: 'old', visited_at: null, created_at: '2026-09-01', rating: null }),
+            row({ id: 'new', visited_at: null, created_at: '2026-09-05', rating: null }),
+        ]);
+        expect(stats.count).toBe(2);
+        expect(stats.average).toBeNull();
+        expect(stats.first).toBeNull();
+        expect(stats.last).toBeNull();
+        expect(stats.rows.map((item) => item.id)).toEqual(['new', 'old']);
+    });
+
     it('composes ELSEWHERE and omits it when every source is empty', () => {
         const lists = [
             { id: 'one', title: 'Tokyo 2026' },

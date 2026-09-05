@@ -59,6 +59,7 @@ import {
     TableNotesSection,
     formatLedgerLine,
 } from '@/components/restaurants';
+import { RestaurantVisitActions } from '@/components/restaurants/RestaurantVisitActions';
 import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippings';
 import { useRestaurantFeaturedLists } from '@/hooks/restaurants/useRestaurantFeaturedLists';
 import { useReserveLink } from '@/hooks/restaurants/useReserveLink';
@@ -366,12 +367,12 @@ export default function RestaurantScreen() {
     );
     const ledgerLine = useMemo(
         () => formatLedgerLine({
-            youRating: numberTiers?.you.value,
-            visitCount,
+            youRating: undefined,
+            visitCount: 0,
             friendsRating: numberTiers?.friends.value,
             friendsCount: numberTiers?.friendsCohort.length ?? 0,
         }),
-        [numberTiers, visitCount],
+        [numberTiers],
     );
     const reserveUrl = persistedRow?.reserve_url
         ?? reserveLink.data?.reserve_url
@@ -475,6 +476,17 @@ export default function RestaurantScreen() {
                             <RestaurantActions
                                 saved={isSaved}
                                 onLog={handleLogPress}
+                                primaryActions={<RestaurantVisitActions
+                                    key={`${user?.id ?? 'signed-out'}:${id}`}
+                                    userId={user?.id} pageId={id ?? ''} restaurantId={persistedRestaurantId}
+                                    restaurantPayload={savePayload} restaurantName={restaurant.name}
+                                    visits={page.data?.self_log ?? []} disabled={page.isLoading}
+                                    palette={palette} onLog={handleLogPress}
+                                    onOpenVisit={(visit) => {
+                                        if (visit.entry_id) router.push({ pathname: '/entry-detail', params: { entryId: visit.entry_id } });
+                                        else if (persistedRestaurantId) router.push({ pathname: '/restaurant-history', params: { id: persistedRestaurantId, name: restaurant.name } });
+                                    }}
+                                />}
                                 onPin={() => setSaveSheetOpen(true)}
                                 onDirections={() => quietOpen(directionsUrl)}
                                 onWebsite={restaurant.website

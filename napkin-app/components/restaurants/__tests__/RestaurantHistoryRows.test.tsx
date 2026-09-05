@@ -110,9 +110,24 @@ describe('restaurant history rows', () => {
         expect(renderedText(renderer)).toEqual(expect.arrayContaining([
             '4.2',
             '3 visits',
-            'first 26 aug 2026 · last 2 sep 2026',
+            'first dated 26 aug 2026 · last dated 2 sep 2026',
         ]));
         act(() => renderer.unmount());
+    });
+
+    it('keeps the visit count when every visit date is unknown', () => {
+        let renderer: any;
+        act(() => {
+            renderer = TestRenderer.create(
+                <RestaurantHistoryMasthead average={null} count={2} first={null} last={null} palette={Colors.light} />,
+            );
+        });
+        expect(renderedText(renderer)).toContain('2 visits');
+        expect(renderedText(renderer).some((text: unknown) => typeof text === 'string' && text.includes('first'))).toBe(false);
+        act(() => renderer.unmount());
+        const undated = renderRow(row({ visited_at: null, rating: null, note: null }), false);
+        expect(renderedText(undated)).toContain('NO DATE');
+        act(() => undated.unmount());
     });
 
     it('renders rated prose as a borderless row with a three-up strip and +N scrim', () => {

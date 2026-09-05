@@ -60,12 +60,18 @@ export function StarRating({
                     {/* Left half tap target */}
                     <Pressable
                         onPress={() => handlePress(i, true)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Rate ${i + 0.5} out of 5 stars`}
+                        accessibilityState={{ selected: value === i + 0.5 }}
                         style={[StyleSheet.absoluteFill, { width: size / 2 }]}
                         hitSlop={{ top: 8, bottom: 8, left: 4, right: 0 }}
                     />
                     {/* Right half tap target */}
                     <Pressable
                         onPress={() => handlePress(i, false)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Rate ${i + 1} out of 5 stars`}
+                        accessibilityState={{ selected: value === i + 1 }}
                         style={[StyleSheet.absoluteFill, { left: size / 2, width: size / 2 }]}
                         hitSlop={{ top: 8, bottom: 8, left: 0, right: 4 }}
                     />

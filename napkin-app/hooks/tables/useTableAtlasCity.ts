@@ -30,7 +30,8 @@ export type AtlasVisitRow =
           display_name: string;
           avatar_url: string | null;
           rating: number | null;
-          date: string;
+          date: string | null;
+          created_at?: string;
           table_night_id: string;
           round_participants: AtlasRoundParticipant[];
       }
@@ -41,7 +42,8 @@ export type AtlasVisitRow =
           display_name: string;
           avatar_url: string | null;
           rating: number | null;
-          date: string;
+          date: string | null;
+          created_at?: string;
           entry_id: string;
       };
 

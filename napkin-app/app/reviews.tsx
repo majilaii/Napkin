@@ -19,7 +19,8 @@ import { useUserReviews } from '@/hooks/users/useUserReviews';
 import { flattenPages } from '@/lib/pagination';
 import type { DiaryEntryRow } from '@/hooks/users/useUserProfile';
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | null): string {
+    if (!iso) return 'no date';
     const d = new Date(iso);
     return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
@@ -120,7 +121,7 @@ function ReviewCard({
                 {`— ${row.note ?? ''}`}
             </Text>
             <Text style={[styles.cardDate, { color: palette.textMuted }]}>
-                {formatDate(row.visited_at ?? row.created_at)}
+                {formatDate(row.visited_at)}
             </Text>
         </View>
     );

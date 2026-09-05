@@ -9,7 +9,7 @@ import { shortLedgerDate } from '@/lib/restaurantHistoryLedger';
 
 type Palette = typeof Colors.light;
 
-export function formatHistoryDate(value: string): string {
+export function formatHistoryDate(value: string | null): string {
     return shortLedgerDate(value).toUpperCase();
 }
 
@@ -31,14 +31,16 @@ export function RestaurantHistoryMasthead({
             <Text style={[Type.ratingLarge, { color: palette.amberBright }]}>
                 {average == null ? '—' : average.toFixed(1)}
             </Text>
-            {count > 0 && first && last ? (
+            {count > 0 ? (
                 <View style={styles.mastheadCopy}>
                     <Text style={[Type.restaurantHistoryVisits, { color: palette.text }]}>
                         {`${count} visit${count === 1 ? '' : 's'}`}
                     </Text>
-                    <Text style={[Type.caption, { color: palette.textMuted }]}>
-                        {`first ${first} · last ${last}`}
-                    </Text>
+                    {first && last ? (
+                        <Text style={[Type.caption, { color: palette.textMuted }]}>
+                            {`first dated ${first} · last dated ${last}`}
+                        </Text>
+                    ) : null}
                 </View>
             ) : null}
         </View>
@@ -162,7 +164,7 @@ export function RestaurantHistoryRow({
                 <Pressable
                     onPress={onPress}
                     accessibilityRole="button"
-                    accessibilityLabel={`visit on ${formatHistoryDate(row.visited_at)}`}
+                    accessibilityLabel={row.visited_at ? `visit on ${formatHistoryDate(row.visited_at)}` : 'visit, no date'}
                     style={({ pressed }) => pressed && styles.pressed}
                 >
                     {content}

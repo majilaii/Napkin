@@ -1,3 +1,4 @@
+import { knownVisitDate } from '@/lib/visitDates';
 /**
  * JournalList — shared date-grouped entry list.
  *
@@ -32,8 +33,9 @@ import { EntryCard } from './EntryCard';
 // ── Helpers (exported so journal.tsx + profile.tsx can derive kicker text) ─────
 
 /** Format a date into the short weekday + optional date for the right-edge slot. */
-export function formatWeekday(dateStr: string): string {
-    const d = new Date(dateStr);
+export function formatWeekday(dateStr: string | null): string {
+    const d = knownVisitDate(dateStr);
+    if (!d) return 'no date';
     const now = new Date();
     const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
     if (diffDays < 7) {
@@ -46,8 +48,9 @@ export function formatWeekday(dateStr: string): string {
 }
 
 /** Build the section header label for an entry. */
-export function getSectionLabel(dateStr: string): string {
-    const d = new Date(dateStr);
+export function getSectionLabel(dateStr: string | null): string {
+    const d = knownVisitDate(dateStr);
+    if (!d) return 'No date';
     const now = new Date();
     const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
     if (diffDays < 7) return 'This week';
@@ -56,14 +59,11 @@ export function getSectionLabel(dateStr: string): string {
 
 /** Derive "est. {month}" from the earliest entry in the list. */
 export function getEstMonth(entries: SoloShareActivity[]): string | null {
-    if (entries.length === 0) return null;
-    const oldest = [...entries].sort(
-        (a, b) =>
-            new Date(a.visited_at ?? a.created_at).getTime() -
-            new Date(b.visited_at ?? b.created_at).getTime(),
-    )[0];
-    const d = new Date(oldest.visited_at ?? oldest.created_at);
-    return d.toLocaleDateString('en-US', { month: 'long' }).toLowerCase();
+    const dated = entries.map((entry) => knownVisitDate(entry.visited_at))
+        .filter((date): date is Date => date != null);
+    if (dated.length === 0) return null;
+    const oldest = dated.sort((a, b) => a.getTime() - b.getTime())[0];
+    return oldest.toLocaleDateString('en-US', { month: 'long' }).toLowerCase();
 }
 
 // ── Flat list item types ──────────────────────────────────────────────────────
@@ -75,8 +75,12 @@ export type FlatItem = SectionHeaderItem | EntryItem;
 export function buildFlatList(entries: SoloShareActivity[]): FlatItem[] {
     const items: FlatItem[] = [];
     let lastSection = '';
-    for (const entry of entries) {
-        const label = getSectionLabel(entry.visited_at ?? entry.created_at);
+    const ordered = [
+        ...entries.filter((entry) => knownVisitDate(entry.visited_at)),
+        ...entries.filter((entry) => !knownVisitDate(entry.visited_at)),
+    ];
+    for (const entry of ordered) {
+        const label = getSectionLabel(entry.visited_at);
         if (label !== lastSection) {
             items.push({ _type: 'section', label, key: `section-${label}` });
             lastSection = label;
@@ -163,7 +167,7 @@ export function JournalList({
             const { entry } = item;
             const restaurantName = entry.restaurants?.name ?? 'Unknown';
             const city = entry.restaurants?.city ?? undefined;
-            const weekday = formatWeekday(entry.visited_at ?? entry.created_at);
+            const weekday = formatWeekday(entry.visited_at);
             const hasBody = !!(entry.content || entry.photo_url);
 
             const companions = (entry.companions ?? [])

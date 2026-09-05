@@ -317,6 +317,7 @@ type UtilityAction = {
 export function RestaurantActions({
     saved,
     onLog,
+    primaryActions,
     onPin,
     onDirections,
     onWebsite,
@@ -327,6 +328,7 @@ export function RestaurantActions({
 }: {
     saved: boolean;
     onLog: () => void;
+    primaryActions?: React.ReactNode;
     onPin: () => void;
     onDirections: () => void;
     onWebsite?: () => void;
@@ -355,7 +357,7 @@ export function RestaurantActions({
             : [utilities];
     return (
         <View style={[styles.actions, flushTop && styles.actionsFlushTop]}>
-            <Pressable
+            {primaryActions ?? <Pressable
                 onPress={onLog}
                 accessibilityRole="button"
                 accessibilityLabel="log this meal"
@@ -367,7 +369,7 @@ export function RestaurantActions({
             >
                 <Ionicons name="add" size={IconSize.md} color={palette.textInverse} />
                 <Text style={[styles.primaryActionText, { color: palette.textInverse }]}>LOG THIS MEAL</Text>
-            </Pressable>
+            </Pressable>}
             <View style={styles.utilityRows}>
                 {utilityRows.map((row, rowIndex) => (
                     <View
@@ -413,7 +415,7 @@ function QuoteCard({
     note: string;
     name: string;
     rating: number | null;
-    visitedAt: string;
+    visitedAt: string | null;
     suffix?: string;
     onPress?: () => void;
     palette: Palette;

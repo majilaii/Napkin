@@ -1,3 +1,4 @@
+import { knownVisitDate } from '@/lib/visitDates';
 /**
  * useUserDiary — paginated chronological diary for a user.
  * TICKET-025 / TICKET-035
@@ -42,9 +43,8 @@ export function flattenDiary(data: ReturnType<typeof useUserDiary>['data']) {
 export function groupDiaryByMonth(rows: DiaryEntryRow[]): { monthKey: string; monthLabel: string; rows: DiaryEntryRow[] }[] {
     const map = new Map<string, DiaryEntryRow[]>();
     for (const row of rows) {
-        const ts = row.visited_at ?? row.created_at;
-        const d = new Date(ts);
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const d = knownVisitDate(row.visited_at);
+        const key = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` : 'undated';
         const existing = map.get(key);
         if (existing) {
             existing.push(row);
@@ -56,7 +56,8 @@ export function groupDiaryByMonth(rows: DiaryEntryRow[]): { monthKey: string; mo
     const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
         'July', 'August', 'September', 'October', 'November', 'December'];
 
-    return [...map.entries()].map(([key, monthRows]) => {
+    return [...map.entries()].sort(([a], [b]) => a === 'undated' ? 1 : b === 'undated' ? -1 : 0).map(([key, monthRows]) => {
+        if (key === 'undated') return { monthKey: key, monthLabel: 'No date', rows: monthRows };
         const [year, month] = key.split('-').map(Number);
         const label = month === new Date().getMonth() + 1 && year === new Date().getFullYear()
             ? MONTHS[month - 1]

@@ -1,3 +1,4 @@
+import { visitDateLabel } from '@/lib/visitDates';
 /**
  * Entry Detail — "Review · The Folio" (review-page-redesign handoff).
  *
@@ -93,7 +94,7 @@ interface EntryDetail {
     dish_description: string | null;
     /** TICKET-075: author's Letterboxd-style like (read-only here). */
     liked: boolean;
-    visited_at: string;
+    visited_at: string | null;
     created_at: string;
     allow_public_replies: boolean;
     table_id: string | null;
@@ -268,39 +269,7 @@ async function fetchEntry(entryId?: string, nightId?: string, userId?: string): 
     } as unknown as EntryDetail;
 }
 
-function getRelativeDate(dateString: string): { relative: string; full: string } {
-    const date = new Date(dateString);
-    const full = date.toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
 
-    if (isNaN(date.getTime())) return { relative: full, full };
-
-    const nowMs = Date.now();
-    const diffMs = nowMs - date.getTime();
-    if (diffMs < 0) return { relative: full, full };
-    const diffSec = Math.floor(diffMs / 1000);
-    const diffMin = Math.floor(diffSec / 60);
-    const diffHrs = Math.floor(diffMin / 60);
-    const diffDays = Math.floor(diffHrs / 24);
-
-    let relative: string;
-    if (diffSec < 60) {
-        relative = 'Just now';
-    } else if (diffMin < 60) {
-        relative = `${diffMin} minute${diffMin === 1 ? '' : 's'} ago`;
-    } else if (diffHrs < 24) {
-        relative = `${diffHrs} hour${diffHrs === 1 ? '' : 's'} ago`;
-    } else if (diffDays === 1) {
-        relative = 'Yesterday';
-    } else if (diffDays < 7) {
-        relative = `${diffDays} days ago`;
-    } else if (diffDays < 14) {
-        relative = 'Last week';
-    } else {
-        relative = full;
-    }
-
-    return { relative, full };
-}
 
 /** Short relative time for reply bubbles ("just now", "2h", "3d"). */
 function formatRelativeTime(dateStr: string): string {
@@ -1053,7 +1022,6 @@ function EntryDetailScreen() {
 
     const restaurantName = entry.restaurants?.name ?? 'Unknown spot';
     const displayName = entry.profiles?.display_name ?? 'Someone';
-    const { full: fullDate } = getRelativeDate(entry.visited_at ?? entry.created_at);
 
     const hasCategoryRatings =
         entry.vibe_rating != null ||
@@ -1078,11 +1046,7 @@ function EntryDetailScreen() {
     const ratingVerb = entry.rating != null && entry.rating > 0 ? 'tried' : 'noted';
 
     // Short date in field-notebook style ("18 jun"), always lowercase downstream.
-    const shortDate = (() => {
-        const d = new Date(entry.visited_at ?? entry.created_at);
-        if (isNaN(d.getTime())) return fullDate;
-        return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-    })();
+    const shortDate = visitDateLabel(entry.visited_at);
 
     // Kicker suffix on the who·when row — round / supper provenance.
     const kickerSuffix = isRoundEntry

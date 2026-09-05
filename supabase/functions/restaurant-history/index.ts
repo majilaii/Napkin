@@ -1,3 +1,4 @@
+import { loadReviewPhotos } from './reviewPhotos.ts';
 /**
  * Restaurant History Edge Function
  *
@@ -60,7 +61,8 @@ type Visit = {
     kind: 'round' | 'solo';
     id: string; // table_night_id for rounds, entry_id for solos
     rating: number | null;
-    date: string; // ISO
+    date: string | null; // Actual visit date; never synthesized from record time
+    created_at?: string;
     user_display_names: string[]; // participants (rounds) or single author (solo)
     entry_id?: string; // for solos — convenient for navigation
     table_night_id?: string; // for rounds
@@ -88,6 +90,7 @@ type PublicReviewCard = {
     avatar_url: string | null;
     rating: number;
     note_excerpt: string;
+    photo_urls?: string[];
     photo_url: string | null;
     created_at: string;
     public_reaction_count: number;
@@ -497,6 +500,9 @@ serve(async (req) => {
                 }
             }
 
+            // Only enrich IDs that passed the public-review visibility predicate.
+            const photosByEntry = await loadReviewPhotos(supabase, raw.map((row) => row.entry_id));
+
             const cards: PublicReviewCard[] = raw.map((row: any) => ({
                 entry_id: row.entry_id,
                 user_id: row.user_id,
@@ -506,6 +512,7 @@ serve(async (req) => {
                 rating: row.rating,
                 note_excerpt: row.content ?? '',
                 photo_url: row.photo_url ?? null,
+                photo_urls: photosByEntry.get(row.entry_id) ?? (row.photo_url ? [row.photo_url] : []),
                 created_at: row.created_at,
                 public_reaction_count: row.public_reaction_count ?? 0,
                 public_reply_count: row.public_reply_count ?? 0,
@@ -832,7 +839,7 @@ serve(async (req) => {
                 .eq('restaurant_id', restaurantId)
                 .is('table_night_id', null)
                 .not('rating', 'is', null)
-                .order('visited_at', { ascending: false });
+                .order('visited_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).order('id', { ascending: false });
             if (entriesErr) throw entriesErr;
 
             // Filter out solo entries that are now bound to a merged round in this table
@@ -875,12 +882,13 @@ serve(async (req) => {
                     id: e.id,
                     entry_id: e.id,
                     rating: e.rating,
-                    date: (e.visited_at ?? e.created_at) as string,
+                    date: e.visited_at ?? null,
+                    created_at: e.created_at,
                     user_display_names: name ? [name] : [],
                 });
             }
 
-            visits.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+            visits.sort((a, b) => (b.date ?? b.created_at ?? '').localeCompare(a.date ?? a.created_at ?? '') || b.id.localeCompare(a.id));
 
             const ratedVisits = visits.filter((v) => v.rating != null);
             const tableAverage =
@@ -916,8 +924,7 @@ serve(async (req) => {
                 `)
                 .eq('user_id', user.id)
                 .eq('restaurant_id', restaurantId)
-                .not('rating', 'is', null)
-                .order('visited_at', { ascending: false });
+                .order('visited_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).order('id', { ascending: false });
             if (excludeEntryId) q = q.neq('id', excludeEntryId);
 
             const { data: entries, error } = await q;
@@ -929,7 +936,8 @@ serve(async (req) => {
                 entry_id: e.id,
                 table_night_id: e.table_night_id ?? undefined,
                 rating: e.rating,
-                date: (e.visited_at ?? e.created_at) as string,
+                date: e.visited_at ?? null,
+                created_at: e.created_at,
                 user_display_names: [],
             }));
 
@@ -1088,7 +1096,7 @@ serve(async (req) => {
             let personalAverage: number | null = null;
             let personalVisitCount = 0;
             let personalRatings: number[] = [];
-            let personalLastVisit: { date: string; rating: number | null } | null = null;
+            let personalLastVisit: { date: string | null; rating: number | null } | null = null;
 
             {
                 const { data: personalEntries, error: personalErr } = await supabase
@@ -1096,17 +1104,16 @@ serve(async (req) => {
                     .select('id, rating, visited_at, created_at')
                     .eq('user_id', user.id)
                     .eq('restaurant_id', resolvedRestaurantId)
-                    .not('rating', 'is', null)
-                    .order('visited_at', { ascending: false });
+                    .order('visited_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).order('id', { ascending: false });
                 if (personalErr) throw personalErr;
 
                 const rated = (personalEntries ?? []).filter((e: any) => e.rating != null);
-                personalVisitCount = rated.length;
+                personalVisitCount = (personalEntries ?? []).length;
                 if (rated.length > 0) {
                     personalRatings = rated.map((e: any) => e.rating as number);
                     personalAverage = personalRatings.reduce((a, b) => a + b, 0) / personalRatings.length;
                     personalLastVisit = {
-                        date: (rated[0].visited_at ?? rated[0].created_at) as string,
+                        date: rated[0].visited_at ?? null,
                         rating: rated[0].rating ?? null,
                     };
                 }
@@ -1130,7 +1137,7 @@ serve(async (req) => {
                     .in('table_id', candidateTableIds)
                     .eq('restaurant_id', resolvedRestaurantId)
                     .not('rating', 'is', null)
-                    .order('visited_at', { ascending: false });
+                    .order('visited_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).order('id', { ascending: false });
                 if (tableEntriesErr) throw tableEntriesErr;
 
                 if ((tableEntries ?? []).length > 0) {
@@ -1251,7 +1258,7 @@ serve(async (req) => {
                     .is('table_night_id', null)
                     .not('rating', 'is', null)
                     .or(`user_id.eq.${user.id},visibility.neq.private`)
-                    .order('visited_at', { ascending: false });
+                    .order('visited_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false }).order('id', { ascending: false });
                 if (feedEntriesErr) throw feedEntriesErr;
 
                 const feedProfiles = await fetchProfiles(supabase, (feedEntries ?? []).map((e: any) => e.user_id as string));
@@ -1265,7 +1272,8 @@ serve(async (req) => {
                         user_id: e.user_id,
                         avatar_url: prof?.avatar_url ?? null,
                         rating: e.rating,
-                        date: e.visited_at ?? e.created_at,
+                        date: e.visited_at ?? null,
+                        created_at: e.created_at,
                         user_display_names: prof?.display_name ? [prof.display_name] : [],
                         note: e.content ?? null,
                         is_self: e.user_id === user.id,
@@ -1321,7 +1329,7 @@ serve(async (req) => {
                 }
             }
 
-            visitsRaw.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+            visitsRaw.sort((a, b) => ((b.date ?? b.created_at ?? '').localeCompare(a.date ?? a.created_at ?? '') || b.id.localeCompare(a.id)));
 
             // ── Public reviews ──
             const { data: publicReviewRows, error: publicReviewsErr } = await supabase
@@ -1546,7 +1554,7 @@ serve(async (req) => {
                     tablesCountWithLogs = distinctTableIds.size;
 
                     // Earliest entry date
-                    const allDates = (loggedTables as any[]).map((e: any) => (e.visited_at ?? e.created_at) as string);
+                    const allDates = (loggedTables as any[]).map((e: any) => e.created_at as string);
                     if (allDates.length > 0) {
                         firstLoggedAtByYourTable = allDates.sort()[0];
                     }
