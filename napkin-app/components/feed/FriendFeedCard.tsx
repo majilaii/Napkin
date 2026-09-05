@@ -42,7 +42,7 @@ function useRowNav(row: FriendFeedRow) {
             params: isOwn ? { entryId: row.id } : { entryId: row.id, viewAs: 'public' },
         });
 
-    return { rating, onPress };
+    return { rating, onPress, actor: isOwn ? 'you' : row.author.display_name };
 }
 
 export function FriendFeedCard({ row, showDivider = true }: Props) {
@@ -91,14 +91,14 @@ export function FriendFeedCard({ row, showDivider = true }: Props) {
 function FeedNoteRow({ row, onLongPress, showDivider }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const { rating, onPress } = useRowNav(row);
+    const { rating, onPress, actor } = useRowNav(row);
 
     const restaurantName = row.restaurant?.name ?? 'somewhere';
     const content = row.content?.trim();
     const photo = row.photos[0];
     const time = relativeFeedTime(row.sort_date);
     const tintSeed = row.restaurant?.id ?? row.restaurant_id ?? row.id;
-    const accessibilityLabel = entryAccessibilityLabel(row, rating, true);
+    const accessibilityLabel = entryAccessibilityLabel(row, rating, true, actor);
 
     return (
         <>
@@ -126,9 +126,9 @@ function FeedNoteRow({ row, onLongPress, showDivider }: Props) {
                             numberOfLines={1}
                             style={[Type.feedMetaStrong, styles.noteAuthor, { color: palette.text }]}
                         >
-                            {row.author.display_name}
+                            {actor}
                         </Text>
-                        <Text style={[Type.feedMeta, { color: palette.textMuted }]}>· noted</Text>
+                        <Text style={[Type.feedMeta, { color: palette.textMuted }]}>· {rating > 0 ? 'tried' : 'noted'}</Text>
                         <View style={styles.metaSpacer} />
                         <Text style={[Type.feedMeta, { color: palette.textFaint }]}>{time}</Text>
                     </View>
@@ -193,14 +193,14 @@ function FeedNoteRow({ row, onLongPress, showDivider }: Props) {
 function CompressedCard({ row, onLongPress }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const { rating, onPress } = useRowNav(row);
+    const { rating, onPress, actor } = useRowNav(row);
 
     const restaurantName = row.restaurant?.name ?? 'somewhere';
     const content = row.content?.trim();
     const photos = row.photos.slice(0, 3);
     const time = relativeFeedTime(row.sort_date);
     const tintSeed = row.restaurant?.id ?? row.restaurant_id ?? row.id;
-    const accessibilityLabel = entryAccessibilityLabel(row, rating, true);
+    const accessibilityLabel = entryAccessibilityLabel(row, rating, true, actor);
     const likeLabel = row.reaction_count > 0
         ? `${row.reaction_count} ${row.reaction_count === 1 ? 'like' : 'likes'}`
         : null;
@@ -236,9 +236,9 @@ function CompressedCard({ row, onLongPress }: Props) {
                     style={[Type.feedMeta, styles.cardBylineText, { color: palette.textMuted }]}
                 >
                     <Text style={[Type.feedMetaStrong, { color: palette.text }]}>
-                        {row.author.display_name}
+                        {actor}
                     </Text>
-                    {' · noted'}
+                    {` · ${rating > 0 ? 'tried' : 'noted'}`}
                 </Text>
                 <Text style={[Type.feedMeta, { color: palette.textFaint }]}>{time}</Text>
             </View>
@@ -294,12 +294,12 @@ function CompressedCard({ row, onLongPress }: Props) {
 function LedgerRow({ row, onLongPress, showDivider }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const { rating, onPress } = useRowNav(row);
+    const { rating, onPress, actor } = useRowNav(row);
 
     const restaurantName = row.restaurant?.name ?? 'somewhere';
-    const firstName = row.author.display_name.trim().split(/\s+/)[0] || row.author.display_name;
+    const firstName = actor.trim().split(/\s+/)[0] || actor;
     const time = relativeFeedTime(row.sort_date);
-    const accessibilityLabel = entryAccessibilityLabel(row, rating, false);
+    const accessibilityLabel = entryAccessibilityLabel(row, rating, false, actor);
 
     return (
         <>
@@ -342,11 +342,11 @@ function LedgerRow({ row, onLongPress, showDivider }: Props) {
     );
 }
 
-function entryAccessibilityLabel(row: FriendFeedRow, rating: number, includeContent: boolean): string {
+function entryAccessibilityLabel(row: FriendFeedRow, rating: number, includeContent: boolean, actor: string): string {
     const restaurantName = row.restaurant?.name ?? 'somewhere';
     return [
-        row.author.display_name,
-        'noted',
+        actor,
+        rating > 0 ? 'tried' : 'noted',
         restaurantName,
         rating > 0 ? rating.toFixed(1) : null,
         includeContent ? row.content?.trim() : null,

@@ -1,24 +1,12 @@
-/**
- * useFriendsFeed — cursor-paginated friends-only reviews feed (TICKET-098).
- *
- * Rows are public-eligible entries authored by the viewer's follow set
- * (asymmetric follows; self excluded; blocks excluded), reverse-chron.
- * Chronology only — no ranking.
- *
- * Engagement fields are PUBLIC-scope counters, but the field NAMES match the
- * legacy FeedEntry (reaction_count / comment_count / top_emojis / my_reactions)
- * on purpose: the shared optimistic walkers in usePostInteractions and
- * useUpdateEntry/useDeleteEntry patch these names across feed pages
- * [ARCH-REVIEW-2].
- *
- * Wire shape (per page): canonical Page<FriendFeedRow> envelope.
- */
+/** Viewer + followed public activity. Namespaced non-entry IDs keep shared entry cache walkers safe. */
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { useCursorPagedQuery, flattenPages, type Page } from '@/lib/pagination';
 import type { EmojiCount } from '@/hooks/posts/usePostInteractions';
 
 export interface FriendFeedRow {
+    kind?: 'entry';
+    activity_key?: string;
     id: string;
     user_id: string;
     restaurant_id: string | null;
@@ -46,24 +34,44 @@ export interface FriendFeedRow {
     };
 }
 
-async function fetchFriendsFeedPage(cursor: string | null): Promise<Page<FriendFeedRow>> {
-    return callEdgeFn<Page<FriendFeedRow>>('feed-friends', {
-        body: { cursor, limit: 30 },
+interface ActivityBase {
+    id: string;
+    activity_key: string;
+    user_id: string;
+    sort_date: string;
+    created_at: string;
+    author: FriendFeedRow['author'];
+}
+export interface PinFeedRow extends ActivityBase {
+    kind: 'pin';
+    restaurant_id: string;
+    restaurant: NonNullable<FriendFeedRow['restaurant']>;
+}
+export interface ListFeedRow extends ActivityBase {
+    kind: 'list';
+    list_id: string;
+    title: string;
+    emoji: string | null;
+    updated_at: string;
+    action: 'created' | 'updated';
+}
+export type FriendsActivityRow = FriendFeedRow | PinFeedRow | ListFeedRow;
+
+async function fetchFriendsFeedPage(cursor: string | null): Promise<Page<FriendsActivityRow>> {
+    return callEdgeFn<Page<FriendsActivityRow>>('feed-friends', {
+        body: { cursor, limit: 30, include_activity: true },
     });
 }
 
 export function useFriendsFeed(userId: string | undefined) {
-    return useCursorPagedQuery<FriendFeedRow>({
-        queryKey: userId ? queryKeys.feed.friends(userId) : ['feed', 'friends', 'anon'],
+    return useCursorPagedQuery<FriendsActivityRow>({
+        queryKey: userId ? queryKeys.feed.activity(userId) : ['feed', 'friends', 'anon', 'activity'],
         fetchPage: (cursor) => fetchFriendsFeedPage(cursor),
         enabled: !!userId,
         staleTime: 1000 * 60 * 2,
     });
 }
 
-/** Flatten all pages of friend-feed rows. */
-export function flattenFriendsFeed(
-    data: ReturnType<typeof useFriendsFeed>['data'],
-): FriendFeedRow[] {
+export function flattenFriendsFeed(data: ReturnType<typeof useFriendsFeed>['data']): FriendsActivityRow[] {
     return flattenPages(data);
 }

@@ -1,44 +1,29 @@
-/**
- * FollowingFeed — the purified Following body of the Feed tab (TICKET-125).
- *
- * Pure chronological reviews from people you follow — nothing else. This is the
- * pre-125 feed.tsx FlatList (date-sectioned FriendFeedCard rows, keyset
- * paginated) with discovery SUBTRACTED:
- *   - the TrendingRail is GONE from the header (it moved to For You),
- *   - the sparse tail is the "· you're caught up ·" mark ONLY (the discovery
- *     ledger moved to For You).
- * Its empty state is the honest "you don't follow anyone yet" home
- * (FollowingEmptyState — ghost + invite + a quiet hand-off to For You).
- *
- * The single useFriendsFeed subscription lives in feed.tsx and is passed in as
- * `feedQuery` (avoids a double subscription — the load-bearing risk). The shared
- * FeedHeader is passed as `ListHeaderComponent` so the masthead reads continuous
- * across a mode switch.
- */
-import React, { useCallback, useMemo } from 'react';
-import { View, Text, FlatList, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { View, FlatList, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { flattenFriendsFeed, type FriendFeedRow, useFriendsFeed } from '@/hooks/feed';
+import { flattenFriendsFeed, type FriendsActivityRow, useFriendsFeed } from '@/hooks/feed';
 import { ErrorState } from '@/components/ErrorState';
 import { shouldShowSparseTail } from './feedRouting';
 import { feedSectionLabel } from './feedDates';
+import { ActivityFeedRow } from './ActivityFeedRow';
+import { SectionKicker } from './SectionKicker';
 import { FriendFeedCard } from './FriendFeedCard';
 import { FeedSparseTail } from './FeedSparseTail';
 import { FollowingEmptyState } from './FollowingEmptyState';
 
 type FeedListItem =
     | { _type: 'header'; key: string; label: string }
-    | { _type: 'row'; key: string; row: FriendFeedRow; showDivider: boolean };
+    | { _type: 'row'; key: string; row: FriendsActivityRow; showDivider: boolean };
 
 /**
  * Interleave a date-section header before the first row of each day boundary.
  * Each of the three feed weights now owns its approved internal rhythm, so the
  * list wrapper adds no generic card-sized gutter between dense rows.
  */
-function buildFeedList(rows: FriendFeedRow[]): FeedListItem[] {
+function buildFeedList(rows: FriendsActivityRow[]): FeedListItem[] {
     const items: FeedListItem[] = [];
     let lastLabel = '';
     for (let i = 0; i < rows.length; i++) {
@@ -78,12 +63,16 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
         isLoading,
         isError,
         refetch,
-        isRefetching,
         fetchNextPage,
         hasNextPage,
         isFetchingNextPage,
     } = feedQuery;
 
+    const [refreshing, setRefreshing] = useState(false);
+    const onRefresh = useCallback(async () => {
+        setRefreshing(true);
+        try { await refetch(); } finally { setRefreshing(false); }
+    }, [refetch]);
     const rows = useMemo(() => flattenFriendsFeed(data), [data]);
     const listData = useMemo(() => buildFeedList(rows), [rows]);
 
@@ -98,16 +87,18 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
         ({ item }: { item: FeedListItem }) => {
             if (item._type === 'header') {
                 return (
-                    <Text style={[styles.dateHeader, { color: palette.textFaint }]}>{item.label}</Text>
+                    <SectionKicker first={item.key === listData[0]?.key}>{item.label}</SectionKicker>
                 );
             }
             return (
                 <View style={styles.rowSlot}>
-                    <FriendFeedCard row={item.row} showDivider={item.showDivider} />
+                    {item.row.kind === 'pin' || item.row.kind === 'list'
+                        ? <ActivityFeedRow row={item.row} showDivider={item.showDivider} />
+                        : <FriendFeedCard row={item.row} showDivider={item.showDivider} />}
                 </View>
             );
         },
-        [palette],
+        [listData],
     );
 
     return (
@@ -140,8 +131,8 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
             contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
             refreshControl={
                 <RefreshControl
-                    refreshing={isRefetching}
-                    onRefresh={refetch}
+                    refreshing={refreshing}
+                    onRefresh={onRefresh}
                     tintColor={palette.primary}
                 />
             }
@@ -149,18 +140,4 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
     );
 }
 
-const styles = StyleSheet.create({
-    dateHeader: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        lineHeight: 15,
-        letterSpacing: 1.54,
-        textTransform: 'uppercase',
-        paddingHorizontal: 20,
-        marginTop: 24,
-        marginBottom: 10,
-    },
-    rowSlot: {
-        paddingHorizontal: 20,
-    },
-});
+const styles = StyleSheet.create({ rowSlot: { paddingHorizontal: Spacing.lg } });

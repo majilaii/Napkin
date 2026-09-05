@@ -43,7 +43,7 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 | Route | Component file | Feeding hook(s) / client | EF / RPC | Backing tables |
 |---|---|---|---|---|
 | `/` | `napkin-app/app/index.tsx` | `Redirect` | — | — |
-| `/feed` | `napkin-app/app/(tabs)/feed.tsx` | `useFriendsFeed`, `useSocials`, `useFollowCandidates`, `useBrowsePublicLists` | `feed-friends` / `fn_friends_feed`; `feed-socials`; `user-profile`; `lists` | `entries`, `entry_photos`, `post_reactions`, `profiles`, `restaurants`, `clip_thumbs`, `lists`, `list_entries`, `follows` |
+| `/feed` | `napkin-app/app/(tabs)/feed.tsx` | `useFriendsFeed`, `useSocials`, `useFollowCandidates`, `useBrowsePublicLists` | `feed-friends` (activity opt-in) / `fn_friends_activity`; `feed-socials`; `user-profile`; `lists` | `entries`, `entry_photos`, `post_reactions`, `profiles`, `restaurants`, `clip_thumbs`, `lists`, `list_entries`, `follows`, `wishlist_items`, `blocked_users` |
 | `/journal` | `napkin-app/app/(tabs)/journal.tsx` | `useMySoloEntries`, `useUnreadCount` | RPC `fn_my_solo_entries`; EF `notifications` | `entries`, `entry_tables`, `restaurants`, `profiles`, `notifications` |
 | `/log` | `napkin-app/app/(tabs)/log.tsx` | none; blank legacy placeholder | — | — |
 | `/profile` | `napkin-app/app/(tabs)/profile.tsx` → `components/profile/ProfileScreenBody.tsx` | `useUserProfile`, `useUserSpots`, `useLedger`, list and import hooks | `user-profile`, `lists`, `wishlist`; RPC `fn_visible_entry_ids` | `profiles`, `entries`, `entry_photos`, `follows`, `lists`, `list_entries`, `table_members`, `tables`, `user_top_4`, `user_profile_takes`, `import_jobs` |
@@ -162,12 +162,25 @@ Source: `app/(tabs)/feed.tsx`, `components/feed/FollowingFeed.tsx`, `components/
 - Friends initial failure with zero rows: explicit error state and retry.
 - Friends later failure with cached rows: existing cards remain; do not call the retained list an empty success.
 - Friends settled zero rows: invitation/switch-tab empty state. This is intended-empty only when `isError` is false.
-- Friends content: chronological friend entries in three visual weights; pagination adds a footer spinner. A sparse/end tail is deliberate when the backend reports no more eligible entries.
+- Friends content: one reverse chronological stream for you and the people you follow. Entries use `created_at` (visit date remains metadata), pins use `created_at`, personal lists use their latest `updated_at`. Own bylines say “you” in the same row anatomy. Rated entries say “tried”; notes say “noted”. Date kickers, terracotta tabs and paper-level spacing align with Places.
+- Activity RPC gates every source before keyset/LIMIT. Self includes private/bare entries and private personal lists. Others require followed public accounts, no blocks in either direction, and existing public review eligibility / public list privacy. Pins must be undeleted and resolved. Table lists, Table context and raw pin notes/sources never appear. List rows represent latest state, not historical events.
+- Pin rows open their restaurant; list rows open their list. Entry rows retain raw IDs for cache patching; non-entry IDs are namespaced. Activity uses a versioned cache beneath the friends prefix, separate from legacy entry pages/cursors. Older installed apps retain the original `fn_friends_feed` contract.
+- Pagination adds a footer spinner; a sparse/end tail means no more eligible rows. Returning to Feed refetches. Only an explicit pull activates its refresh spinner; background/focus refetch does not move the content.
 - For You independently loads social clips, people, and public lists. Any non-empty block renders even while a sibling block loads or fails.
 - For You with no visible blocks and any active request: spinner. With any failed request: retry state. With all requests settled empty: “nothing here just yet” invitation.
 - Friend-entry routing is literal and client-only (`feedWeight`): no prose + no photos → `ledger`; prose or one photo → paper-level `note` (one photo is a 42pt thumb); two or more photos, with or without prose → compressed `card`.
 - Friends-feed rows carry no engagement controls. Compressed cards show only non-zero public like/reply counts; liking or replying requires opening entry detail. Tapping any weight opens entry detail, and long-pressing an owned entry opens owner actions.
 - Tables activity cards may be entries, Suppers, Gathers, shares, floats, top-four changes, or list additions (`hooks/tables/useTableActivity.ts`, `components/tables/`). Round cards are legacy residue, not a new state to extend.
+
+### New List composer
+
+Source: `app/list/new.tsx`, `components/lists/CreateListSheet.tsx`, `ListComposeFields.tsx`, `useListComposer.ts`, `hooks/lists/useCreateList.ts`.
+
+- Full screen and restaurant-inline creation share an upright Newsreader name, optional compact icon picker, always-visible note, ranked and public/private pills, and one rounded pinned Create list button. Counters appear near their limits (name 50/60, note 120/140). Existing list editing keeps its default emoji picker.
+- Table context replaces personal visibility with the named Table audience; submission forces private and carries `table_id`. Personal lists default public. Inline creation preserves its seeded restaurant payload/ID and starts a fresh draft each presentation.
+- Empty name, missing user and pending submission disable create. A synchronous ref guards double presses; pending work freezes fields and cancellation. Failure keeps the draft with an inline retry explanation; stale completion after dismissal/account change cannot navigate. Keyboard Done dismisses the keyboard; Create submits.
+- Full-screen keyboard avoidance and inline keyboard-height padding keep the pinned action visible while fields scroll on short screens. Icon, ranking, audience and cancellation controls have 44pt targets.
+- Live safety: opening/dismissing and changing the local draft are read-only. **Create list is LIVE-WRITE** (`lists?action=create`, optionally an initial list entry); test submit/retry/pending/seed/Table payloads with mocks, never against production.
 
 ### Table tab masthead, segments, and map doorway
 

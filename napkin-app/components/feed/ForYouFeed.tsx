@@ -235,11 +235,12 @@ const styles = StyleSheet.create({
     },
     emptyLine: {
         fontFamily: 'Manrope_500Medium',
-        fontSize: 14,
-        lineHeight: 20,
+        fontSize: 16,
+        lineHeight: 22,
         textAlign: 'center',
     },
     inviteBtn: {
+        minHeight: 44, justifyContent: 'center',
         borderWidth: 1.5,
         borderRadius: Radius.full,
         paddingHorizontal: 16,
@@ -247,6 +248,6 @@ const styles = StyleSheet.create({
     },
     inviteText: {
         fontFamily: 'Manrope_600SemiBold',
-        fontSize: 12,
+        fontSize: 13,
     },
 });
