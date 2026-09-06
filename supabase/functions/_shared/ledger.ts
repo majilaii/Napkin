@@ -100,7 +100,7 @@ export type RegularResult = {
 };
 
 export type LedgerCandidateRead = {
-    category: 'month' | 'crown' | 'lookback';
+    category: 'month' | 'crown' | 'lookback' | 'regular';
     branch: 'visited' | 'created';
     userIds: string[];
     restaurantIds?: string[];
@@ -127,6 +127,7 @@ export type LedgerQueryMetrics = {
     month: number;
     crown: number;
     lookback: number;
+    regular: number;
     visibility: number;
     follows: number;
     profiles: number;
@@ -356,7 +357,18 @@ export function createSupabaseLedgerReader(
                 .in('user_id', request.userIds)
                 .not('restaurant_id', 'is', null);
             // Any known prior visit prevents claiming a first visit, even if unrated.
-            if (request.category !== 'lookback') query = query.not('rating', 'is', null);
+            //
+            // LAW: `regular` KEEPS the rating filter. A silent check-in by anyone
+            // other than the viewer cannot survive fn_visible_entry_ids — a bare
+            // entry has no entry_tables, companion or supper, so its only possible
+            // branch is the public-account one, which hard-requires
+            // `e.rating IS NOT NULL` (20260826155643, Branch 4). Counting unrated
+            // rows here would therefore admit the VIEWER's own check-ins (self rows
+            // skip the RPC) while dropping every followee's, producing a
+            // self-flattering crown. Both sides count rated meals, symmetrically.
+            if (request.category !== 'lookback') {
+                query = query.not('rating', 'is', null);
+            }
 
             query = request.branch === 'visited'
                 ? query.not('visited_at', 'is', null)
@@ -394,7 +406,7 @@ export function createSupabaseLedgerReader(
 }
 
 function emptyMetrics(): LedgerQueryMetrics {
-    return { month: 0, crown: 0, lookback: 0, visibility: 0, follows: 0, profiles: 0 };
+    return { month: 0, crown: 0, lookback: 0, regular: 0, visibility: 0, follows: 0, profiles: 0 };
 }
 
 async function readBranchToExhaustion(
@@ -552,13 +564,16 @@ function crownStandings(rows: LedgerCandidate[]): CrownStanding[] {
     );
 }
 
+/** A regular has come back at least once: two visits, all time. */
+export const REGULAR_MIN_VISITS = 2;
+
 function buildRegularResult(
     standings: CrownStanding[],
     profiles: Map<string, LedgerProfile>,
     viewerId: string,
 ): RegularResult {
     const winner = standings[0];
-    if (!winner || winner.visits < 3) {
+    if (!winner || winner.visits < REGULAR_MIN_VISITS) {
         return { regular: null, regular_detail: null };
     }
 
@@ -575,7 +590,9 @@ function buildRegularResult(
         ? "you're the regular here"
         : `${displayName} is the regular here`;
     const regular = runnerUp
-        ? `${lead} · ${runnerUp.display_name} is ${runnerUp.gap} behind`
+        ? `${lead} · ${runnerUp.gap === 0
+            ? `tied with ${runnerUp.display_name}`
+            : `${runnerUp.display_name} is ${runnerUp.gap} behind`}`
         : lead;
 
     return {
@@ -591,7 +608,12 @@ function buildRegularResult(
     };
 }
 
-/** Load the current rolling-90-day friends crown for one restaurant. */
+/**
+ * Load the all-time friends regular for one restaurant (founder order 2026-09-06):
+ * the followee (or viewer) with the most rated meals here, dated or not, over
+ * all time. The monthly ledger crown keeps its own rolling 90-day window; this
+ * is the restaurant page's "number one revisitor".
+ */
 export async function loadRestaurantRegular(
     reader: LedgerReadPort,
     viewerId: string,
@@ -601,22 +623,30 @@ export async function loadRestaurantRegular(
     const metrics = emptyMetrics();
     const cohort = await loadFriendsCohort(reader, viewerId, metrics);
     const cohortChunks = chunk(cohort, LEDGER_COHORT_CHUNK_SIZE);
-    const crownRows = (await Promise.all(cohortChunks.map((userIds) =>
-        readWindowForChunk(
-            reader,
-            'crown',
+    const end = now.toISOString();
+    const crownRows = (await Promise.all(cohortChunks.flatMap((userIds) => [
+        readBranchToExhaustion(reader, {
+            category: 'regular',
+            branch: 'visited',
             userIds,
-            new Date(now.getTime() - CROWN_WINDOW_MS).toISOString(),
-            now.toISOString(),
-            metrics,
             restaurantId,
-        )
-    ))).flat();
+            start: null,
+            end,
+        }, metrics),
+        readBranchToExhaustion(reader, {
+            category: 'regular',
+            branch: 'created',
+            userIds,
+            restaurantId,
+            start: null,
+            end,
+        }, metrics),
+    ]))).flat();
     const survivors = await loadSurvivorIds(reader, viewerId, crownRows, metrics);
     const visibleRows = crownRows.filter((row) => survivors.has(row.id));
     const standings = crownStandings(visibleRows);
     const winner = standings[0];
-    if (!winner || winner.visits < 3) {
+    if (!winner || winner.visits < REGULAR_MIN_VISITS) {
         return {
             data: { regular: null, regular_detail: null },
             metrics,
@@ -775,8 +805,19 @@ async function loadLedgerForCohort(
         const current = firstVisitByUserRestaurant.get(key);
         if (!current || date < current) firstVisitByUserRestaurant.set(key, date);
     }
+    // LAW: a new place is earned only where the member logged a RATED meal this
+    // month, matching `meals` and `crowns`. The lookback still contributes its
+    // unrated and undated rows above, so an earlier silent check-in still proves
+    // a prior visit and blocks the claim. Without this pair gate a silent
+    // check-in would score a napkin purely because a followee happened to rate
+    // the same restaurant that month (the lookback restaurant set is built from
+    // the whole chunk's month rows), producing an incoherent meals=0 napkin.
+    const ratedMonthPairs = new Set(
+        visibleMonth.map((row) => `${row.user_id}\u0000${row.restaurant_id}`),
+    );
     const newPlaces = new Map<string, number>();
     for (const [key, firstVisit] of firstVisitByUserRestaurant) {
+        if (!ratedMonthPairs.has(key)) continue;
         if (unknownHistory.has(key) || firstVisit < bounds.monthStart || firstVisit >= bounds.snapshotEnd) continue;
         const userId = key.split('\u0000')[0];
         newPlaces.set(userId, (newPlaces.get(userId) ?? 0) + 1);

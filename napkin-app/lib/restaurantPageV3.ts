@@ -62,24 +62,59 @@ export function meanRating(values: number[]): number | null {
         : null;
 }
 
-export function buildFriendsSpread(cohort: FriendsCohortMember[]): {
+export type SpreadRing = 'friends' | 'napkin';
+
+export type RestaurantSpread = {
     bins: number[];
     mode: number | null;
     visible: boolean;
-} {
+    ring: SpreadRing;
+    count: number;
+};
+
+/** Minimum ratings before a ring paints bars; below it the histogram is noise. */
+export const SPREAD_FRIENDS_MIN = 3;
+export const SPREAD_NAPKIN_MIN = 2;
+
+function spreadFromBins(bins: number[], ring: SpreadRing, count: number, min: number): RestaurantSpread {
+    const max = Math.max(...bins);
+    const modeIndex = max > 0 ? bins.findIndex((value) => value === max) : -1;
+    return {
+        bins,
+        mode: modeIndex >= 0 ? (modeIndex + 1) / 2 : null,
+        visible: count >= min,
+        ring,
+        count,
+    };
+}
+
+export function buildFriendsSpread(cohort: FriendsCohortMember[]): RestaurantSpread {
     const bins = new Array(10).fill(0);
     for (const member of cohort) {
         const clamped = Math.max(0.5, Math.min(5, member.rating));
         const index = Math.round(clamped * 2) - 1;
         bins[index] += 1;
     }
-    const max = Math.max(...bins);
-    const modeIndex = max > 0 ? bins.findIndex((count) => count === max) : -1;
-    return {
-        bins,
-        mode: modeIndex >= 0 ? (modeIndex + 1) / 2 : null,
-        visible: cohort.length >= 3,
-    };
+    return spreadFromBins(bins, 'friends', cohort.length, SPREAD_FRIENDS_MIN);
+}
+
+/**
+ * The histogram the founder asked back (2026-09-06): friends when at least three
+ * followees rated, otherwise every visible Napkin rating at this restaurant
+ * (`distributions_half.napkin`, ten half-star bins gated server-side by
+ * `fn_visible_entry_ids`). Hidden only when both rings are too thin.
+ */
+export function buildRestaurantSpread(
+    cohort: FriendsCohortMember[],
+    napkinBins: number[] | null | undefined,
+): RestaurantSpread {
+    const friends = buildFriendsSpread(cohort);
+    if (friends.visible) return friends;
+    const bins = Array.isArray(napkinBins) && napkinBins.length === 10
+        ? napkinBins.map((value) => Math.max(0, Math.floor(Number(value) || 0)))
+        : new Array(10).fill(0);
+    const count = bins.reduce((sum, value) => sum + value, 0);
+    return spreadFromBins(bins, 'napkin', count, SPREAD_NAPKIN_MIN);
 }
 
 export function formatGoogleRatingCount(count: number | null): string {

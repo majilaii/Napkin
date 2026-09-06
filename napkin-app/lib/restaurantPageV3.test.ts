@@ -1,5 +1,6 @@
 import {
     buildFriendsSpread,
+    buildRestaurantSpread,
     buildRestaurantPhotoMeta,
     buildRestaurantMeta,
     chooseTableNotesGroup,
@@ -85,6 +86,27 @@ describe('restaurant page v3 derivations', () => {
         expect(spread.bins[7]).toBe(1);
         expect(spread.bins[9]).toBe(1);
         expect(buildFriendsSpread(cohort.slice(0, 2)).visible).toBe(false);
+    });
+
+    it('falls back to the visible Napkin distribution when fewer than three friends rated', () => {
+        const cohort = deriveFriendsCohort([review('a', 4, true), review('b', 4.5, true)], null);
+        const napkin = [0, 0, 0, 0, 0, 0, 1, 0, 2, 0];
+
+        const spread = buildRestaurantSpread(cohort, napkin);
+        expect(spread.ring).toBe('napkin');
+        expect(spread.visible).toBe(true);
+        expect(spread.count).toBe(3);
+        expect(spread.mode).toBe(4.5);
+        expect(spread.bins).toEqual(napkin);
+
+        expect(buildRestaurantSpread(cohort, [0, 0, 0, 0, 0, 0, 0, 0, 1, 0]).visible).toBe(false);
+        expect(buildRestaurantSpread(cohort, undefined).visible).toBe(false);
+        expect(buildRestaurantSpread(cohort, [1, 2, 3]).visible).toBe(false);
+
+        const threeFriends = deriveFriendsCohort([
+            review('a', 4, true), review('b', 4.5, true), review('c', 3.5, true),
+        ], null);
+        expect(buildRestaurantSpread(threeFriends, napkin).ring).toBe('friends');
     });
 
     it('composes the masthead without address parsing or dangling separators', () => {

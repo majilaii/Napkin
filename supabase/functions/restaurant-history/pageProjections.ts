@@ -84,9 +84,10 @@ function photosForEntry(entry: any): SelfLogPhoto[] {
     return photos;
 }
 
-/** Advisory UI state; undo must repeat these checks under the writer's lock. */
+/** Advisory UI state; undo must repeat these checks under the writer's lock.
+ * Mirrors fn_visit_entry_result.is_bare: a date is metadata, never enrichment. */
 export function isBareVisit(entry: any): boolean {
-    return entry.visited_at == null && entry.rating == null
+    return entry.rating == null
         && ['content', 'dish_description', 'cooked_by', 'photo_url'].every((key) => !entry[key]?.trim())
         && ['vibe_rating', 'flavor_rating', 'service_rating', 'value_rating', 'value_profile',
             'table_id', 'table_night_id', 'supper_id'].every((key) => entry[key] == null)

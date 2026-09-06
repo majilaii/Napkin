@@ -402,6 +402,7 @@ Deno.test('ledger 250-followee fixture matches the exact bounded-query formula',
         month: 3,
         crown: 3,
         lookback: 6,
+        regular: 0,
         visibility: 1,
         follows: 1,
         profiles: 3,
@@ -455,4 +456,31 @@ Deno.test('rated undated visits earn no period awards and unknown history preven
     const snapshot = await loadFriendsLedger(fake.reader, VIEWER, bounds());
     const viewer = snapshot.data.rows.find((item) => item.is_viewer)!;
     assertEquals([viewer.meals, viewer.new_places, viewer.crowns], [1, 0, 0]);
+});
+
+Deno.test('a silent check-in earns no new place, and a rated meal still credits the check-in discovery', async () => {
+    // The viewer only checked in — dated since 20260906120000, never rated. The
+    // followee's rated meal is what drags this restaurant into the shared lookback.
+    const shared = fakeReader({
+        followees: [FRIEND],
+        entries: [
+            row('viewer-checkin', VIEWER, '2026-09-10', { rating: null }),
+            row('friend-meal', FRIEND, '2026-09-12'),
+        ],
+    });
+    const snapshot = await loadFriendsLedger(shared.reader, VIEWER, bounds());
+    const viewer = snapshot.data.rows.find((item) => item.is_viewer)!;
+    const friend = snapshot.data.rows.find((item) => item.user_id === FRIEND)!;
+    assertEquals([viewer.meals, viewer.new_places, viewer.napkins], [0, 0, 0]);
+    assertEquals([friend.meals, friend.new_places], [1, 1]);
+
+    // But once the member does rate a meal there, an earlier silent check-in the
+    // same month is still the discovery and the new place counts.
+    const rated = fakeReader({ entries: [
+        row('viewer-checkin', VIEWER, '2026-09-03', { rating: null }),
+        row('viewer-meal', VIEWER, '2026-09-20'),
+    ] });
+    const second = await loadFriendsLedger(rated.reader, VIEWER, bounds());
+    const self = second.data.rows.find((item) => item.is_viewer)!;
+    assertEquals([self.meals, self.new_places], [1, 1]);
 });

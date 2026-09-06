@@ -11,8 +11,10 @@ import { callEdgeFn } from '@/lib/edgeInvoke';
 import type { SearchResultRow } from '../useRestaurantSearch';
 import {
     shouldLookupPlaceDetails,
+    useLazyBackfillRestaurant,
     useLookupByPlaceId,
 } from '../useLookupByPlaceId';
+import { queryKeys } from '@/lib/queryKeys';
 
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
 
@@ -116,6 +118,35 @@ describe('useLookupByPlaceId production gate', () => {
         await waitFor(() => expect(mockCallEdgeFn).toHaveBeenCalledTimes(1));
         expect(mockCallEdgeFn).toHaveBeenCalledWith('places-search', {
             body: { place_id: 'ChIJdeferred', persist: false },
+        });
+    });
+});
+
+describe('lazy backfill invalidations', () => {
+    it('refreshes similar places as well as the page once the row is healed', async () => {
+        mockCallEdgeFn.mockResolvedValue([]);
+        const client = new QueryClient({
+            defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+        });
+        const invalidate = jest.spyOn(client, 'invalidateQueries');
+
+        renderHook(() => useLazyBackfillRestaurant({
+            enabled: true,
+            externalId: 'ChIJheal',
+            restaurantId: 'restaurant-1',
+        }), { wrapper: wrapper(client) });
+
+        await waitFor(() => expect(mockCallEdgeFn).toHaveBeenCalledWith('places-search', {
+            body: { place_id: 'ChIJheal', persist: true },
+        }));
+
+        // The backfill repairs city and coordinates, which is exactly what the
+        // similar-places query reads; without this it stays empty for 30 minutes.
+        await waitFor(() => expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.similar('restaurant-1'),
+        }));
+        expect(invalidate).toHaveBeenCalledWith({
+            queryKey: queryKeys.restaurants.page('restaurant-1', undefined),
         });
     });
 });

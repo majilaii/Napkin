@@ -34,6 +34,43 @@ export function ActivityFeedRow({ row, showDivider }: { row: PinFeedRow | ListFe
         {showDivider ? <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: palette.dividerSoft }} /> : null}
     </>;
 }
+/** Names for a folded run of pins: the first two, then how many more. */
+export function pinDigestNames(rows: readonly PinFeedRow[]): string {
+    const names = rows.map((row) => row.restaurant.name);
+    if (names.length <= 3) return names.join(', ');
+    return `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
+}
+
+/**
+ * One quiet row for a run of pins by the same person on the same day. Tapping
+ * unfolds the run into its individual pin rows in place.
+ */
+export function PinDigestRow({ rows, showDivider, onExpand }: {
+    rows: readonly PinFeedRow[];
+    showDivider: boolean;
+    onExpand: () => void;
+}) {
+    const palette = Colors[useColorScheme() ?? 'light'];
+    const { user } = useAuth();
+    const first = rows[0];
+    const actor = first.user_id === user?.id ? 'you' : first.author.display_name;
+    const verb = `pinned ${rows.length} places`;
+    return <>
+        <Pressable onPress={onExpand} accessibilityRole="button" accessibilityLabel={`${actor} ${verb}, ${pinDigestNames(rows)}`}
+            style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : 1 }]}>
+            <Ionicons name="bookmarks-outline" size={18} color={palette.textMuted} />
+            <View style={styles.content}>
+                <Text style={[Type.feedMeta, { color: palette.textMuted }]} numberOfLines={1}>
+                    <Text style={[Type.feedMetaStrong, { color: palette.text }]}>{actor}</Text> · {verb}
+                </Text>
+                <Text style={[Type.feedNoteRestaurant, { color: palette.text }]} numberOfLines={2}>{pinDigestNames(rows)}</Text>
+            </View>
+            <Ionicons name="chevron-down" size={16} color={palette.textFaint} />
+        </Pressable>
+        {showDivider ? <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: palette.dividerSoft }} /> : null}
+    </>;
+}
+
 const styles = StyleSheet.create({
     row: { flexDirection: 'row', alignItems: 'center', minHeight: 68, gap: Spacing.md, paddingVertical: Spacing.md },
     content: { flex: 1, gap: Spacing.xs },

@@ -83,7 +83,7 @@ const baseProps = {
 };
 
 describe('RestaurantTop photo mode', () => {
-    it('crossfades in the late clip at an unchanged capped masthead height', () => {
+    it('keeps the Places hero in frame one when a clip settles or an entry photo lands', () => {
         const onPhotoPress = jest.fn();
         const initialPhotos = resolveMastheadPhotos(
             { restaurant },
@@ -105,7 +105,20 @@ describe('RestaurantTop photo mode', () => {
         mockScrollTo.mockClear();
 
         const landedPhotos = resolveMastheadPhotos(
-            { restaurant },
+            {
+                restaurant,
+                self_log: [{
+                    id: 'self',
+                    entry_id: 'entry-self',
+                    table_night_id: null,
+                    source: 'solo',
+                    rating: 4.5,
+                    note: null,
+                    visited_at: '2026-09-01T12:00:00.000Z',
+                    companions: [],
+                    photos: [{ id: 'self-0', url: 'https://photos.test/mine.jpg' }],
+                }],
+            },
             {
                 clippings: [{ thumb_url: 'https://clips.test/thumb.jpg' }],
                 settled: true,
@@ -120,8 +133,12 @@ describe('RestaurantTop photo mode', () => {
         );
 
         expect(screen.getByTestId('masthead-photo-0').props.source.uri)
-            .toBe('https://clips.test/thumb.jpg');
+            .toBe('https://photos.test/places.jpg');
+        expect(screen.getByTestId('masthead-photo-1').props.source.uri)
+            .toBe('https://photos.test/mine.jpg');
         expect(screen.queryByTestId('masthead-photo-link-0')).toBeNull();
+        expect(screen.getByTestId('masthead-photo-link-1')).toBeTruthy();
+        expect(screen.queryByText(/clips\.test/)).toBeNull();
         expect(onPhotoPress).not.toHaveBeenCalled();
         expect(StyleSheet.flatten(
             screen.getByTestId('restaurant-photo-masthead').props.style,

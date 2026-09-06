@@ -48,6 +48,7 @@ import {
 } from '../_shared/ledger.ts';
 import { enrichSearchRows } from './searchProjection.ts';
 import { isPeekCardContext, loadPeekCard } from './peekCard.ts';
+import { handleSimilarAction } from './similar.ts';
 import {
     appendPageProjections,
     loadSelfLog,
@@ -953,9 +954,20 @@ serve(async (req) => {
                     visits,
                     visit_count: visits.length,
                     user_average: userAverage,
-                    last_visit: visits[0] ?? null,
+                    // The banner states a date AND a rating, so it must name the
+                    // most recent RATED visit. Since 20260906120000 a silent
+                    // check-in carries today's date and would otherwise sort
+                    // first and blank the rating. action=page already uses the
+                    // rated set; these two surfaces must agree.
+                    last_visit: ratedVisits[0] ?? visits[0] ?? null,
                 },
             });
+        }
+
+        // ── Similar places (DB-backed, same city; see similar.ts) ─────────
+        if (action === 'similar') {
+            const similar = await handleSimilarAction(supabase, user.id, { restaurant_id: restaurantId });
+            return similar ?? fail('restaurant_id is required');
         }
 
         // ── Reserve link (TICKET-149) ─────────────────────────────────────

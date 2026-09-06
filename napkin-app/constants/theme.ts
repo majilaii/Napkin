@@ -287,6 +287,7 @@ export const Spacing = {
     ledgerEmptyGutter: 40,
     historyRowVertical: 14,
     memoryPhotoSize: 96,
+    regularAvatar: 40,
   },
   /** Shared sheet chrome; detent geometry remains component-owned. */
   sheet: {

@@ -85,8 +85,8 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
                 <View style={[styles.plate, { backgroundColor: palette.surfaceJournal }]}>
                     <View style={styles.plateHead}>
                         <Pressable disabled={locked} onPress={() => setSheet('history')} accessibilityRole="button" accessibilityLabel={`Visit history, ${rows.length} visits`} style={styles.count}>
-                            <Ionicons name="checkmark" size={17} color={palette.secondary} />
-                            <Text style={[styles.label, { color: palette.text }]}>Been here · {rows.length} {rows.length === 1 ? 'visit' : 'visits'}</Text>
+                            <Ionicons name="footsteps-outline" size={17} color={palette.secondary} />
+                            <Text style={[styles.label, { color: palette.text }]}>Checked in · {rows.length} {rows.length === 1 ? 'visit' : 'visits'}</Text>
                             <Ionicons name="chevron-forward" size={14} color={palette.textMuted} />
                         </Pressable>
                         {current.is_bare && current.entry_id === undoId ? (
@@ -112,8 +112,8 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
             <View style={styles.buttons}>
                 <Pressable onPress={() => void record()} disabled={locked || (!restaurantId && !restaurantPayload)} accessibilityRole="button" accessibilityState={{ disabled: !!locked }}
                     style={({ pressed }) => [styles.button, { backgroundColor: palette.surfaceJournal, opacity: locked ? 0.5 : 1 }, pressed && styles.pressed]}>
-                    {mutations.record.isPending ? <ActivityIndicator color={palette.primary} /> : <Ionicons name={current ? 'refresh' : 'checkmark'} size={18} color={palette.primary} />}
-                    <Text style={[styles.label, { color: palette.primary }]}>{recordRetry ? 'Retry visit' : current ? 'Been again' : 'Been here'}</Text>
+                    {mutations.record.isPending ? <ActivityIndicator color={palette.primary} /> : <Ionicons name="footsteps-outline" size={18} color={palette.primary} />}
+                    <Text style={[styles.label, { color: palette.primary }]}>{recordRetry ? 'Retry check-in' : current ? 'Check in again' : 'Check in'}</Text>
                 </Pressable>
                 <Pressable disabled={locked || recordRetry} onPress={() => { setError(null); editable && !reviewed ? setSheet('review') : onLog(); }} accessibilityRole="button"
                     style={({ pressed }) => [styles.button, { backgroundColor: palette.primary, opacity: locked || recordRetry ? 0.5 : 1 }, pressed && styles.pressed]}>

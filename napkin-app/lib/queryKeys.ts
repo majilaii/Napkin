@@ -203,6 +203,8 @@ export const queryKeys = {
         /** TICKET-156: On Socials rail — social clippings for a restaurant. */
         clippings: (restaurantId: string) =>
             ['restaurantClippings', restaurantId] as const,
+        /** Similar places — DB-backed same-city neighbours on the restaurant page. */
+        similar: (restaurantId: string) => ['restaurantSimilar', restaurantId] as const,
         /** Public lists containing this restaurant; viewer-keyed for self-exclusion. */
         featuredLists: (viewerId: string, restaurantId: string) =>
             ['restaurantFeaturedLists', viewerId, restaurantId] as const,

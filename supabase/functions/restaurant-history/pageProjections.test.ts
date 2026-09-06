@@ -460,7 +460,8 @@ Deno.test('self_log keeps undated bare visits and record order after backdating'
     recent.visited_at = '2010-01-01';
     const second = await loadSelfLog(fakeClient({ entries: [old, recent] }).client, VIEWER, RESTAURANT);
     assertEquals(second.map((row) => row.entry_id), ['recent', 'old']);
-    assertEquals(second[0].is_bare, false);
+    // A backdated (or today-dated) check-in is still bare: the date is metadata.
+    assertEquals(second[0].is_bare, true);
 });
 
 Deno.test('bare advice includes legacy fields and other participants, allowing the author row', () => {
@@ -470,6 +471,8 @@ Deno.test('bare advice includes legacy fields and other participants, allowing t
         { photo_url: 'legacy.jpg' }, { entry_photos: [{ photo_url: 'photo.jpg' }] },
         { entry_tables: [{ entry_id: 'entry' }] }, { supper_id: 'supper' },
         { entry_participants: [{ user_id: OTHER }] }, { entry_companions: [{ user_id: OTHER }] },
-        { value_rating: 4 }, { dish_description: 'leeks' }, { visited_at: '2020-01-01' },
+        { value_rating: 4 }, { dish_description: 'leeks' },
     ]) assertEquals(isBareVisit({ ...bare, ...patch }), false);
+    // A date is metadata, not enrichment (mirrors fn_visit_entry_result since 2026-09-06).
+    assertEquals(isBareVisit({ ...bare, visited_at: '2020-01-01' }), true);
 });

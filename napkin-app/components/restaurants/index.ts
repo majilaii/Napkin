@@ -21,6 +21,7 @@ export { SavedFromTikTokPanel } from './SavedFromTikTokPanel';
 export { OnSocialsRail } from './OnSocialsRail';
 export { ClippingCard, type ClippingCardData } from './ClippingCard';
 export { RestaurantRegularRow } from './RestaurantRegularRow';
+export { SimilarPlacesSection, similarKicker, formatDistance } from './SimilarPlacesSection';
 export { MemoriesStrip, buildMemoryTiles, type MemoryTile } from './MemoriesStrip';
 export { LedgerLine } from './LedgerLine';
 export {

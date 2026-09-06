@@ -108,9 +108,14 @@ export function RestaurantTop({
 
     if (photos.length > 0) {
         const currentPhoto = photos[Math.min(currentPhotoIndex, photos.length - 1)];
+        const pagerCount = photos.length > 1
+            ? ` · ${currentPhotoIndex + 1} / ${photos.length}`
+            : '';
         const entryChip = currentPhoto.kind === 'entry' && currentPhoto.label
             ? `${currentPhoto.label} · ${currentPhotoIndex + 1} / ${photos.length}`
-            : null;
+            : currentPhoto.kind === 'places' && currentPhoto.label
+                ? `${currentPhoto.label}${pagerCount}`
+                : null;
         return (
             <View
                 testID="restaurant-photo-masthead"
@@ -506,10 +511,12 @@ export function TableNotesSection({
 export function FriendsSpread({
     bins,
     mode,
+    ring = 'friends',
     palette,
 }: {
     bins: number[];
     mode: number | null;
+    ring?: 'friends' | 'napkin';
     palette: Palette;
 }) {
     const max = Math.max(...bins, 1);
@@ -538,7 +545,7 @@ export function FriendsSpread({
             <View style={styles.spreadFooter}>
                 <Text style={[Type.metadata, { color: palette.textFaint }]}>1</Text>
                 <Text style={[Type.metadata, { color: palette.textFaint }]}>
-                    friends land on{' '}
+                    {ring === 'friends' ? 'friends land on' : 'ratings land on'}{' '}
                     <Text style={[Type.ratingCompact, { color: palette.amberBright }]}>
                         {mode == null ? '—' : Number.isInteger(mode) ? mode.toFixed(0) : mode.toFixed(1)}
                     </Text>

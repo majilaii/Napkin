@@ -63,9 +63,11 @@ DECLARE
 BEGIN
     a := public.fn_record_visit(u,r,nonce);
     id_a := (a->>'id')::uuid;
-    ASSERT (a->>'is_bare')::boolean AND a->>'visited_at' IS NULL AND a->>'rating' IS NULL
+    ASSERT (a->>'is_bare')::boolean AND a->>'rating' IS NULL
         AND a->>'content' IS NULL AND NOT (a->>'liked')::boolean
         AND a->>'visibility'='friends' AND a->'photos'='[]'::jsonb, 'record must be genuinely bare';
+    ASSERT (a->>'visited_at')::timestamptz BETWEEN now() - interval '1 minute' AND now(),
+        'quick check-in is dated today by default';
     ASSERT (SELECT count(*)=1 AND bool_and(user_id=u AND rating IS NULL AND notes IS NULL)
         FROM public.entry_participants WHERE entry_id=id_a), 'record seeds only author';
     b := public.fn_record_visit(u,'95200000-0000-4000-8000-000000000003',nonce);
@@ -88,9 +90,9 @@ BEGIN
     SELECT public_url INTO photo_a FROM public.user_image_objects WHERE user_id=u AND sha256=repeat('a',64);
     SELECT public_url INTO photo_b FROM public.user_image_objects WHERE user_id=u AND sha256=repeat('b',64);
     a := public.fn_save_visit(u,id_a,jsonb_build_object('rating',4.5,'content',' Good meal ','photo_urls',jsonb_build_array(photo_a,photo_b)));
-    ASSERT a->>'id'=id_a::text AND a->>'visited_at' IS NULL AND a->>'rating'='4.5'
+    ASSERT a->>'id'=id_a::text AND a->>'visited_at' IS NOT NULL AND a->>'rating'='4.5'
         AND a->>'content'='Good meal' AND jsonb_array_length(a->'photos')=2
-        AND a->>'photo_url'=photo_a AND NOT (a->>'is_bare')::boolean, 'enrichment preserves ID and unknown date';
+        AND a->>'photo_url'=photo_a AND NOT (a->>'is_bare')::boolean, 'enrichment preserves ID and the check-in date';
     ASSERT (SELECT rating=4.5 AND notes='Good meal' FROM public.entry_participants WHERE entry_id=id_a AND user_id=u),
         'author take follows own rating and note';
     original_photo_id := (a->'photos'->0->>'id')::uuid;
@@ -141,9 +143,12 @@ BEGIN
         PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_undo_visit(%L,%L)',u,id_b),'VISIT_UNDO_REFUSED');
         EXECUTE format('UPDATE public.entries SET %I=NULL WHERE id=%L', k,id_b);
     END LOOP;
-    UPDATE public.entries SET visited_at=now() WHERE id=id_b;
-    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_undo_visit(%L,%L)',u,id_b),'VISIT_UNDO_REFUSED');
-    UPDATE public.entries SET visited_at=NULL, liked=true WHERE id=id_b;
+    -- A date is metadata, not enrichment: a dated (or cleared) bare check-in stays undoable.
+    UPDATE public.entries SET visited_at='2020-01-02T00:00:00Z' WHERE id=id_b;
+    ASSERT (public.fn_visit_entry_result(id_b)->>'is_bare')::boolean, 'backdated bare check-in is still bare';
+    UPDATE public.entries SET visited_at=NULL WHERE id=id_b;
+    ASSERT (public.fn_visit_entry_result(id_b)->>'is_bare')::boolean, 'undated bare check-in is still bare';
+    UPDATE public.entries SET visited_at=now(), liked=true WHERE id=id_b;
     PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_undo_visit(%L,%L)',u,id_b),'VISIT_UNDO_REFUSED');
     UPDATE public.entries SET liked=false, value_profile='{}' WHERE id=id_b;
     PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_undo_visit(%L,%L)',u,id_b),'VISIT_UNDO_REFUSED');

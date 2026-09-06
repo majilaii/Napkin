@@ -31,3 +31,25 @@ it.each(['pin', 'list'] as const)('opens the native %s target, never the activit
         : { pathname: '/list/[id]', params: { id: 'list' } });
     act(() => renderer.unmount());
 });
+
+const pin = (id: string, name: string, user_id = 'viewer', sort_date = '2026-09-01T10:00:00.000Z'): PinFeedRow => ({
+    ...base, kind: 'pin', id: `pin:${id}`, activity_key: `pin:${id}`, user_id, sort_date, created_at: sort_date,
+    author: { ...base.author, user_id, display_name: user_id === 'viewer' ? 'Jacky' : 'Clara' },
+    restaurant_id: id, restaurant: { id, name, photo_url: null },
+});
+
+it('folds a run of pins into one digest row that unfolds on tap', () => {
+    const { PinDigestRow, pinDigestNames } = require('../ActivityFeedRow');
+    const rows = [pin('a', 'Kiln'), pin('b', 'Moko Made Cafe'), pin('c', "Rita's"), pin('d', 'Brawn')];
+    expect(pinDigestNames(rows)).toBe('Kiln, Moko Made Cafe and 2 more');
+    expect(pinDigestNames(rows.slice(0, 3))).toBe("Kiln, Moko Made Cafe, Rita's");
+    const onExpand = jest.fn();
+    let renderer: any;
+    act(() => { renderer = TestRenderer.create(<PinDigestRow rows={rows} showDivider onExpand={onExpand} />); });
+    const button = renderer.root.findByType('Pressable');
+    expect(button.props.accessibilityLabel).toBe('you pinned 4 places, Kiln, Moko Made Cafe and 2 more');
+    act(() => button.props.onPress());
+    expect(onExpand).toHaveBeenCalledTimes(1);
+    expect(mockPush).not.toHaveBeenCalledWith(expect.objectContaining({ pathname: '/restaurant/[id]', params: { id: 'a' } }));
+    act(() => renderer.unmount());
+});

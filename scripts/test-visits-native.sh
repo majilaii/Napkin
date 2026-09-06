@@ -58,6 +58,20 @@ PY
 "${PSQL[@]}" -q -f "$VISIT_TMP/dependencies.sql"
 "${PSQL[@]}" -q -f supabase/migrations/20260905210957_reviews_visit_actions.sql
 "${PSQL[@]}" -q -f supabase/migrations/20260905210936_undated_visit_merge_guard.sql
+# Then EVERY later migration that redefines a visit RPC, in filename (version)
+# order. Without this the harness silently tested the definitions above while
+# the spec asserted the behaviour of a newer migration, and the abort skipped
+# supabase/tests/visits.concurrency.sh below -- the repo's only invocation of it.
+# Bounded to migrations newer than the pair above: earlier ones (image
+# moderation) are already reduced into dependencies.sql and must not be re-run.
+while IFS= read -r visit_migration; do
+  visit_version="$(basename "$visit_migration")"
+  # Compare the bare version, not the filename: the full name sorts AFTER its own
+  # timestamp prefix, which would re-apply the CREATE FUNCTION migration above.
+  [[ "${visit_version%%_*}" > '20260905210957' ]] || continue
+  "${PSQL[@]}" -q -f "$visit_migration"
+done < <(grep -lE 'fn_record_visit|fn_visit_entry_result|fn_save_visit|fn_undo_visit' \
+  supabase/migrations/*.sql | sort)
 "${PSQL[@]}" -q -f supabase/tests/visits.spec.sql
 if [[ -f supabase/tests/undated_visit_merge.spec.sql ]]; then
   "${PSQL[@]}" -q -f supabase/tests/undated_visit_merge.spec.sql

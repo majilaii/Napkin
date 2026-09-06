@@ -52,7 +52,7 @@ function selfLog(
 }
 
 describe('resolveMastheadPhotos', () => {
-    it('orders entry sources first, dedupes them, and caps the pager at four', () => {
+    it('leads with the Places hero, then entry sources deduped, capped at four', () => {
         const page = {
             restaurant: restaurant(),
             self_log: [
@@ -99,32 +99,27 @@ describe('resolveMastheadPhotos', () => {
         });
         expect(photos.map(({ kind, url, label, entryId }) => [kind, url, label, entryId]))
             .toEqual([
+                ['places', 'https://photos.test/places.jpg', 'via google', null],
                 ['entry', 'https://photos.test/new-a.jpg', 'your photo', 'entry-new'],
                 ['entry', 'https://photos.test/new-b.jpg', 'your photo', 'entry-new'],
                 ['entry', 'https://photos.test/old.jpg', 'your photo', 'entry-old'],
-                ['entry', 'https://photos.test/table.jpg', 'table photo', 'table'],
             ]);
     });
 
-    it('upgrades Places or no-photo to a stored clip thumbnail without displacing an entry', () => {
+    it('never promotes a clipping thumbnail and never lets an entry photo lead', () => {
         const page = { restaurant: restaurant() };
-        expect(resolveMastheadPhotos(page, { clippings: [], settled: false })).toEqual([{
+        const places = {
             kind: 'places',
             url: 'https://photos.test/places.jpg',
             entryId: null,
             label: 'via google',
             attribution: 'Clara & Co.',
-        }]);
+        };
+        expect(resolveMastheadPhotos(page, { clippings: [], settled: false })).toEqual([places]);
         expect(resolveMastheadPhotos(page, {
             clippings: [{ thumb_url: 'https://clips.test/thumb.jpg' }],
             settled: true,
-        })).toEqual([{
-            kind: 'clip',
-            url: 'https://clips.test/thumb.jpg',
-            entryId: null,
-            label: null,
-            attribution: null,
-        }]);
+        })).toEqual([places]);
 
         const withEntry = {
             restaurant: restaurant(),
@@ -135,14 +130,43 @@ describe('resolveMastheadPhotos', () => {
         expect(resolveMastheadPhotos(withEntry, {
             clippings: [{ thumb_url: 'https://clips.test/thumb.jpg' }],
             settled: true,
-        }))
-            .toEqual([{
+        })).toEqual([
+            places,
+            {
                 kind: 'entry',
                 url: 'https://photos.test/mine.jpg',
                 entryId: 'entry-self',
                 label: 'your photo',
                 attribution: null,
-            }]);
+            },
+        ]);
+    });
+
+    it('stays typographic without a Places hero even when entry photos exist', () => {
+        const page = {
+            restaurant: restaurant({ photo_url: null, photo_source: 'none' }),
+            self_log: [selfLog('self', '2026-09-01T12:00:00.000Z', [
+                'https://photos.test/mine.jpg',
+            ])],
+            public_reviews: [{
+                entry_id: 'review',
+                user_id: 'stranger',
+                display_name: 'Maya',
+                username: null,
+                avatar_url: null,
+                rating: 4,
+                note_excerpt: 'katsu udon',
+                photo_url: 'https://photos.test/udon.jpg',
+                created_at: '2026-09-01T12:00:00.000Z',
+                public_reaction_count: 0,
+                public_reply_count: 0,
+                calibration: null,
+            }],
+        } as unknown as RestaurantPageData;
+        expect(resolveMastheadPhotos(page, {
+            clippings: [{ thumb_url: 'https://clips.test/thumb.jpg' }],
+            settled: true,
+        })).toEqual([]);
     });
 
     it('uses the shared Places credit rules and fails closed without valid attribution', () => {
@@ -187,7 +211,7 @@ describe('resolveMastheadPhotos', () => {
             public_reviews: [],
         } as unknown as RestaurantPageData;
 
-        expect(resolveMastheadPhotos(page, { clippings: [], settled: true })[0])
+        expect(resolveMastheadPhotos(page, { clippings: [], settled: true })[1])
             .toEqual({
                 kind: 'entry',
                 url: 'https://photos.test/other.jpg',
@@ -202,13 +226,7 @@ describe('resolveMastheadPhotos', () => {
         const clip = { thumb_url: 'https://clips.test/thumb.jpg' };
 
         expect(resolveMastheadPhotos(page, { clippings: [clip], settled: false })).toEqual([]);
-        expect(resolveMastheadPhotos(page, { clippings: [clip], settled: true })).toEqual([{
-            kind: 'clip',
-            url: clip.thumb_url,
-            entryId: null,
-            label: null,
-            attribution: null,
-        }]);
+        expect(resolveMastheadPhotos(page, { clippings: [clip], settled: true })).toEqual([]);
         expect(resolveMastheadPhotos(page, { clippings: [], settled: true })).toEqual([]);
     });
 });
