@@ -67,7 +67,7 @@ for scenario in scalar share; do
   release_barrier
   wait "$VISIT_FIRST_PID"
   if wait "$VISIT_SECOND_PID"; then echo "Unsafe undo won after $scenario enrichment" >&2; exit 1; fi
-  rg -q 'VISIT_UNDO_REFUSED' "$VISIT_RACE_TMP/undo.out"
+  grep -q 'VISIT_UNDO_REFUSED' "$VISIT_RACE_TMP/undo.out"
   [[ "$(query "SELECT count(*) FROM public.entries WHERE id='$VISIT_ENTRY'")" == 1 ]]
   echo "PASS visits concurrency: undo waits for concurrent $scenario enrichment and refuses deletion"
 done
@@ -98,7 +98,7 @@ wait_query "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name
 release_barrier
 wait "$VISIT_FIRST_PID"
 if wait "$VISIT_SECOND_PID"; then echo 'Meal linked after candidate date was cleared' >&2; exit 1; fi
-rg -q 'visited_at outside 18h window' "$VISIT_RACE_TMP/merge.out"
+grep -q 'visited_at outside 18h window' "$VISIT_RACE_TMP/merge.out"
 [[ "$(query "SELECT count(*) FROM public.entries WHERE user_id='$VISIT_ACTOR'")" == 0 ]]
 [[ "$(query "SELECT count(*) FROM public.round_entries WHERE entry_id='$VISIT_ENTRY'")" == 0 ]]
 echo 'PASS visits concurrency: meal linking waits for a candidate date edit and refuses an undated meal'

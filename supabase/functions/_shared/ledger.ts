@@ -357,8 +357,16 @@ export function createSupabaseLedgerReader(
                 .in('user_id', request.userIds)
                 .not('restaurant_id', 'is', null);
             // Any known prior visit prevents claiming a first visit, even if unrated.
-            // The all-time regular counts every check-in too, rated or not.
-            if (request.category !== 'lookback' && request.category !== 'regular') {
+            //
+            // LAW: `regular` KEEPS the rating filter. A silent check-in by anyone
+            // other than the viewer cannot survive fn_visible_entry_ids — a bare
+            // entry has no entry_tables, companion or supper, so its only possible
+            // branch is the public-account one, which hard-requires
+            // `e.rating IS NOT NULL` (20260826155643, Branch 4). Counting unrated
+            // rows here would therefore admit the VIEWER's own check-ins (self rows
+            // skip the RPC) while dropping every followee's, producing a
+            // self-flattering crown. Both sides count rated meals, symmetrically.
+            if (request.category !== 'lookback') {
                 query = query.not('rating', 'is', null);
             }
 
@@ -582,7 +590,9 @@ function buildRegularResult(
         ? "you're the regular here"
         : `${displayName} is the regular here`;
     const regular = runnerUp
-        ? `${lead} · ${runnerUp.display_name} is ${runnerUp.gap} behind`
+        ? `${lead} · ${runnerUp.gap === 0
+            ? `tied with ${runnerUp.display_name}`
+            : `${runnerUp.display_name} is ${runnerUp.gap} behind`}`
         : lead;
 
     return {
@@ -600,9 +610,9 @@ function buildRegularResult(
 
 /**
  * Load the all-time friends regular for one restaurant (founder order 2026-09-06):
- * the followee (or viewer) with the most visits here, every check-in counted,
- * rated or not, dated or not. The monthly ledger crown keeps its own rolling
- * 90-day rated window; this is the restaurant page's "number one revisitor".
+ * the followee (or viewer) with the most rated meals here, dated or not, over
+ * all time. The monthly ledger crown keeps its own rolling 90-day window; this
+ * is the restaurant page's "number one revisitor".
  */
 export async function loadRestaurantRegular(
     reader: LedgerReadPort,

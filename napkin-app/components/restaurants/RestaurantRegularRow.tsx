@@ -18,9 +18,13 @@ export function regularDetailCopy(detail: RegularDetail): string {
     const lead = detail.is_viewer
         ? "you're the regular here"
         : `${detail.display_name} is the regular here`;
-    return detail.runner_up
-        ? `${lead} · ${detail.runner_up.display_name} is ${detail.runner_up.gap} behind`
-        : lead;
+    if (!detail.runner_up) return lead;
+    // A two-visit minimum makes ties the common case for a small friend group,
+    // so the screen-reader label must not read "is 0 behind".
+    const chase = detail.runner_up.gap === 0
+        ? `tied with ${detail.runner_up.display_name}`
+        : `${detail.runner_up.display_name} is ${detail.runner_up.gap} behind`;
+    return `${lead} · ${chase}`;
 }
 
 /** The second line under the name: the count, then how close the chase is. */

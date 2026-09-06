@@ -45,16 +45,22 @@ function readerFor(
                 avatar_url: id === FRIEND ? 'clara.jpg' : null,
             })));
         },
+        // Mirrors fn_visible_entry_ids: a non-self bare entry has no table,
+        // companion or supper edge, so its only branch is the public-account one,
+        // which hard-requires a rating. Modelling that here is what stops this
+        // fixture staying green if the read ever drops its rating filter again.
         fetchVisibleEntryIds: (_viewerId, candidates) => Promise.resolve(new Set(
-            candidates.map((candidate) => candidate.entryId).filter((id) => visibleIds.has(id)),
+            candidates
+                .map((candidate) => candidate.entryId)
+                .filter((id) => visibleIds.has(id))
+                .filter((id) => entries.find((entry) => entry.id === id)?.rating != null),
         )),
         fetchEntryPage: (request: LedgerCandidateRead) => {
             const dateFor = (entry: LedgerCandidate) => entry.visited_at ?? entry.created_at;
             return Promise.resolve(entries
                 .filter((entry) => request.userIds.includes(entry.user_id))
                 .filter((entry) => entry.restaurant_id === request.restaurantId)
-                .filter((entry) => request.category === 'lookback' || request.category === 'regular'
-                    || entry.rating != null)
+                .filter((entry) => request.category === 'lookback' || entry.rating != null)
                 .filter((entry) => request.branch === 'visited'
                     ? entry.visited_at != null
                     : entry.visited_at == null)
@@ -153,24 +159,40 @@ Deno.test('regular fixtures: cohort and visibility exclude strangers/private/hid
     assertEquals(snapshot.data.regular_detail?.visits, 4);
 });
 
-Deno.test('regular fixtures: all-time count includes old, unrated and undated check-ins', async () => {
-    const undated: LedgerCandidate = {
-        ...meal('undated', FRIEND, '2026-08-25T12:00:00.000Z', null),
+Deno.test('regular fixtures: all time counts old and undated rated meals, never a silent check-in', async () => {
+    // A rated meal whose date was never filled in still counts (the `created` branch).
+    const undatedRated: LedgerCandidate = {
+        ...meal('undated-rated', FRIEND, '2026-08-25T12:00:00.000Z'),
         visited_at: null,
     };
     const entries = [
         meal('old-a', FRIEND, '2025-06-01T12:00:00.000Z'),
         meal('old-b', FRIEND, '2026-06-02T11:59:59.000Z'),
-        meal('unrated', FRIEND, '2026-08-20T12:00:00.000Z', null),
-        undated,
-        ...meals(VIEWER, 3),
+        undatedRated,
+        // A silent check-in must not count for ANYONE. Counting it would admit the
+        // viewer's own (self rows skip the RPC) while fn_visible_entry_ids drops
+        // every followee's, handing the viewer a self-flattering crown.
+        meal('friend-checkin', FRIEND, '2026-08-20T12:00:00.000Z', null),
+        ...meals(VIEWER, 2),
+        meal('viewer-checkin', VIEWER, '2026-08-21T12:00:00.000Z', null),
     ];
     const snapshot = await loadRestaurantRegular(readerFor(entries), VIEWER, RESTAURANT, NOW);
     assertEquals(snapshot.data.regular_detail?.user_id, FRIEND);
-    assertEquals(snapshot.data.regular_detail?.visits, 4);
+    assertEquals(snapshot.data.regular_detail?.visits, 3);
     assertEquals(snapshot.data.regular, 'Clara is the regular here · Jacky is 1 behind');
     assertEquals(snapshot.metrics.regular, 2);
     assertEquals(snapshot.metrics.crown, 0);
+});
+
+Deno.test('regular fixtures: a tie reads as tied, never as zero behind', async () => {
+    const snapshot = await loadRestaurantRegular(
+        readerFor([...meals(VIEWER, 2, 1), ...meals(FRIEND, 2, 5)]),
+        VIEWER,
+        RESTAURANT,
+        NOW,
+    );
+    assertEquals(snapshot.data.regular_detail?.runner_up?.gap, 0);
+    assertEquals(snapshot.data.regular, 'Clara is the regular here · tied with Jacky');
 });
 
 Deno.test('regular fixtures: two visits make a regular, a future-dated row never counts', async () => {

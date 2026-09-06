@@ -954,7 +954,12 @@ serve(async (req) => {
                     visits,
                     visit_count: visits.length,
                     user_average: userAverage,
-                    last_visit: visits[0] ?? null,
+                    // The banner states a date AND a rating, so it must name the
+                    // most recent RATED visit. Since 20260906120000 a silent
+                    // check-in carries today's date and would otherwise sort
+                    // first and blank the rating. action=page already uses the
+                    // rated set; these two surfaces must agree.
+                    last_visit: ratedVisits[0] ?? visits[0] ?? null,
                 },
             });
         }

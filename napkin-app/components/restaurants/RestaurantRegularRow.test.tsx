@@ -80,6 +80,24 @@ describe('RestaurantRegularRow', () => {
         expect(viewer.queryByRole('button')).toBeNull();
     });
 
+    it('never reads "0 behind" to a screen reader on a tie', () => {
+        const screen = render(
+            <RestaurantRegularRow
+                detail={{
+                    user_id: 'friend',
+                    display_name: 'Clara',
+                    avatar_url: null,
+                    visits: 2,
+                    is_viewer: false,
+                    runner_up: { display_name: 'Jacky', gap: 0 },
+                }}
+                palette={Colors.light}
+            />,
+        );
+        expect(screen.getByLabelText('Clara is the regular here · tied with Jacky')).toBeTruthy();
+        expect(screen.getByText('2 visits · tied with Jacky')).toBeTruthy();
+    });
+
     it('phrases a tie and a single visit', () => {
         expect(regularStandingCopy({
             user_id: 'a', display_name: 'A', avatar_url: null, visits: 2, is_viewer: false,
