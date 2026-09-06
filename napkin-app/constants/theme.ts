@@ -288,6 +288,8 @@ export const Spacing = {
     historyRowVertical: 14,
     memoryPhotoSize: 96,
     regularAvatar: 40,
+    similarCardWidth: 148,
+    similarPhotoHeight: 104,
   },
   /** Shared sheet chrome; detent geometry remains component-owned. */
   sheet: {

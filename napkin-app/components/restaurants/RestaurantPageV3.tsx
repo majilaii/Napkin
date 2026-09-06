@@ -686,7 +686,7 @@ export function RestaurantDetails({
         ? formatGoogleRatingCount(restaurant.google_rating_count)
         : null;
     return (
-        <View style={[styles.section, styles.detailsSection]}>
+        <View style={styles.section}>
             <SectionHeading label="DETAILS" palette={palette} />
             {restaurant.address ? (
                 <DetailRow
@@ -915,7 +915,6 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.sm,
     },
     listTitle: Type.restaurantListTitle,
-    detailsSection: { paddingBottom: Spacing.xxl },
     detailRow: {
         minHeight: Spacing.restaurant.quietActionHeight,
         flexDirection: 'row',
