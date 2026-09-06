@@ -277,7 +277,7 @@ const PEEK_CARD_W = SCREEN_W - 56;
 const PEEK_GAP = 10;
 const PEEK_SNAP = PEEK_CARD_W + PEEK_GAP;
 
-// ── Directions deep-link (mirrors InfoMapPreview / MetaActions) ─────────────────
+// ── Directions deep-link (same shape as the restaurant Details address row) ────
 
 function openDirections(item: WishlistMapItem) {
     const label = encodeURIComponent(item.name);

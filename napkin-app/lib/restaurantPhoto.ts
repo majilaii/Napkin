@@ -21,7 +21,7 @@ import { compareVisitRecords } from '@/lib/visitDates';
  *     `places_hero_enabled === true && photo_source === 'places'`. Anything else on
  *     the gated path (flag off, or `photo_source` missing/non-'places') falls through
  *     to the ghost/typographic tier. Gating on `photo_source === 'places'` (never on
- *     `photo_url != null`) mirrors RestaurantHero's invariant, so a future non-Places
+ *     `photo_url != null`) is the load-bearing invariant, so a future non-Places
  *     writer of `photo_url` can't leak an un-washed, un-attributed photo onto a plate.
  *     It also means a payload cached before the edge redeploy (no `photo_source`) is
  *     `!== 'places'` → falls to typographic rather than leaking an un-washed photo.
