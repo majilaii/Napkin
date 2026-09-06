@@ -474,7 +474,6 @@ export default function RestaurantScreen() {
                                 palette={palette}
                             />
                             <RestaurantActions
-                                saved={isSaved}
                                 onLog={handleLogPress}
                                 primaryActions={<RestaurantVisitActions
                                     key={`${user?.id ?? 'signed-out'}:${id}`}
@@ -487,16 +486,6 @@ export default function RestaurantScreen() {
                                         else if (persistedRestaurantId) router.push({ pathname: '/restaurant-history', params: { id: persistedRestaurantId, name: restaurant.name } });
                                     }}
                                 />}
-                                onPin={() => setSaveSheetOpen(true)}
-                                onDirections={() => quietOpen(directionsUrl)}
-                                onWebsite={restaurant.website
-                                    ? () => quietOpen(
-                                        restaurant.website!.startsWith('http')
-                                            ? restaurant.website!
-                                            : `https://${restaurant.website}`,
-                                    )
-                                    : undefined}
-                                onReserve={reserveUrl ? () => quietOpen(reserveUrl) : undefined}
                                 flushTop={mastheadPhotos.length > 0 && !ledgerLine}
                                 palette={palette}
                             />
@@ -588,6 +577,7 @@ export default function RestaurantScreen() {
                             restaurant={restaurant}
                             directionsUrl={directionsUrl}
                             openNow={page.data?.place_details.open_now}
+                            onReserve={reserveUrl ? () => quietOpen(reserveUrl) : undefined}
                             onGather={gatherVisible ? () => setGatherSheetOpen(true) : undefined}
                             palette={palette}
                         />

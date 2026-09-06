@@ -309,43 +309,20 @@ export function RestaurantTop({
     );
 }
 
-type UtilityAction = {
-    key: string;
-    label: string;
-    active?: boolean;
-    onPress: () => void;
-};
-
 /** Lines of a previewed review before it clips; the folio shows the rest. */
 const REVIEW_PREVIEW_LINES = 3;
 
 export function RestaurantActions({
-    saved,
     onLog,
     primaryActions,
-    onPin,
-    onDirections,
-    onWebsite,
-    onReserve,
     flushTop = false,
     palette,
 }: {
-    saved: boolean;
     onLog: () => void;
     primaryActions?: React.ReactNode;
-    onPin: () => void;
-    onDirections: () => void;
-    onWebsite?: () => void;
-    onReserve?: () => void;
     flushTop?: boolean;
     palette: Palette;
 }) {
-    const utilities: UtilityAction[] = [
-        { key: 'pin', label: saved ? 'pinned' : 'pin', active: saved, onPress: onPin },
-        { key: 'directions', label: 'directions', onPress: onDirections },
-        ...(onWebsite ? [{ key: 'website', label: 'website', onPress: onWebsite }] : []),
-        ...(onReserve ? [{ key: 'reserve', label: 'reserve', onPress: onReserve }] : []),
-    ];
     return (
         <View style={[styles.actions, flushTop && styles.actionsFlushTop]}>
             {primaryActions ?? <Pressable
@@ -361,25 +338,6 @@ export function RestaurantActions({
                 <Ionicons name="add" size={IconSize.md} color={palette.textInverse} />
                 <Text style={[styles.primaryActionText, { color: palette.textInverse }]}>LOG THIS MEAL</Text>
             </Pressable>}
-            <View style={styles.quietRow} testID="restaurant-quiet-row">
-                {utilities.map((action, index) => (
-                    <React.Fragment key={action.key}>
-                        {index > 0 ? (
-                            <Text style={[Type.metadata, { color: palette.textFaint }]}>·</Text>
-                        ) : null}
-                        <Pressable
-                            onPress={action.onPress}
-                            accessibilityRole="button"
-                            accessibilityLabel={action.label}
-                            style={({ pressed }) => [styles.quietAction, pressed && styles.pressed]}
-                        >
-                            <Text style={[Type.metadata, { color: action.active ? palette.primary : palette.textMuted }]}>
-                                {action.label}
-                            </Text>
-                        </Pressable>
-                    </React.Fragment>
-                ))}
-            </View>
         </View>
     );
 }
@@ -687,12 +645,14 @@ export function RestaurantDetails({
     restaurant,
     directionsUrl,
     openNow,
+    onReserve,
     onGather,
     palette,
 }: {
     restaurant: RestaurantPageRestaurant;
     directionsUrl: string;
     openNow?: boolean | null;
+    onReserve?: () => void;
     onGather?: () => void;
     palette: Palette;
 }) {
@@ -708,6 +668,7 @@ export function RestaurantDetails({
         hasHours(restaurant.hours) ? 'hours' : null,
         restaurant.phone ? 'phone' : null,
         restaurant.website ? 'website' : null,
+        onReserve ? 'reserve' : null,
         onGather ? 'gather' : null,
         restaurant.google_rating != null ? 'google' : null,
     ].filter(Boolean);
@@ -778,6 +739,15 @@ export function RestaurantDetails({
                             : `https://${restaurant.website}`,
                     )}
                     last={lastRow === 'website'}
+                    palette={palette}
+                />
+            ) : null}
+            {onReserve ? (
+                <DetailRow
+                    icon="calendar-outline"
+                    copy="reserve a table"
+                    onPress={onReserve}
+                    last={lastRow === 'reserve'}
                     palette={palette}
                 />
             ) : null}
@@ -877,18 +847,6 @@ const styles = StyleSheet.create({
         gap: Spacing.sm,
     },
     primaryActionText: Type.restaurantPrimaryAction,
-    quietRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        columnGap: Spacing.sm,
-        marginLeft: -Spacing.xs,
-    },
-    quietAction: {
-        minHeight: Spacing.restaurant.quietActionHeight,
-        justifyContent: 'center',
-        paddingHorizontal: Spacing.xs,
-    },
     section: {
         paddingHorizontal: Spacing.restaurant.pageGutter,
         marginTop: Spacing.restaurant.sectionGap,
