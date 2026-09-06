@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator, Image } from 'react-native';
+import { View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Avatar } from '@/components/feed/Avatar';
-import { PhotoLightbox } from '@/components/photos/PhotoLightbox';
+import { ReviewPhotoStrip, reviewPhotoUrls } from '@/components/restaurants/ReviewPhotoStrip';
 import { ErrorState } from '@/components/ErrorState';
 import { useRestaurantReviews } from '@/hooks/restaurants/useRestaurantReviews';
 import { flattenPages } from '@/lib/pagination';
@@ -118,8 +118,7 @@ function ReviewRow({
 }) {
     const [expanded, setExpanded] = useState(false);
     const [long, setLong] = useState(false);
-    const [photoIndex, setPhotoIndex] = useState<number | null>(null);
-    const photos = [...new Set(row.photo_urls?.length ? row.photo_urls : row.photo_url ? [row.photo_url] : [])];
+    const photos = reviewPhotoUrls(row);
     const date = formatDate(row.created_at);
 
     return (
@@ -155,24 +154,7 @@ function ReviewRow({
                     <Text style={[styles.link, { color: palette.primary }]}>{expanded ? 'less' : 'more'}</Text>
                 </Pressable>
             ) : null}
-            {photos.length ? (
-                <View style={styles.photos}>
-                    {photos.slice(0, 3).map((url, index) => (
-                        <Pressable key={url} onPress={() => setPhotoIndex(index)} accessibilityRole="button"
-                            accessibilityLabel={`Photo ${index + 1} of ${photos.length} by ${row.display_name}`}
-                            style={[styles.photo, { height: photos.length === 1 ? 150 : photos.length === 2 ? 128 : 116, borderColor: palette.imageOutline }]}>
-                            <Image source={{ uri: url }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                            {index === 2 && photos.length > 3 ? (
-                                <View style={[styles.overflow, { backgroundColor: palette.overlayPhoto }]}>
-                                    <Text style={[styles.overflowText, { color: palette.textOnImage }]}>+{photos.length - 3}</Text>
-                                </View>
-                            ) : null}
-                        </Pressable>
-                    ))}
-                </View>
-            ) : null}
-            {photoIndex != null ? <PhotoLightbox visible photos={photos} initialIndex={photoIndex}
-                caption={`${row.display_name} · ${date}`} onClose={() => setPhotoIndex(null)} /> : null}
+            <ReviewPhotoStrip photos={photos} author={row.display_name} caption={`${row.display_name} · ${date}`} palette={palette} />
         </View>
     );
 }
@@ -215,8 +197,4 @@ const styles = StyleSheet.create({
     measure: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0, pointerEvents: 'none' },
     more: { minHeight: 40, justifyContent: 'center', alignSelf: 'flex-start', marginVertical: -10, paddingRight: 16 },
     link: { ...Type.caption, fontFamily: 'Manrope_600SemiBold' },
-    photos: { flexDirection: 'row', gap: 6 },
-    photo: { flex: 1, borderRadius: 6, overflow: 'hidden', borderWidth: 1 },
-    overflow: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
-    overflowText: { ...Type.titleLarge },
 });
