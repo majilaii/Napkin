@@ -506,10 +506,12 @@ export function TableNotesSection({
 export function FriendsSpread({
     bins,
     mode,
+    ring = 'friends',
     palette,
 }: {
     bins: number[];
     mode: number | null;
+    ring?: 'friends' | 'napkin';
     palette: Palette;
 }) {
     const max = Math.max(...bins, 1);
@@ -538,7 +540,7 @@ export function FriendsSpread({
             <View style={styles.spreadFooter}>
                 <Text style={[Type.metadata, { color: palette.textFaint }]}>1</Text>
                 <Text style={[Type.metadata, { color: palette.textFaint }]}>
-                    friends land on{' '}
+                    {ring === 'friends' ? 'friends land on' : 'people land on'}{' '}
                     <Text style={[Type.ratingCompact, { color: palette.amberBright }]}>
                         {mode == null ? '—' : Number.isInteger(mode) ? mode.toFixed(0) : mode.toFixed(1)}
                     </Text>

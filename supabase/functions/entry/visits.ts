@@ -128,7 +128,7 @@ export async function handleVisitAction(
         if (error) {
             const code = String(error.message ?? '').split(':')[0].trim().toUpperCase();
             if (code === 'NOT_OWNER') return errorResponse(code, 'This visit is no longer available to edit.', 403);
-            if (code === 'VISIT_UNDO_REFUSED') return errorResponse(code, 'Only the latest visit without a date, review or sharing can be undone. Refresh and try again.', 409);
+            if (code === 'VISIT_UNDO_REFUSED') return errorResponse(code, 'Only the latest check-in without a review or sharing can be undone. Refresh and try again.', 409);
             if (code === 'VISIT_NOT_SOLO') return errorResponse(code, 'Open the meal to edit this shared gathering.', 409);
             if (code === 'VISIT_NONCE_MISMATCH') return errorResponse(code, 'This save attempt belongs to a different restaurant. Please retry.', 409);
             if (code === 'RESTAURANT_NOT_FOUND') return errorResponse(code, 'This restaurant is no longer available. Refresh and try again.', 404);

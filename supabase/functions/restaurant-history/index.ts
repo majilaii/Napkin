@@ -48,6 +48,7 @@ import {
 } from '../_shared/ledger.ts';
 import { enrichSearchRows } from './searchProjection.ts';
 import { isPeekCardContext, loadPeekCard } from './peekCard.ts';
+import { handleSimilarAction } from './similar.ts';
 import {
     appendPageProjections,
     loadSelfLog,
@@ -956,6 +957,12 @@ serve(async (req) => {
                     last_visit: visits[0] ?? null,
                 },
             });
+        }
+
+        // ── Similar places (DB-backed, same city; see similar.ts) ─────────
+        if (action === 'similar') {
+            const similar = await handleSimilarAction(supabase, user.id, { restaurant_id: restaurantId });
+            return similar ?? fail('restaurant_id is required');
         }
 
         // ── Reserve link (TICKET-149) ─────────────────────────────────────

@@ -56,12 +56,14 @@ import {
     RestaurantRegularRow,
     RestaurantTop,
     SavedFromTikTokPanel,
+    SimilarPlacesSection,
     TableNotesSection,
     formatLedgerLine,
 } from '@/components/restaurants';
 import { RestaurantVisitActions } from '@/components/restaurants/RestaurantVisitActions';
 import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippings';
 import { useRestaurantFeaturedLists } from '@/hooks/restaurants/useRestaurantFeaturedLists';
+import { useSimilarRestaurants } from '@/hooks/restaurants/useSimilarRestaurants';
 import { useReserveLink } from '@/hooks/restaurants/useReserveLink';
 import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 import { AtlasCrossLinkChip } from '@/components/atlas';
@@ -70,7 +72,7 @@ import { GatherSheet } from '@/components/gatherings';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 import { shouldShowRestaurantErrorShell } from '@/lib/screenLoadState';
 import {
-    buildFriendsSpread,
+    buildRestaurantSpread,
     buildRestaurantPhotoMeta,
     buildRestaurantMeta,
     chooseTableNotesGroup,
@@ -240,6 +242,7 @@ export default function RestaurantScreen() {
         data: clippingsData,
         isFetched: clippingsSettled,
     } = useRestaurantClippings(persistedRestaurantId, user?.id);
+    const { data: similarData } = useSimilarRestaurants(persistedRestaurantId);
     const clippings = useMemo(() => clippingsData?.rows ?? [], [clippingsData?.rows]);
     const bookmarked = useIsWishlisted(
         persistedRestaurantId ?? restaurant?.external_id,
@@ -338,8 +341,11 @@ export default function RestaurantScreen() {
         [page.data, restaurant, user?.id],
     );
     const spread = useMemo(
-        () => buildFriendsSpread(numberTiers?.friendsCohort ?? []),
-        [numberTiers?.friendsCohort],
+        () => buildRestaurantSpread(
+            numberTiers?.friendsCohort ?? [],
+            page.data?.distributions_half?.napkin,
+        ),
+        [numberTiers?.friendsCohort, page.data?.distributions_half?.napkin],
     );
     const tableNotesGroup = useMemo(
         () => chooseTableNotesGroup(page.data?.table_notes ?? [], tableId),
@@ -507,6 +513,10 @@ export default function RestaurantScreen() {
 
                         <RestaurantRegularRow
                             detail={page.data?.regular_detail}
+                            onPress={(regularUserId) => router.push({
+                                pathname: '/u/[identifier]',
+                                params: { identifier: regularUserId },
+                            })}
                             palette={palette}
                         />
 
@@ -543,7 +553,7 @@ export default function RestaurantScreen() {
                         />
 
                         {spread.visible ? (
-                            <FriendsSpread bins={spread.bins} mode={spread.mode} palette={palette} />
+                            <FriendsSpread bins={spread.bins} mode={spread.mode} ring={spread.ring} palette={palette} />
                         ) : null}
 
                         <FeaturedListsSection
@@ -551,6 +561,15 @@ export default function RestaurantScreen() {
                             onPress={(listId) => router.push({
                                 pathname: '/list/[id]',
                                 params: { id: listId },
+                            })}
+                            palette={palette}
+                        />
+
+                        <SimilarPlacesSection
+                            rows={similarData?.rows ?? []}
+                            onPress={(similarId) => router.push({
+                                pathname: '/restaurant/[id]',
+                                params: { id: similarId },
                             })}
                             palette={palette}
                         />

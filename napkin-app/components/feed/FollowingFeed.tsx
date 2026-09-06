@@ -4,29 +4,38 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { flattenFriendsFeed, type FriendsActivityRow, useFriendsFeed } from '@/hooks/feed';
+import { flattenFriendsFeed, type FriendsActivityRow, type PinFeedRow, useFriendsFeed } from '@/hooks/feed';
 import { ErrorState } from '@/components/ErrorState';
 import { shouldShowSparseTail } from './feedRouting';
 import { feedSectionLabel } from './feedDates';
-import { ActivityFeedRow } from './ActivityFeedRow';
+import { ActivityFeedRow, PinDigestRow } from './ActivityFeedRow';
 import { SectionKicker } from './SectionKicker';
 import { FriendFeedCard } from './FriendFeedCard';
 import { FeedSparseTail } from './FeedSparseTail';
 import { FollowingEmptyState } from './FollowingEmptyState';
 
-type FeedListItem =
+export type FeedListItem =
     | { _type: 'header'; key: string; label: string }
-    | { _type: 'row'; key: string; row: FriendsActivityRow; showDivider: boolean };
+    | { _type: 'row'; key: string; row: FriendsActivityRow; showDivider: boolean }
+    | { _type: 'pins'; key: string; rows: PinFeedRow[]; showDivider: boolean };
+
+/** Consecutive pins by one person in one date section fold into a digest. */
+export const PIN_DIGEST_MIN = 2;
 
 /**
- * Interleave a date-section header before the first row of each day boundary.
- * Each of the three feed weights now owns its approved internal rhythm, so the
- * list wrapper adds no generic card-sized gutter between dense rows.
+ * Interleave a date-section header before the first row of each day boundary,
+ * and fold a run of pins by the same person (within one section) into a single
+ * digest row so an import or a saving spree never spams the feed. A lone pin
+ * stays a normal row. Expanded digests render their pins in place.
  */
-function buildFeedList(rows: FriendsActivityRow[]): FeedListItem[] {
+export function buildFeedList(
+    rows: FriendsActivityRow[],
+    expandedDigests: ReadonlySet<string> = new Set(),
+): FeedListItem[] {
     const items: FeedListItem[] = [];
     let lastLabel = '';
-    for (let i = 0; i < rows.length; i++) {
+    let i = 0;
+    while (i < rows.length) {
         const row = rows[i];
         const label = feedSectionLabel(row.sort_date);
         if (label !== lastLabel) {
@@ -35,14 +44,49 @@ function buildFeedList(rows: FriendsActivityRow[]): FeedListItem[] {
             items.push({ _type: 'header', key: `header-${row.id}`, label });
             lastLabel = label;
         }
+        if (row.kind === 'pin') {
+            const run: PinFeedRow[] = [row];
+            let j = i + 1;
+            while (
+                j < rows.length
+                && rows[j].kind === 'pin'
+                && rows[j].user_id === row.user_id
+                && feedSectionLabel(rows[j].sort_date) === label
+            ) {
+                run.push(rows[j] as PinFeedRow);
+                j += 1;
+            }
+            const digestKey = `pins-${row.id}`;
+            if (run.length >= PIN_DIGEST_MIN && !expandedDigests.has(digestKey)) {
+                items.push({ _type: 'pins', key: digestKey, rows: run, showDivider: j < rows.length });
+                i = j;
+                continue;
+            }
+        }
         items.push({
             _type: 'row',
             key: `row-${row.id}`,
             row,
             showDivider: i < rows.length - 1,
         });
+        i += 1;
     }
     return items;
+}
+
+/** The digest key a run of pins collapses under; the first pin's id anchors it. */
+export function pinDigestKey(rows: FriendsActivityRow[], index: number): string | null {
+    const row = rows[index];
+    if (!row || row.kind !== 'pin') return null;
+    const label = feedSectionLabel(row.sort_date);
+    let start = index;
+    while (
+        start > 0
+        && rows[start - 1].kind === 'pin'
+        && rows[start - 1].user_id === row.user_id
+        && feedSectionLabel(rows[start - 1].sort_date) === label
+    ) start -= 1;
+    return `pins-${rows[start].id}`;
 }
 
 interface Props {
@@ -74,7 +118,16 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
         try { await refetch(); } finally { setRefreshing(false); }
     }, [refetch]);
     const rows = useMemo(() => flattenFriendsFeed(data), [data]);
-    const listData = useMemo(() => buildFeedList(rows), [rows]);
+    const [expandedDigests, setExpandedDigests] = useState<ReadonlySet<string>>(() => new Set());
+    const listData = useMemo(() => buildFeedList(rows, expandedDigests), [rows, expandedDigests]);
+    const expandDigest = useCallback((key: string) => {
+        setExpandedDigests((current) => {
+            if (current.has(key)) return current;
+            const next = new Set(current);
+            next.add(key);
+            return next;
+        });
+    }, []);
 
     // Caught-up mark whenever the feed reached true end-of-list with a thin set.
     const showSparseTail = shouldShowSparseTail({ rows, hasNextPage: !!hasNextPage, isLoading });
@@ -90,6 +143,17 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
                     <SectionKicker first={item.key === listData[0]?.key}>{item.label}</SectionKicker>
                 );
             }
+            if (item._type === 'pins') {
+                return (
+                    <View style={styles.rowSlot}>
+                        <PinDigestRow
+                            rows={item.rows}
+                            showDivider={item.showDivider}
+                            onExpand={() => expandDigest(item.key)}
+                        />
+                    </View>
+                );
+            }
             return (
                 <View style={styles.rowSlot}>
                     {item.row.kind === 'pin' || item.row.kind === 'list'
@@ -98,7 +162,7 @@ export function FollowingFeed({ feedQuery, ListHeaderComponent, onSwitchToForYou
                 </View>
             );
         },
-        [listData],
+        [listData, expandDigest],
     );
 
     return (

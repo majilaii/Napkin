@@ -131,28 +131,46 @@ function possessivePhotoLabel(displayName: string | null | undefined): string {
 }
 
 /**
- * Owns the restaurant-detail masthead chain:
- * entry photos -> stored clipping thumbnail -> attributed Places hero -> none.
+ * Owns the restaurant-detail masthead chain (founder order 2026-09-06):
+ * attributed Places hero FIRST, then entry photos as the later pages -> none.
  *
- * Clippings intentionally remain a second argument because their independent query
- * resolves after the core page. Calling this again with the landed rows upgrades a
- * Places/typographic masthead without allowing a clip to displace an entry photo.
+ * The first frame is always the venue's own Google photo. A user's review photo
+ * never becomes the face of somebody else's restaurant, and a clipping thumbnail
+ * (a TikTok creator's face) never appears in the masthead at all. Without a
+ * Places hero the masthead stays typographic; entry photos then live only in the
+ * memories strip and the review cards. `clippings` is accepted for call-site
+ * compatibility and intentionally ignored.
  */
 export function resolveMastheadPhotos(
     page: MastheadPageData | null | undefined,
-    { clippings, settled }: MastheadClippingState,
+    _clippings: MastheadClippingState,
 ): MastheadPhoto[] {
-    const entryPhotos: MastheadPhoto[] = [];
-    const seen = new Set<string>();
+    const restaurant = page?.restaurant;
+    const placesPhoto = resolveSourcedPhoto({
+        url: restaurant?.photo_url,
+        photoSource: restaurant?.photo_source,
+        attributionHtml: restaurant?.places_photo_attribution_html,
+        restaurantName: restaurant?.name,
+    });
+    if (!placesPhoto.url || !placesPhoto.isPlaces || !placesPhoto.credit) return [];
+
+    const photos: MastheadPhoto[] = [{
+        kind: 'places',
+        url: placesPhoto.url,
+        entryId: null,
+        label: 'via google',
+        attribution: placesPhoto.credit.redundant ? null : placesPhoto.credit.label,
+    }];
+    const seen = new Set<string>([placesPhoto.url]);
     const addEntry = (
         urlValue: string | null | undefined,
         label: string,
         entryIdValue: string | null | undefined,
     ) => {
         const url = normalizeUrl(urlValue);
-        if (!url || seen.has(url) || entryPhotos.length >= MAX_MASTHEAD_PHOTOS) return;
+        if (!url || seen.has(url) || photos.length >= MAX_MASTHEAD_PHOTOS) return;
         seen.add(url);
-        entryPhotos.push({
+        photos.push({
             kind: 'entry',
             url,
             entryId: entryIdValue?.trim() || null,
@@ -185,33 +203,5 @@ export function resolveMastheadPhotos(
         );
     }
 
-    if (entryPhotos.length > 0) return entryPhotos;
-
-    if (settled) {
-        for (const clipping of clippings) {
-            const url = normalizeUrl(clipping.thumb_url);
-            if (url) {
-                return [{ kind: 'clip', url, entryId: null, label: null, attribution: null }];
-            }
-        }
-    }
-
-    const restaurant = page?.restaurant;
-    const placesPhoto = resolveSourcedPhoto({
-        url: restaurant?.photo_url,
-        photoSource: restaurant?.photo_source,
-        attributionHtml: restaurant?.places_photo_attribution_html,
-        restaurantName: restaurant?.name,
-    });
-    if (placesPhoto.url && placesPhoto.isPlaces && placesPhoto.credit) {
-        return [{
-            kind: 'places',
-            url: placesPhoto.url,
-            entryId: null,
-            label: 'via google',
-            attribution: placesPhoto.credit.redundant ? null : placesPhoto.credit.label,
-        }];
-    }
-
-    return [];
+    return photos;
 }
