@@ -1,0 +1,1 @@
+- [Builder verification battery](reference_builder_verification_battery.md) — exact tsc/eslint/jest/typography/deno commands + stale typed-routes tsc trap in worktrees

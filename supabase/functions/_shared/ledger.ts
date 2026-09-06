@@ -795,8 +795,19 @@ async function loadLedgerForCohort(
         const current = firstVisitByUserRestaurant.get(key);
         if (!current || date < current) firstVisitByUserRestaurant.set(key, date);
     }
+    // LAW: a new place is earned only where the member logged a RATED meal this
+    // month, matching `meals` and `crowns`. The lookback still contributes its
+    // unrated and undated rows above, so an earlier silent check-in still proves
+    // a prior visit and blocks the claim. Without this pair gate a silent
+    // check-in would score a napkin purely because a followee happened to rate
+    // the same restaurant that month (the lookback restaurant set is built from
+    // the whole chunk's month rows), producing an incoherent meals=0 napkin.
+    const ratedMonthPairs = new Set(
+        visibleMonth.map((row) => `${row.user_id}\u0000${row.restaurant_id}`),
+    );
     const newPlaces = new Map<string, number>();
     for (const [key, firstVisit] of firstVisitByUserRestaurant) {
+        if (!ratedMonthPairs.has(key)) continue;
         if (unknownHistory.has(key) || firstVisit < bounds.monthStart || firstVisit >= bounds.snapshotEnd) continue;
         const userId = key.split('\u0000')[0];
         newPlaces.set(userId, (newPlaces.get(userId) ?? 0) + 1);

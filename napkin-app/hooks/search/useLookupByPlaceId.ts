@@ -94,6 +94,12 @@ export function useLazyBackfillRestaurant(args: {
                 qc.invalidateQueries({
                     queryKey: queryKeys.restaurants.page(restaurantId, tableId ?? undefined),
                 });
+                // Similar places keys off city + coordinates, which is exactly what
+                // this backfill repairs. Without this the section stays empty for
+                // the whole 30-minute staleTime after the row is fixed.
+                qc.invalidateQueries({
+                    queryKey: queryKeys.restaurants.similar(restaurantId),
+                });
             }
         },
         // Don't surface errors — backfill is best-effort.
