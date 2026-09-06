@@ -71,6 +71,7 @@ describe('RestaurantPageV3 note rings', () => {
         const screen = render(
             <FriendsNotesSection
                 cohort={cohort}
+                reviews={[review]}
                 total={4}
                 onSeeAll={onSeeAll}
                 onReviewPress={jest.fn()}
@@ -89,6 +90,7 @@ describe('RestaurantPageV3 note rings', () => {
         const screen = render(
             <FriendsNotesSection
                 cohort={[]}
+                reviews={[]}
                 total={4}
                 onSeeAll={onSeeAll}
                 onReviewPress={jest.fn()}
@@ -99,6 +101,40 @@ describe('RestaurantPageV3 note rings', () => {
         expect(screen.getByText('REVIEWS')).toBeTruthy();
         expect(screen.queryByText('— order the whole turbot')).toBeNull();
         fireEvent.press(screen.getByLabelText('all 4 reviews'));
+        expect(onSeeAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('previews up to three public reviews before the doorway and never the viewer’s own', () => {
+        const onSeeAll = jest.fn();
+        const stranger = (n: number): PublicReviewCard => ({
+            ...review,
+            entry_id: `s${n}`,
+            user_id: `u${n}`,
+            display_name: `Guest ${n}`,
+            note_excerpt: `stranger note ${n}`,
+            is_followee: false,
+        });
+        const own: PublicReviewCard = {
+            ...review, entry_id: 'mine', user_id: 'viewer', note_excerpt: 'my own note', is_followee: false,
+        };
+        const screen = render(
+            <FriendsNotesSection
+                cohort={[]}
+                reviews={[own, stranger(1), stranger(2), stranger(3), stranger(4)]}
+                viewerUserId="viewer"
+                total={5}
+                onSeeAll={onSeeAll}
+                onReviewPress={jest.fn()}
+                palette={Colors.light}
+            />,
+        );
+
+        expect(screen.getByText('REVIEWS')).toBeTruthy();
+        expect(screen.getByText('— stranger note 1')).toBeTruthy();
+        expect(screen.getByText('— stranger note 3')).toBeTruthy();
+        expect(screen.queryByText('— stranger note 4')).toBeNull();
+        expect(screen.queryByText('— my own note')).toBeNull();
+        fireEvent.press(screen.getByLabelText('all 5 reviews'));
         expect(onSeeAll).toHaveBeenCalledTimes(1);
     });
 
@@ -199,14 +235,42 @@ describe('RestaurantPageV3 actions and hours', () => {
         const visible = render(
             <RestaurantActions
                 {...base}
+                saved
                 onWebsite={jest.fn()}
                 onReserve={onReserve}
-                onGather={jest.fn()}
             />,
         );
-        expect(visible.getAllByTestId('restaurant-utility-row')).toHaveLength(2);
+        expect(visible.getByTestId('restaurant-quiet-row')).toBeTruthy();
+        expect(visible.getByLabelText('pinned')).toBeTruthy();
+        expect(visible.queryByLabelText('gather')).toBeNull();
         fireEvent.press(visible.getByLabelText('reserve'));
         expect(onReserve).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps gather off the action rail and in the details section', () => {
+        const onGather = jest.fn();
+        const hidden = render(
+            <RestaurantDetails
+                restaurant={restaurant}
+                directionsUrl="https://maps.test"
+                openNow={null}
+                palette={Colors.light}
+            />,
+        );
+        expect(hidden.queryByLabelText('gather the table')).toBeNull();
+        hidden.unmount();
+
+        const visible = render(
+            <RestaurantDetails
+                restaurant={restaurant}
+                directionsUrl="https://maps.test"
+                openNow={null}
+                onGather={onGather}
+                palette={Colors.light}
+            />,
+        );
+        fireEvent.press(visible.getByLabelText('gather the table'));
+        expect(onGather).toHaveBeenCalledTimes(1);
     });
 
     it('does not claim open-now without the signal and retains the weekday line', () => {

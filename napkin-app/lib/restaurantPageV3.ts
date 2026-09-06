@@ -32,6 +32,30 @@ export function deriveFriendsCohort(
     return [...byUser.values()];
 }
 
+/** How many public review cards the restaurant page previews before the folio doorway. */
+export const REVIEW_PREVIEW_COUNT = 3;
+
+/**
+ * Cards for the REVIEWS preview: followee cards first, then any other public
+ * review, never the viewer's own, deduped by entry, capped at REVIEW_PREVIEW_COUNT.
+ */
+export function previewReviews(
+    cohort: FriendsCohortMember[],
+    reviews: PublicReviewCard[],
+    viewerUserId: string | null | undefined,
+): PublicReviewCard[] {
+    const seen = new Set<string>();
+    const picked: PublicReviewCard[] = [];
+    for (const review of [...cohort.map((member) => member.review), ...reviews]) {
+        if (seen.has(review.entry_id) || review.user_id === viewerUserId) continue;
+        if (!review.note_excerpt?.trim()) continue;
+        seen.add(review.entry_id);
+        picked.push(review);
+        if (picked.length === REVIEW_PREVIEW_COUNT) break;
+    }
+    return picked;
+}
+
 export function meanRating(values: number[]): number | null {
     return values.length > 0
         ? values.reduce((sum, value) => sum + value, 0) / values.length

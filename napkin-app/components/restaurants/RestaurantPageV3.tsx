@@ -23,6 +23,7 @@ import type { FriendsCohortMember, TableNotesGroup } from '@/lib/restaurantPageV
 import {
     formatGoogleRatingCount,
     monthLabel,
+    previewReviews,
     restaurantClosingTime,
 } from '@/lib/restaurantPageV3';
 import { hasHours, todaysHoursLine, weekHoursLines } from '@/lib/restaurantHours';
@@ -310,9 +311,12 @@ export function RestaurantTop({
 type UtilityAction = {
     key: string;
     label: string;
-    icon: keyof typeof Ionicons.glyphMap;
+    active?: boolean;
     onPress: () => void;
 };
+
+/** Lines of a previewed review before it clips; the folio shows the rest. */
+const REVIEW_PREVIEW_LINES = 3;
 
 export function RestaurantActions({
     saved,
@@ -322,7 +326,6 @@ export function RestaurantActions({
     onDirections,
     onWebsite,
     onReserve,
-    onGather,
     flushTop = false,
     palette,
 }: {
@@ -333,28 +336,15 @@ export function RestaurantActions({
     onDirections: () => void;
     onWebsite?: () => void;
     onReserve?: () => void;
-    onGather?: () => void;
     flushTop?: boolean;
     palette: Palette;
 }) {
     const utilities: UtilityAction[] = [
-        { key: 'pin', label: 'pin', icon: saved ? 'bookmark' : 'bookmark-outline', onPress: onPin },
-        { key: 'directions', label: 'directions', icon: 'navigate-outline', onPress: onDirections },
-        ...(onWebsite
-            ? [{ key: 'website', label: 'website', icon: 'globe-outline' as const, onPress: onWebsite }]
-            : []),
-        ...(onReserve
-            ? [{ key: 'reserve', label: 'reserve', icon: 'calendar-outline' as const, onPress: onReserve }]
-            : []),
-        ...(onGather
-            ? [{ key: 'gather', label: 'gather', icon: 'people-outline' as const, onPress: onGather }]
-            : []),
+        { key: 'pin', label: saved ? 'pinned' : 'pin', active: saved, onPress: onPin },
+        { key: 'directions', label: 'directions', onPress: onDirections },
+        ...(onWebsite ? [{ key: 'website', label: 'website', onPress: onWebsite }] : []),
+        ...(onReserve ? [{ key: 'reserve', label: 'reserve', onPress: onReserve }] : []),
     ];
-    const utilityRows = utilities.length === 5
-        ? [utilities.slice(0, 3), utilities.slice(3)]
-        : utilities.length === 4
-            ? [utilities.slice(0, 2), utilities.slice(2)]
-            : [utilities];
     return (
         <View style={[styles.actions, flushTop && styles.actionsFlushTop]}>
             {primaryActions ?? <Pressable
@@ -370,33 +360,23 @@ export function RestaurantActions({
                 <Ionicons name="add" size={IconSize.md} color={palette.textInverse} />
                 <Text style={[styles.primaryActionText, { color: palette.textInverse }]}>LOG THIS MEAL</Text>
             </Pressable>}
-            <View style={styles.utilityRows}>
-                {utilityRows.map((row, rowIndex) => (
-                    <View
-                        key={`utility-row-${rowIndex}`}
-                        testID="restaurant-utility-row"
-                        style={styles.utilityRow}
-                    >
-                        {row.map((action) => (
-                            <Pressable
-                                key={action.key}
-                                onPress={action.onPress}
-                                accessibilityRole="button"
-                                accessibilityLabel={action.label}
-                                style={({ pressed }) => [
-                                    styles.utilityAction,
-                                    styles.utilityFlexible,
-                                    { backgroundColor: palette.surfaceJournal },
-                                    pressed && styles.pressed,
-                                ]}
-                            >
-                                <Ionicons name={action.icon} size={IconSize.md} color={palette.textSecondary} />
-                                <Text style={[styles.utilityActionText, { color: palette.textSecondary }]}>
-                                    {action.label}
-                                </Text>
-                            </Pressable>
-                        ))}
-                    </View>
+            <View style={styles.quietRow} testID="restaurant-quiet-row">
+                {utilities.map((action, index) => (
+                    <React.Fragment key={action.key}>
+                        {index > 0 ? (
+                            <Text style={[Type.metadata, { color: palette.textFaint }]}>·</Text>
+                        ) : null}
+                        <Pressable
+                            onPress={action.onPress}
+                            accessibilityRole="button"
+                            accessibilityLabel={action.label}
+                            style={({ pressed }) => [styles.quietAction, pressed && styles.pressed]}
+                        >
+                            <Text style={[Type.metadata, { color: action.active ? palette.primary : palette.textMuted }]}>
+                                {action.label}
+                            </Text>
+                        </Pressable>
+                    </React.Fragment>
                 ))}
             </View>
         </View>
@@ -409,6 +389,7 @@ function QuoteCard({
     rating,
     visitedAt,
     suffix,
+    clipped,
     onPress,
     palette,
 }: {
@@ -417,12 +398,16 @@ function QuoteCard({
     rating: number | null;
     visitedAt: string | null;
     suffix?: string;
+    clipped?: boolean;
     onPress?: () => void;
     palette: Palette;
 }) {
     const content = (
         <View style={[styles.quoteCard, { backgroundColor: palette.surfaceNote }, Shadow.ambient]}>
-            <Text style={[Type.restaurantQuote, { color: palette.textSoft }]}>
+            <Text
+                style={[Type.restaurantQuote, { color: palette.textSoft }]}
+                numberOfLines={clipped ? REVIEW_PREVIEW_LINES : undefined}
+            >
                 {`— ${note}`}
             </Text>
             <View style={styles.quoteAttribution}>
@@ -446,27 +431,32 @@ function QuoteCard({
 
 export function FriendsNotesSection({
     cohort,
+    reviews,
+    viewerUserId,
     total,
     onSeeAll,
     onReviewPress,
     palette,
 }: {
     cohort: FriendsCohortMember[];
+    reviews: PublicReviewCard[];
+    viewerUserId?: string | null;
     total: number;
     onSeeAll: () => void;
     onReviewPress: (review: PublicReviewCard) => void;
     palette: Palette;
 }) {
     if (total <= 0) return null;
-    const visible = cohort.slice(0, 2);
+    const visible = previewReviews(cohort, reviews, viewerUserId);
+    const action = `all ${total} reviews ›`;
+    const actionLabel = `all ${total} reviews`;
     if (visible.length === 0) {
-        const action = `all ${total} reviews ›`;
         return (
             <View style={styles.section}>
                 <Pressable
                     onPress={onSeeAll}
                     accessibilityRole="button"
-                    accessibilityLabel={action.replace('›', '').trim()}
+                    accessibilityLabel={actionLabel}
                     style={({ pressed }) => [styles.sectionHeading, pressed && styles.pressed]}
                 >
                     <Text style={[Type.feedSectionKicker, { color: palette.textMuted }]}>REVIEWS</Text>
@@ -477,25 +467,30 @@ export function FriendsNotesSection({
             </View>
         );
     }
+    const allFriends = visible.every((review) => review.is_followee);
     return (
         <View style={styles.section}>
-            <SectionHeading
-                label={visible.length > 0 ? 'FROM FRIENDS' : 'REVIEWS'}
-                action={`all ${total} reviews ›`}
-                onAction={onSeeAll}
-                palette={palette}
-            />
-            {visible.map(({ review }) => (
+            <SectionHeading label={allFriends ? 'FROM FRIENDS' : 'REVIEWS'} palette={palette} />
+            {visible.map((review) => (
                 <QuoteCard
                     key={review.entry_id}
                     note={review.note_excerpt}
                     name={review.display_name}
                     rating={review.rating}
                     visitedAt={review.created_at}
+                    clipped
                     onPress={() => onReviewPress(review)}
                     palette={palette}
                 />
             ))}
+            <Pressable
+                onPress={onSeeAll}
+                accessibilityRole="button"
+                accessibilityLabel={actionLabel}
+                style={({ pressed }) => [styles.sectionDoorway, pressed && styles.pressed]}
+            >
+                <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>{action}</Text>
+            </Pressable>
         </View>
     );
 }
@@ -678,11 +673,13 @@ export function RestaurantDetails({
     restaurant,
     directionsUrl,
     openNow,
+    onGather,
     palette,
 }: {
     restaurant: RestaurantPageRestaurant;
     directionsUrl: string;
     openNow?: boolean | null;
+    onGather?: () => void;
     palette: Palette;
 }) {
     const [hoursExpanded, setHoursExpanded] = useState(false);
@@ -697,6 +694,7 @@ export function RestaurantDetails({
         hasHours(restaurant.hours) ? 'hours' : null,
         restaurant.phone ? 'phone' : null,
         restaurant.website ? 'website' : null,
+        onGather ? 'gather' : null,
         restaurant.google_rating != null ? 'google' : null,
     ].filter(Boolean);
     if (rows.length === 0) return null;
@@ -766,6 +764,15 @@ export function RestaurantDetails({
                             : `https://${restaurant.website}`,
                     )}
                     last={lastRow === 'website'}
+                    palette={palette}
+                />
+            ) : null}
+            {onGather ? (
+                <DetailRow
+                    icon="people-outline"
+                    copy="gather the table"
+                    onPress={onGather}
+                    last={lastRow === 'gather'}
                     palette={palette}
                 />
             ) : null}
@@ -856,19 +863,18 @@ const styles = StyleSheet.create({
         gap: Spacing.sm,
     },
     primaryActionText: Type.restaurantPrimaryAction,
-    utilityRows: { gap: Spacing.sm },
-    utilityRow: { flexDirection: 'row', gap: Spacing.sm },
-    utilityAction: {
-        height: Spacing.restaurant.quietActionHeight,
-        borderRadius: Radius.full,
+    quietRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        gap: Spacing.restaurant.compactGap,
-        paddingHorizontal: Spacing.sm,
+        flexWrap: 'wrap',
+        columnGap: Spacing.sm,
+        marginLeft: -Spacing.xs,
     },
-    utilityFlexible: { flex: 1 },
-    utilityActionText: Type.restaurantUtilityAction,
+    quietAction: {
+        minHeight: Spacing.restaurant.quietActionHeight,
+        justifyContent: 'center',
+        paddingHorizontal: Spacing.xs,
+    },
     section: {
         paddingHorizontal: Spacing.restaurant.pageGutter,
         marginTop: Spacing.restaurant.sectionGap,
@@ -885,6 +891,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     headingAction: Type.restaurantSectionAction,
+    sectionDoorway: {
+        minHeight: Spacing.restaurant.quietActionHeight,
+        justifyContent: 'center',
+    },
     quoteCard: {
         borderRadius: Radius.lg,
         paddingHorizontal: Spacing.restaurant.cardHorizontal,

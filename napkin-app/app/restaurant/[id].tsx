@@ -497,7 +497,6 @@ export default function RestaurantScreen() {
                                     )
                                     : undefined}
                                 onReserve={reserveUrl ? () => quietOpen(reserveUrl) : undefined}
-                                onGather={gatherVisible ? () => setGatherSheetOpen(true) : undefined}
                                 flushTop={mastheadPhotos.length > 0 && !ledgerLine}
                                 palette={palette}
                             />
@@ -524,6 +523,8 @@ export default function RestaurantScreen() {
 
                         <FriendsNotesSection
                             cohort={numberTiers.friendsCohort}
+                            reviews={page.data?.public_reviews ?? []}
+                            viewerUserId={user?.id}
                             total={page.data?.public_reviews_total ?? 0}
                             onSeeAll={() => {
                                 if (!persistedRestaurantId) return;
@@ -587,6 +588,7 @@ export default function RestaurantScreen() {
                             restaurant={restaurant}
                             directionsUrl={directionsUrl}
                             openNow={page.data?.place_details.open_now}
+                            onGather={gatherVisible ? () => setGatherSheetOpen(true) : undefined}
                             palette={palette}
                         />
                         </View>

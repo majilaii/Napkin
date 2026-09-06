@@ -64,7 +64,6 @@ export function ClipTray({
     const [pendingOpenTo, setPendingOpenTo] = useState<ImportOpenTo>('menu');
     const sheetRef = useRef<SnapSheetHandle>(null);
     const [trayHeight, setTrayHeight] = useState(0);
-    const [expanded, setExpanded] = useState(false);
     const trayMetrics = useMemo(() => ({
         peekRatio: 0, peekFloor: 0, halfRatio: 0.64,
         fullRatio: trayHeight > 0 ? Math.min(0.96, 1 - insets.top / trayHeight) : 0.96,
@@ -143,20 +142,11 @@ export function ClipTray({
                         metrics={trayMetrics}
                         backgroundColor={palette.background}
                         handleColor={palette.ruleWarmNib}
-                        onSettle={(snap) => { setExpanded(snap === FULL); if (snap === PEEK) dismissTray(); }}
+                        onSettle={(snap) => { if (snap === PEEK) dismissTray(); }}
                         onPanStart={Keyboard.dismiss}
                         renderHeader={() => (
                             <View style={styles.trayHeader}>
                                 <Text style={[Type.sectionTitle, { color: palette.text }]}>Clip tray</Text>
-                                <Pressable
-                                    accessibilityRole="button"
-                                    accessibilityLabel={expanded ? 'collapse clip tray' : 'expand clip tray'}
-                                    accessibilityState={{ expanded }}
-                                    onPress={() => sheetRef.current?.snapTo(expanded ? HALF : FULL)}
-                                    style={styles.headerAction}
-                                >
-                                    <Ionicons name={expanded ? 'chevron-down-outline' : 'chevron-up-outline'} size={20} color={palette.primary} />
-                                </Pressable>
                                 <Pressable onPress={dismissTray} style={styles.headerAction}
                                     accessibilityRole="button" accessibilityLabel="done with clip tray">
                                     <Text style={[Type.metadata, { color: palette.textMuted }]}>done</Text>

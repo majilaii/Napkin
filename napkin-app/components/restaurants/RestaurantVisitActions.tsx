@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,7 +8,6 @@ import type { SelfLogRow } from '@/hooks/restaurants/useRestaurantPage';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 import { useRestaurantVisitMutations } from '@/hooks/restaurants/useRestaurantVisitMutations';
 import { safeRandomUUID } from '@/lib/uuid';
-import { PhotoLightbox } from '@/components/photos/PhotoLightbox';
 import { VisitReviewSheet } from './VisitReviewSheet';
 
 type Props = {
@@ -32,7 +31,6 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
     const [sheet, setSheet] = useState<'history' | 'date' | 'review' | null>(null);
     const [calendar, setCalendar] = useState(false);
     const [chosenDate, setChosenDate] = useState(new Date());
-    const [photoIndex, setPhotoIndex] = useState<number | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [recordRetry, setRecordRetry] = useState(false);
     const operation = useRef(false);
@@ -95,6 +93,10 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
                             <Pressable disabled={locked} onPress={() => void undo()} accessibilityRole="button" style={styles.textButton}>
                                 <Text style={[styles.meta, { color: palette.textMuted }]}>undo</Text>
                             </Pressable>
+                        ) : reviewed || !editable ? (
+                            <Pressable disabled={locked} onPress={() => editable ? setSheet('review') : onOpenVisit(current)} style={styles.textButton} accessibilityRole="button">
+                                <Text style={[styles.meta, { color: palette.primary }]}>{editable ? 'edit' : 'view visit'}</Text>
+                            </Pressable>
                         ) : null}
                     </View>
                     <View style={styles.subline}>
@@ -102,19 +104,9 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
                         <Pressable disabled={locked || !editable} onPress={() => { setError(null); setSheet('date'); }} style={styles.textButton} accessibilityRole={editable ? 'button' : undefined}>
                             <Text style={[styles.meta, { color: editable ? palette.primary : palette.textMuted }]}>{current.visited_at ? visitDateLabel(current.visited_at) : editable ? 'add a date' : 'no date'}</Text>
                         </Pressable>
+                        {current.rating != null ? <Text style={[styles.meta, { color: palette.textMuted }]}> · </Text> : null}
+                        {current.rating != null ? <Text style={[Type.ratingCompact, { color: palette.amberBright }]}>★ {current.rating.toFixed(1)}</Text> : null}
                     </View>
-                    {current.note ? <Text numberOfLines={3} style={[styles.note, { color: palette.textSoft }]}>{current.note}</Text> : null}
-                    {current.photos.length > 0 ? <View style={styles.thumbs}>
-                        {current.photos.slice(0, 5).map((photo, index) => <Pressable key={photo.id} onPress={() => setPhotoIndex(index)} accessibilityRole="button" accessibilityLabel={`Your photo ${index + 1}`}>
-                            <Image source={{ uri: photo.url }} style={styles.thumb} />
-                        </Pressable>)}
-                    </View> : null}
-                    {reviewed || !editable ? <View style={styles.plateFoot}>
-                        {current.rating != null ? <Text style={[Type.ratingCompact, { color: palette.amberBright }]}>★ {current.rating.toFixed(1)}</Text> : <View />}
-                        <Pressable disabled={locked} onPress={() => editable ? setSheet('review') : onOpenVisit(current)} style={styles.textButton} accessibilityRole="button">
-                            <Text style={[styles.meta, { color: palette.primary }]}>{editable ? 'edit' : 'view visit'}</Text>
-                        </Pressable>
-                    </View> : null}
                 </View>
             ) : null}
             <View style={styles.buttons}>
@@ -168,7 +160,6 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
             </Modal> : null}
             {sheet === 'review' && current?.entry_id && userId ? <VisitReviewSheet key={current.id} visit={current} number={number} restaurantName={restaurantName} userId={userId} palette={palette} onClose={() => setSheet(null)}
                 onSave={async (patch) => { await mutations.save.mutateAsync({ entry_id: current.entry_id!, patch }); setUndoId(null); }} /> : null}
-            {photoIndex != null && current ? <PhotoLightbox visible photos={current.photos.map((p) => p.url)} initialIndex={photoIndex} caption={`Your visit · ${visitDateLabel(current.visited_at)}`} onClose={() => setPhotoIndex(null)} /> : null}
         </View>
     );
 }
@@ -180,9 +171,6 @@ const styles = StyleSheet.create({
     label: { fontFamily: 'Manrope_600SemiBold', fontSize: 14, lineHeight: 20, flexShrink: 1 },
     meta: { ...Type.caption }, textButton: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 4 },
     subline: { flexDirection: 'row', alignItems: 'center', marginTop: -10, paddingLeft: 24 },
-    note: { fontFamily: 'Newsreader_400Regular', fontSize: 16, lineHeight: 22, paddingTop: 8 },
-    thumbs: { flexDirection: 'row', gap: 6, paddingTop: 12 }, thumb: { width: 56, height: 56, borderRadius: 4 },
-    plateFoot: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     buttons: { flexDirection: 'row', gap: 10 }, button: { minHeight: 52, borderRadius: 10, flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 12 },
     pressed: { transform: [{ scale: 0.96 }] },
     scrim: { flex: 1, justifyContent: 'flex-end' }, sheet: { maxHeight: '85%', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24 },
