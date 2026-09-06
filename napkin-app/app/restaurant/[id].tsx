@@ -565,15 +565,6 @@ export default function RestaurantScreen() {
                             palette={palette}
                         />
 
-                        <SimilarPlacesSection
-                            rows={similarData?.rows ?? []}
-                            onPress={(similarId) => router.push({
-                                pathname: '/restaurant/[id]',
-                                params: { id: similarId },
-                            })}
-                            palette={palette}
-                        />
-
                         {clippings.length === 0
                             && tiktokSource?.source.type === 'web'
                             && !isInstagramSource(tiktokSource.source) ? (
@@ -598,6 +589,15 @@ export default function RestaurantScreen() {
                             openNow={page.data?.place_details.open_now}
                             onReserve={reserveUrl ? () => quietOpen(reserveUrl) : undefined}
                             onGather={gatherVisible ? () => setGatherSheetOpen(true) : undefined}
+                            palette={palette}
+                        />
+
+                        <SimilarPlacesSection
+                            rows={similarData?.rows ?? []}
+                            onPress={(similarId) => router.push({
+                                pathname: '/restaurant/[id]',
+                                params: { id: similarId },
+                            })}
                             palette={palette}
                         />
                         </View>

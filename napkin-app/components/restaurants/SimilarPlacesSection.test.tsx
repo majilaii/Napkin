@@ -51,7 +51,7 @@ const row = (over: Partial<SimilarRestaurant>): SimilarRestaurant => ({
 });
 
 describe('SimilarPlacesSection', () => {
-    it('renders each row as name + cuisine · distance and taps through with the id', () => {
+    it('renders each card as name + cuisine · distance in one carousel and taps through with the id', () => {
         const onPress = jest.fn();
         const screen = render(
             <SimilarPlacesSection
@@ -62,10 +62,55 @@ describe('SimilarPlacesSection', () => {
         );
 
         expect(screen.getByText('SIMILAR PLACES')).toBeTruthy();
+        expect(screen.getByTestId('similar-places-carousel')).toBeTruthy();
         expect(screen.getByText('japanese · 0.3 km')).toBeTruthy();
         expect(screen.getByText('1.5 km')).toBeTruthy();
-        fireEvent.press(screen.getByText('Bar Bruno'));
+        fireEvent.press(screen.getByLabelText('Bar Bruno, 1.5 km'));
         expect(onPress).toHaveBeenCalledWith('r2');
+    });
+
+    it('shows a Places thumbnail with one shared credit, and falls back to a plate when it cannot be credited', () => {
+        const screen = render(
+            <SimilarPlacesSection
+                rows={[
+                    row({
+                        photo_url: 'https://img/kono.jpg',
+                        photo_source: 'places',
+                        places_photo_attribution_html: '<a href="https://maps.example/x">Ana R.</a>',
+                    }),
+                    row({
+                        id: 'r2',
+                        name: 'Bar Bruno',
+                        photo_url: 'https://img/bruno.jpg',
+                        photo_source: 'places',
+                        places_photo_attribution_html: null,
+                    }),
+                ]}
+                onPress={jest.fn()}
+                palette={Colors.light}
+            />,
+        );
+
+        expect(screen.getByTestId('similar-photo-0')).toBeTruthy();
+        expect(screen.queryByTestId('similar-photo-1')).toBeNull();
+        expect(screen.getByText('photos via Ana R.')).toBeTruthy();
+    });
+
+    it('names no photographer when the only credit repeats the restaurant', () => {
+        const screen = render(
+            <SimilarPlacesSection
+                rows={[row({
+                    photo_url: 'https://img/kono.jpg',
+                    photo_source: 'places',
+                    places_photo_attribution_html: '<a href="https://maps.example/x">Kono</a>',
+                })]}
+                onPress={jest.fn()}
+                palette={Colors.light}
+            />,
+        );
+
+        expect(screen.getByTestId('similar-photo-0')).toBeTruthy();
+        expect(screen.queryByText(/photos via/)).toBeNull();
     });
 
     it('renders nothing when there are no rows', () => {
