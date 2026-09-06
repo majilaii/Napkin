@@ -11,7 +11,7 @@ jest.mock('../FollowingEmptyState', () => ({ FollowingEmptyState: 'FollowingEmpt
 // Section labels are relative to "now"; key each row by its calendar day instead.
 jest.mock('../feedDates', () => ({ feedSectionLabel: (iso: string) => iso.slice(0, 10) }));
 
-import { buildFeedList, pinDigestKey } from '../FollowingFeed';
+import { buildFeedList } from '../FollowingFeed';
 import type { FriendsActivityRow, PinFeedRow } from '@/hooks/feed';
 
 const author = { user_id: 'viewer', username: 'jacky', display_name: 'Jacky', avatar_url: null };
@@ -33,12 +33,14 @@ it('folds two or more consecutive same-person pins, leaves a lone pin and mixed 
     expect(items[4]).toMatchObject({ key: 'pins-pin:x', showDivider: false });
 });
 
-it('renders an expanded digest as its individual rows and resolves the digest key from any member', () => {
-    const rows = [pin('a'), pin('b'), entry('e1')];
-    expect(pinDigestKey(rows, 1)).toBe('pins-pin:a');
-    expect(pinDigestKey(rows, 2)).toBeNull();
+it('unfolds a whole run on one expansion, never re-folding its tail', () => {
+    const rows = [pin('a'), pin('b'), pin('c'), pin('d'), entry('e1')];
     const items = buildFeedList(rows, new Set(['pins-pin:a']));
-    expect(items.map((item) => item._type)).toEqual(['header', 'row', 'row', 'row']);
+    expect(items.map((item) => item.key)).toEqual([
+        'header-pin:a', 'row-pin:a', 'row-pin:b', 'row-pin:c', 'row-pin:d', 'row-e1',
+    ]);
+    expect(items.slice(1).map((item) => item._type === 'row' && item.showDivider)).toEqual([true, true, true, true, false]);
+    expect(buildFeedList(rows).map((item) => item._type)).toEqual(['header', 'pins', 'row']);
 });
 
 it('never folds across a date-section boundary', () => {

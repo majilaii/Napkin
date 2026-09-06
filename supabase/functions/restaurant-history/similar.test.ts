@@ -119,7 +119,7 @@ function fakeClient(rows: SimilarCandidate[]): { client: SimilarClient; calls: C
         calls.push({ method: 'from', args: [table] });
         let eqId: unknown = null;
         const builder: Record<string, unknown> = {};
-        for (const method of ['select', 'ilike', 'neq', 'is', 'gte', 'lte', 'or', 'limit']) {
+        for (const method of ['select', 'ilike', 'neq', 'is', 'gte', 'lte', 'or', 'order', 'limit']) {
             builder[method] = (...args: unknown[]) => {
                 calls.push({ method, args });
                 return builder;
@@ -165,9 +165,18 @@ Deno.test('loadSimilarRestaurants follows a stale alias, fences visibility and p
     const ids = calls.filter((c) => c.method === 'eq' && c.args[0] === 'id').map((c) => c.args[1]);
     assertEquals(ids, ['alias', 'canonical']);
     const fences = calls.filter((c) => c.method === 'or').map((c) => c.args[0]);
-    assertEquals(fences, Array(3).fill(`verification.eq.verified,created_by.eq.${VIEWER}`));
-    assertEquals(calls.filter((c) => c.method === 'ilike').map((c) => c.args), [['city', 'London']]);
-    assertEquals(calls.filter((c) => c.method === 'from').length, 3);
+    // source read ×2 (alias hop) + cuisine-tier pool + general pool.
+    assertEquals(fences, Array(4).fill(`verification.eq.verified,created_by.eq.${VIEWER}`));
+    assertEquals(
+        calls.filter((c) => c.method === 'ilike').map((c) => c.args),
+        [['city', 'London'], ['cuisine', 'thai'], ['city', 'London']],
+    );
+    assertEquals(calls.filter((c) => c.method === 'from').length, 4);
+    // The general pool is a deterministic slice: best-known first, then id.
+    assertEquals(
+        calls.filter((c) => c.method === 'order').map((c) => c.args[0]),
+        ['google_rating_count', 'id'],
+    );
 });
 
 Deno.test('loadSimilarRestaurants returns [] for a source without a city', async () => {

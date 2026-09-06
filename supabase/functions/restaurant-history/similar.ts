@@ -206,25 +206,44 @@ export async function loadSimilarRestaurants(
     const city = (source.city ?? '').trim();
     if (!city || !finite(source.lat) || !finite(source.lng)) return [];
 
-    // Same city plus a 5 km bounding box, so the 300-row pool is the
-    // neighbourhood rather than an arbitrary slice of a big city.
+    // Same city plus a 5 km bounding box, so the pool is the neighbourhood
+    // rather than an arbitrary slice of a big city. Two reads: the cuisine
+    // tier gets its own small query so the pool cap can never truncate a
+    // same-cuisine neighbour, and the general pool is ordered deterministically
+    // (best-known first) so a capped read is stable request to request.
     const dLat = SIMILAR_MAX_DISTANCE_M / 111_320;
     const dLng = dLat / Math.max(0.1, Math.cos((source.lat * Math.PI) / 180));
-    const { data, error } = await client
-        .from('restaurants')
-        .select(CANDIDATE_COLUMNS)
+    const sourceLat = source.lat;
+    const sourceLng = source.lng;
+    const pool = (query: any) => query
         .ilike('city', escapeLike(city))
         .neq('id', source.id)
         .is('merged_into', null)
-        .gte('lat', source.lat - dLat)
-        .lte('lat', source.lat + dLat)
-        .gte('lng', source.lng - dLng)
-        .lte('lng', source.lng + dLng)
-        .or(`verification.eq.verified,created_by.eq.${viewerId}`)
-        .limit(CANDIDATE_POOL);
-    if (error) throw error;
+        .gte('lat', sourceLat - dLat)
+        .lte('lat', sourceLat + dLat)
+        .gte('lng', sourceLng - dLng)
+        .lte('lng', sourceLng + dLng)
+        .or(`verification.eq.verified,created_by.eq.${viewerId}`);
 
-    return rankSimilarRestaurants(source, (data ?? []) as SimilarCandidate[], { viewerId });
+    const sourceCuisine = cuisineKey(source.cuisine);
+    const cuisineRead = sourceCuisine
+        ? pool(client.from('restaurants').select(CANDIDATE_COLUMNS))
+            .ilike('cuisine', escapeLike(sourceCuisine))
+            .limit(CANDIDATE_POOL)
+        : Promise.resolve({ data: [], error: null });
+    const generalRead = pool(client.from('restaurants').select(CANDIDATE_COLUMNS))
+        .order('google_rating_count', { ascending: false, nullsFirst: false })
+        .order('id', { ascending: true })
+        .limit(CANDIDATE_POOL);
+    const [cuisineResult, generalResult] = await Promise.all([cuisineRead, generalRead]);
+    if (cuisineResult.error) throw cuisineResult.error;
+    if (generalResult.error) throw generalResult.error;
+
+    const byId = new Map<string, SimilarCandidate>();
+    for (const row of [...(cuisineResult.data ?? []), ...(generalResult.data ?? [])] as SimilarCandidate[]) {
+        if (!byId.has(row.id)) byId.set(row.id, row);
+    }
+    return rankSimilarRestaurants(source, [...byId.values()], { viewerId });
 }
 
 /**

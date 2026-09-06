@@ -57,8 +57,20 @@ export function buildFeedList(
                 j += 1;
             }
             const digestKey = `pins-${row.id}`;
-            if (run.length >= PIN_DIGEST_MIN && !expandedDigests.has(digestKey)) {
-                items.push({ _type: 'pins', key: digestKey, rows: run, showDivider: j < rows.length });
+            if (run.length >= PIN_DIGEST_MIN) {
+                if (expandedDigests.has(digestKey)) {
+                    // Unfolded: every pin of the run renders as its own row.
+                    for (let k = 0; k < run.length; k++) {
+                        items.push({
+                            _type: 'row',
+                            key: `row-${run[k].id}`,
+                            row: run[k],
+                            showDivider: i + k < rows.length - 1,
+                        });
+                    }
+                } else {
+                    items.push({ _type: 'pins', key: digestKey, rows: run, showDivider: j < rows.length });
+                }
                 i = j;
                 continue;
             }
@@ -72,21 +84,6 @@ export function buildFeedList(
         i += 1;
     }
     return items;
-}
-
-/** The digest key a run of pins collapses under; the first pin's id anchors it. */
-export function pinDigestKey(rows: FriendsActivityRow[], index: number): string | null {
-    const row = rows[index];
-    if (!row || row.kind !== 'pin') return null;
-    const label = feedSectionLabel(row.sort_date);
-    let start = index;
-    while (
-        start > 0
-        && rows[start - 1].kind === 'pin'
-        && rows[start - 1].user_id === row.user_id
-        && feedSectionLabel(rows[start - 1].sort_date) === label
-    ) start -= 1;
-    return `pins-${rows[start].id}`;
 }
 
 interface Props {

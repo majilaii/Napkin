@@ -259,6 +259,21 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // Similar places (2026-09-06): DB-backed same-city neighbours, GET below the
+    // query-param guard. An empty rows array is a legitimate state for the
+    // fixture restaurant — assert the { rows: [] } envelope shape only.
+    {
+        name: 'restaurant-history?action=similar (restaurant page SIMILAR PLACES)',
+        method: 'GET',
+        fn: 'restaurant-history',
+        query: `action=similar&restaurant_id=${RESTAURANT_ID}`,
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown[] } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            return null;
+        },
+    },
     // Featured-in-lists band: guards the POST allow-list + above-global-guard
     // routing + the { rows, total } envelope. Row contents are viewer/fixture-
     // dependent; shape only.
