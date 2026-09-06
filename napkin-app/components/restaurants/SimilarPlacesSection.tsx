@@ -87,48 +87,51 @@ export function SimilarPlacesSection({
                 contentContainerStyle={styles.track}
                 testID="similar-places-carousel"
             >
-                {rows.map((row, index) => (
-                    <Pressable
-                        key={row.id}
-                        onPress={() => onPress(row.id)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${row.name}, ${rowMeta(row)}`}
-                        style={({ pressed }) => [styles.card, pressed && styles.pressed]}
-                    >
-                        <View
-                            style={[
-                                styles.thumb,
-                                {
-                                    backgroundColor: plateTints[tintIndex6(row.id)],
-                                    borderColor: palette.imageOutline,
-                                },
-                            ]}
+                {rows.map((row, index) => {
+                    const photo = photos[index];
+                    return (
+                        <Pressable
+                            key={row.id}
+                            onPress={() => onPress(row.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${row.name}, ${rowMeta(row)}`}
+                            style={({ pressed }) => [styles.card, pressed && styles.pressed]}
                         >
-                            {photos[index].url ? (
-                                <Image
-                                    testID={`similar-photo-${index}`}
-                                    source={{ uri: photos[index].url! }}
-                                    style={StyleSheet.absoluteFillObject}
-                                    contentFit="cover"
-                                    transition={200}
-                                    accessible={false}
-                                />
-                            ) : (
-                                <Ionicons
-                                    name="restaurant-outline"
-                                    size={IconSize.lg}
-                                    color={palette.textFaint}
-                                />
-                            )}
-                        </View>
-                        <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
-                            {row.name}
-                        </Text>
-                        <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={1}>
-                            {rowMeta(row)}
-                        </Text>
-                    </Pressable>
-                ))}
+                            <View
+                                style={[
+                                    styles.thumb,
+                                    {
+                                        backgroundColor: plateTints[tintIndex6(row.id)],
+                                        borderColor: palette.imageOutline,
+                                    },
+                                ]}
+                            >
+                                {photo.url ? (
+                                    <Image
+                                        testID={`similar-photo-${index}`}
+                                        source={{ uri: photo.url }}
+                                        style={StyleSheet.absoluteFillObject}
+                                        contentFit="cover"
+                                        transition={200}
+                                        accessible={false}
+                                    />
+                                ) : (
+                                    <Ionicons
+                                        name="restaurant-outline"
+                                        size={IconSize.lg}
+                                        color={palette.primary}
+                                    />
+                                )}
+                            </View>
+                            <Text style={[styles.name, { color: palette.text }]} numberOfLines={1}>
+                                {row.name}
+                            </Text>
+                            <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={1}>
+                                {rowMeta(row)}
+                            </Text>
+                        </Pressable>
+                    );
+                })}
             </ScrollView>
             {credits.length > 0 ? (
                 <Text
