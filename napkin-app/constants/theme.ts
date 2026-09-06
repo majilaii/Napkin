@@ -115,7 +115,7 @@ export const Colors = {
 
     // TICKET-057 — warm-paper wash on Places-sourced hero photos.
     // Reads as "external context, seen through cream vellum" — quieter than a
-    // user/Table photo. Used ONLY by RestaurantHero when photo_source === 'places'.
+    // user/Table photo. Applies ONLY where photo_source === 'places'.
     placesOverlayTint: '#fdf6ec',     // light: matches `background` (cream)
     placesOverlayOpacity: 0.22,       // 22% — calmer than a scrim, visible side-by-side
 

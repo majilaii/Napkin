@@ -325,9 +325,9 @@ export function useRestaurantPage(
  * server fetch returns (or when the restaurant isn't yet in the DB).
  *
  * TICKET-057: accepts photoAttributionHtml from the search result to populate
- * photo_source and places_photo_attribution_html on the ghost render so
- * RestaurantHero can show the warm-paper overlay and source-gate the image
- * immediately — before the lazy server upsert resolves.
+ * photo_source and places_photo_attribution_html on the ghost render so the
+ * masthead can source-gate and credit the image immediately — before the lazy
+ * server upsert resolves.
  */
 export function restaurantFromPlace(
     place: RestaurantPayload & {

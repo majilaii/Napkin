@@ -9,7 +9,6 @@
  * Tapping an unchecked list adds the restaurant; tapping a checked list removes it.
  * Both are optimistic (mutations from hooks).
  *
- * Same Modal + TouchableWithoutFeedback pattern as LogVisitSheet.
  */
 import React, { useState } from 'react';
 import {

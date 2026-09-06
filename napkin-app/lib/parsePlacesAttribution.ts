@@ -1,6 +1,6 @@
 /**
  * parsePlacesAttribution — parse a Places attribution HTML string into a
- * { label, href } tuple for rendering in RestaurantHero.
+ * { label, href } tuple for rendering alongside a Places-sourced photo.
  *
  * Input is server-synthesized HTML from a sanitized authorAttributions response.
  * Do NOT call this on raw user input. The capture path in places-search/index.ts
