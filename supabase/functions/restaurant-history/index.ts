@@ -1391,6 +1391,19 @@ serve(async (req) => {
                 }
             }
 
+            // Every approved photo on each eligible review — the same loader as
+            // action=reviews, so the page preview and the folio never drift.
+            // Non-fatal: a photo read failure degrades to the RPC's single photo_url.
+            let pagePhotosByEntry = new Map<string, string[]>();
+            try {
+                pagePhotosByEntry = await loadReviewPhotos(
+                    supabase,
+                    ((publicReviewRows ?? []) as any[]).map((row: any) => row.entry_id as string),
+                );
+            } catch (photoErr) {
+                console.error('restaurant-history page review photos error:', photoErr);
+            }
+
             const publicReviews: PublicReviewCard[] = ((publicReviewRows ?? []) as any[]).map((row: any) => ({
                 entry_id: row.entry_id,
                 user_id: row.user_id,
@@ -1400,6 +1413,7 @@ serve(async (req) => {
                 rating: row.rating,
                 note_excerpt: row.content ?? '',
                 photo_url: row.photo_url ?? null,
+                photo_urls: pagePhotosByEntry.get(row.entry_id) ?? (row.photo_url ? [row.photo_url] : []),
                 created_at: row.created_at,
                 public_reaction_count: row.public_reaction_count ?? 0,
                 public_reply_count: row.public_reply_count ?? 0,

@@ -27,6 +27,7 @@ jest.mock('react-native', () => {
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('expo-image', () => ({ Image: 'ExpoImage' }));
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
+jest.mock('@/components/photos/PhotoLightbox', () => ({ PhotoLightbox: () => null }));
 
 import React from 'react';
 import { fireEvent, render } from '@testing-library/react-native';
@@ -117,10 +118,11 @@ describe('RestaurantPageV3 note rings', () => {
         const own: PublicReviewCard = {
             ...review, entry_id: 'mine', user_id: 'viewer', note_excerpt: 'my own note', is_followee: false,
         };
+        const withPhotos: PublicReviewCard = { ...stranger(1), photo_urls: ['p1', 'p2', 'p3', 'p4'] };
         const screen = render(
             <FriendsNotesSection
                 cohort={[]}
-                reviews={[own, stranger(1), stranger(2), stranger(3), stranger(4)]}
+                reviews={[own, withPhotos, stranger(2), stranger(3), stranger(4)]}
                 viewerUserId="viewer"
                 total={5}
                 onSeeAll={onSeeAll}
@@ -134,6 +136,9 @@ describe('RestaurantPageV3 note rings', () => {
         expect(screen.getByText('— stranger note 3')).toBeTruthy();
         expect(screen.queryByText('— stranger note 4')).toBeNull();
         expect(screen.queryByText('— my own note')).toBeNull();
+        expect(screen.getAllByTestId('review-photo-strip')).toHaveLength(1);
+        expect(screen.getAllByLabelText(/^Photo \d of 4 by Guest 1$/)).toHaveLength(3);
+        expect(screen.getByText('+1')).toBeTruthy();
         fireEvent.press(screen.getByLabelText('all 5 reviews'));
         expect(onSeeAll).toHaveBeenCalledTimes(1);
     });

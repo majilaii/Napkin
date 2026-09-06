@@ -27,6 +27,7 @@ import {
     restaurantClosingTime,
 } from '@/lib/restaurantPageV3';
 import { hasHours, todaysHoursLine, weekHoursLines } from '@/lib/restaurantHours';
+import { ReviewPhotoStrip, reviewPhotoUrls } from './ReviewPhotoStrip';
 import type { MastheadPhoto } from '@/lib/restaurantPhoto';
 
 type Palette = typeof Colors.light;
@@ -390,6 +391,7 @@ function QuoteCard({
     visitedAt,
     suffix,
     clipped,
+    photos,
     onPress,
     palette,
 }: {
@@ -399,6 +401,7 @@ function QuoteCard({
     visitedAt: string | null;
     suffix?: string;
     clipped?: boolean;
+    photos?: string[];
     onPress?: () => void;
     palette: Palette;
 }) {
@@ -410,6 +413,16 @@ function QuoteCard({
             >
                 {`— ${note}`}
             </Text>
+            {photos && photos.length > 0 ? (
+                <View style={styles.quotePhotos}>
+                    <ReviewPhotoStrip
+                        photos={photos}
+                        author={name}
+                        caption={[name, monthLabel(visitedAt)].filter(Boolean).join(' · ')}
+                        palette={palette}
+                    />
+                </View>
+            ) : null}
             <View style={styles.quoteAttribution}>
                 <Text style={[styles.quoteName, { color: palette.text }]}>{name}</Text>
                 <Text style={[styles.quoteRating, { color: palette.amberBright }]}>
@@ -479,6 +492,7 @@ export function FriendsNotesSection({
                     rating={review.rating}
                     visitedAt={review.created_at}
                     clipped
+                    photos={reviewPhotoUrls(review)}
                     onPress={() => onReviewPress(review)}
                     palette={palette}
                 />
@@ -901,6 +915,7 @@ const styles = StyleSheet.create({
         paddingVertical: Spacing.restaurant.cardVertical,
         marginBottom: Spacing.sm,
     },
+    quotePhotos: { marginTop: Spacing.sm },
     quoteAttribution: {
         flexDirection: 'row',
         alignItems: 'baseline',
