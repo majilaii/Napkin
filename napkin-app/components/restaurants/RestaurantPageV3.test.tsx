@@ -224,36 +224,15 @@ describe('RestaurantPageV3 actions and hours', () => {
         reserve_url_checked_at: null,
     };
 
-    it('shows reserve only when a real booking action is supplied', () => {
-        const base = {
-            saved: false,
-            onLog: jest.fn(),
-            onPin: jest.fn(),
-            onDirections: jest.fn(),
-            palette: Colors.light,
-        };
-        const hidden = render(<RestaurantActions {...base} />);
-        expect(hidden.queryByLabelText('reserve')).toBeNull();
-        hidden.unmount();
-
-        const onReserve = jest.fn();
-        const visible = render(
-            <RestaurantActions
-                {...base}
-                saved
-                onWebsite={jest.fn()}
-                onReserve={onReserve}
-            />,
-        );
-        expect(visible.getByTestId('restaurant-quiet-row')).toBeTruthy();
-        expect(visible.getByLabelText('pinned')).toBeTruthy();
-        expect(visible.queryByLabelText('gather')).toBeNull();
-        fireEvent.press(visible.getByLabelText('reserve'));
-        expect(onReserve).toHaveBeenCalledTimes(1);
+    it('keeps the rail to the primary action alone', () => {
+        const screen = render(<RestaurantActions onLog={jest.fn()} palette={Colors.light} />);
+        expect(screen.getByLabelText('log this meal')).toBeTruthy();
+        expect(screen.queryByLabelText('reserve')).toBeNull();
+        expect(screen.queryByLabelText('directions')).toBeNull();
+        expect(screen.queryByLabelText(/pin/)).toBeNull();
     });
 
-    it('keeps gather off the action rail and in the details section', () => {
-        const onGather = jest.fn();
+    it('shows reserve and gather as details rows only when supplied', () => {
         const hidden = render(
             <RestaurantDetails
                 restaurant={restaurant}
@@ -262,19 +241,25 @@ describe('RestaurantPageV3 actions and hours', () => {
                 palette={Colors.light}
             />,
         );
+        expect(hidden.queryByLabelText('reserve a table')).toBeNull();
         expect(hidden.queryByLabelText('gather the table')).toBeNull();
         hidden.unmount();
 
+        const onReserve = jest.fn();
+        const onGather = jest.fn();
         const visible = render(
             <RestaurantDetails
                 restaurant={restaurant}
                 directionsUrl="https://maps.test"
                 openNow={null}
+                onReserve={onReserve}
                 onGather={onGather}
                 palette={Colors.light}
             />,
         );
+        fireEvent.press(visible.getByLabelText('reserve a table'));
         fireEvent.press(visible.getByLabelText('gather the table'));
+        expect(onReserve).toHaveBeenCalledTimes(1);
         expect(onGather).toHaveBeenCalledTimes(1);
     });
 
