@@ -85,6 +85,7 @@ export default function ImportProgressScreen() {
     // there's anything to see (in-flight or recently imported), thumbnail-first rows
     // lead and the banner steps aside.
     const hasRows = active.length > 0 || recentBatches.length > 0 || exhausted.length > 0;
+    const canCaptureVideo = isBackgroundVideoCaptureAvailable();
 
     const toast = useToast();
     const activeUserRef = React.useRef(user?.id);
@@ -349,6 +350,7 @@ export default function ImportProgressScreen() {
                         // imports only.
                         const failedStage =
                             m.phase === 'failed' && !m.large ? m.manifest.stage : undefined;
+                        const needsVideoUpdate = m.manifest.sourcePreparation === 'failed' && !canCaptureVideo;
                         return (
                             <Pressable
                                 key={m.jobId}
@@ -409,29 +411,42 @@ export default function ImportProgressScreen() {
                                         </View>
                                     ) : null}
                                     {m.phase === 'failed' ? (
-                                        <View style={styles.failRow}>
-                                            <Pressable
-                                                onPress={() => m.manifest.sourcePreparation === 'failed'
-                                                    ? void chooseVideoAgain(m) : retryImport(m.jobId)}
-                                                disabled={recapturingJob !== null}
-                                                accessibilityRole="button"
-                                                accessibilityLabel={m.manifest.sourcePreparation === 'failed' ? 'choose video again' : 'retry import'}
-                                                hitSlop={6}
-                                                style={styles.failActionTarget}
-                                            >
-                                                <Text style={[styles.failAction, { color: palette.primary }]}>
-                                                    {m.manifest.sourcePreparation === 'failed' ? 'choose video again' : 'try again'}
+                                        <>
+                                            {needsVideoUpdate ? (
+                                                <Text style={[styles.stageNote, { color: palette.textMuted }]}>
+                                                    update Napkin to choose this video again
                                                 </Text>
-                                            </Pressable>
-                                            <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
-                                            <Pressable
-                                                onPress={() => discard(m)}
-                                                hitSlop={6}
-                                                style={styles.failActionTarget}
-                                            >
-                                                <Text style={[styles.failAction, { color: palette.textMuted }]}>discard</Text>
-                                            </Pressable>
-                                        </View>
+                                            ) : null}
+                                            <View style={styles.failRow}>
+                                                {!needsVideoUpdate ? (
+                                                    <>
+                                                        <Pressable
+                                                            onPress={() => m.manifest.sourcePreparation === 'failed'
+                                                                ? void chooseVideoAgain(m) : retryImport(m.jobId)}
+                                                            disabled={recapturingJob !== null}
+                                                            accessibilityRole="button"
+                                                            accessibilityLabel={m.manifest.sourcePreparation === 'failed' ? 'choose video again' : 'retry import'}
+                                                            hitSlop={6}
+                                                            style={styles.failActionTarget}
+                                                        >
+                                                            <Text style={[styles.failAction, { color: palette.primary }]}>
+                                                                {m.manifest.sourcePreparation === 'failed' ? 'choose video again' : 'try again'}
+                                                            </Text>
+                                                        </Pressable>
+                                                        <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
+                                                    </>
+                                                ) : null}
+                                                <Pressable
+                                                    onPress={() => discard(m)}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel="discard import"
+                                                    hitSlop={6}
+                                                    style={styles.failActionTarget}
+                                                >
+                                                    <Text style={[styles.failAction, { color: palette.textMuted }]}>discard</Text>
+                                                </Pressable>
+                                            </View>
+                                        </>
                                     ) : null}
                                 </View>
                                 {/* right slot: a working row keeps a live spinner; a

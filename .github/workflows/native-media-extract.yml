@@ -6,6 +6,7 @@ on:
       - 'napkin-app/modules/media-extract/**'
       - 'napkin-app/lib/importBudgets.ts'
       - 'scripts/tests/media-extract/**'
+      - 'scripts/test-video-import-native.sh'
       - '.github/workflows/native-media-extract.yml'
   push:
     branches: [main]
@@ -13,6 +14,7 @@ on:
       - 'napkin-app/modules/media-extract/**'
       - 'napkin-app/lib/importBudgets.ts'
       - 'scripts/tests/media-extract/**'
+      - 'scripts/test-video-import-native.sh'
       - '.github/workflows/native-media-extract.yml'
 
 permissions:
@@ -26,3 +28,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compile and test real video scheduling, deadlines and Vision OCR
         run: bash scripts/tests/media-extract/run.sh
+      - name: Test durable gallery preparation and speech authorization
+        run: bash scripts/test-video-import-native.sh

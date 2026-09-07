@@ -181,6 +181,9 @@ function streetAddress(address: string | null | undefined, city?: string | null,
         const suffix = normalizeName(locality);
         if (suffix && line.endsWith(` ${suffix}`)) line = line.slice(0, -suffix.length).trim();
     }
+    // A Dutch postcode may be all that remains after removing the locality.
+    // Its letters are not a street name ("1017 DW Amsterdam" → "1017 dw").
+    if (/^\d{4}\s*[a-z]{2}$/.test(line)) return null;
     const numberPattern = '(\\d+(?:\\s*[-–]\\s*\\d+)?(?:\\s*[-/]?\\s*[a-z])?)';
     const leading = line.match(new RegExp(`^${numberPattern}\\s+(.+)$`));
     const trailing = leading ? null : line.match(new RegExp(`^(.+?)\\s+${numberPattern}$`));

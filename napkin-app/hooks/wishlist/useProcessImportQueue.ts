@@ -294,6 +294,8 @@ function safeDeleteMov(path: string | undefined): void {
 // foreground/enqueue) and a just-enqueued import sits idle. Module-level so it
 // survives the double-mount / StrictMode, exactly like the drain lock itself.
 let drainRescanRequested = false;
+const MAX_FAILURE_NOTIFICATION_REPLAYS_PER_DRAIN = 3;
+const IMPORT_NOTIFICATION_TIMEOUT_MS = 5_000;
 
 export function useProcessImportQueue() {
     const { session } = useAuth();
@@ -302,6 +304,7 @@ export function useProcessImportQueue() {
     const toast = useToast();
     const activeUserIdRef = useRef<string | null>(userId ?? null);
     activeUserIdRef.current = userId ?? null;
+    const lastFailureReplayRef = useRef<string | null>(null);
 
     const runOwnerBound = useCallback(
         <T,>(manifest: ImportManifest, operation: (ownerId: string) => Promise<T>) =>
@@ -343,12 +346,27 @@ export function useProcessImportQueue() {
                 requireActiveImportOwner(m.userId, activeUserIdRef.current);
                 markImportLocalNotification(m.jobId, outcome);
             }
-            await runOwnerBound(m, () => callEdgeFn('notifications', {
-                action: 'emit_self',
-                body: { kind: 'import_done', expected_owner_id: m.userId, subject_meta: {
-                    job_id: m.jobId, count: outcome === 'review' ? (m.spots?.length ?? 0) : 0, outcome,
-                } },
-            }));
+            const controller = new AbortController();
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+                await Promise.race([
+                    runOwnerBound(m, () => callEdgeFn('notifications', {
+                        action: 'emit_self',
+                        signal: controller.signal,
+                        body: { kind: 'import_done', expected_owner_id: m.userId, subject_meta: {
+                            job_id: m.jobId, count: outcome === 'review' ? (m.spots?.length ?? 0) : 0, outcome,
+                        } },
+                    })),
+                    new Promise<never>((_, reject) => {
+                        timeout = setTimeout(() => {
+                            controller.abort();
+                            reject(new Error('Import notification delivery timed out'));
+                        }, IMPORT_NOTIFICATION_TIMEOUT_MS);
+                    }),
+                ]);
+            } finally {
+                clearTimeout(timeout);
+            }
             markImportNotification(m.jobId, outcome);
         } catch {
             // The durable row remains visible. Retry notification on the next
@@ -1857,12 +1875,6 @@ export function useProcessImportQueue() {
         }
 
         try {
-            for (const failed of listUnnotifiedImportFailures()) {
-                if (activeUserIdRef.current !== userId) break;
-                if (failed.userId === userId) {
-                    await announceImportOutcome(failed, 'failed', "couldn't import that video");
-                }
-            }
             if (activeUserIdRef.current !== userId) return;
             const pending = listPendingImports().flatMap((manifest) => {
                 // Review-mode manifests ARE drained — they get resolved (OCR/caption)
@@ -1896,6 +1908,20 @@ export function useProcessImportQueue() {
                         // deleted on success (processOne) or when the user discards.
                     }
                 }
+            }
+            // Imports take priority over old notification delivery. Bound each
+            // replay round and yield if another enqueue needs the drain lock;
+            // an offline inbox must not hold up newly selected clips. Rotate the
+            // batch so one repeatedly failing notification cannot starve others.
+            const failures = listUnnotifiedImportFailures().filter((m) => m.userId === userId);
+            const afterLast = failures.findIndex((m) => m.jobId === lastFailureReplayRef.current) + 1;
+            const replayBatch = [...failures.slice(afterLast), ...failures.slice(0, afterLast)]
+                .slice(0, MAX_FAILURE_NOTIFICATION_REPLAYS_PER_DRAIN);
+            for (const failed of replayBatch) {
+                if (activeUserIdRef.current !== userId || drainRescanRequested) break;
+                lastFailureReplayRef.current = failed.jobId;
+                await announceImportOutcome(failed, 'failed', failed.kind === 'video'
+                    ? "couldn't import that video" : "couldn't finish that import");
             }
         } finally {
             releaseDrainLock();

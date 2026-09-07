@@ -184,6 +184,114 @@ describe('root import queue gallery integration', () => {
         expect(mockToast).not.toHaveBeenCalled();
     });
 
+    it('processes new imports before bounded offline failure replays and rotates the next batch', async () => {
+        for (let n = 1; n <= 5; n++) seed({ jobId: `failed-${n}`, status: 'failed', notificationOutcome: 'pending' });
+        seed();
+        const events: string[] = [];
+        mockExtract.mockImplementation(async () => { events.push('extract'); return evidence; });
+        mockEdge.mockImplementation(async (fn: string, options: any) => {
+            if (fn !== 'notifications') return { source_type: 'video', candidates: [candidate] };
+            const { job_id, outcome } = options.body.subject_meta;
+            if (outcome === 'failed') {
+                events.push(job_id);
+                throw new Error('inbox offline');
+            }
+            return { ok: true };
+        });
+        await mount();
+        expect(events).toEqual(['extract', 'failed-1', 'failed-2', 'failed-3']);
+        expect(getImport('job-1')?.notificationOutcome).toBe('review');
+        await act(async () => { pokeImportQueue(); });
+        await flush();
+        expect(events).toEqual(['extract', 'failed-1', 'failed-2', 'failed-3', 'failed-4', 'failed-5', 'failed-1']);
+        expect(mockToast.mock.calls.filter(([copy]) => copy === "couldn't import that video")).toHaveLength(5);
+    });
+
+    it('yields failure replay to an import accepted while an inbox request is in flight', async () => {
+        seed({ jobId: 'failed-1', status: 'failed', notificationOutcome: 'pending' });
+        seed({ jobId: 'failed-2', status: 'failed', notificationOutcome: 'pending' });
+        const events: string[] = [];
+        let finishReplay!: (result: { ok: boolean }) => void;
+        mockExtract.mockImplementation(async () => { events.push('extract'); return evidence; });
+        mockEdge.mockImplementation(async (fn: string, options: any) => {
+            if (fn !== 'notifications') return { source_type: 'video', candidates: [candidate] };
+            const { job_id, outcome } = options.body.subject_meta;
+            if (outcome === 'failed') events.push(job_id);
+            if (job_id === 'failed-1') return new Promise((resolve) => { finishReplay = resolve; });
+            return { ok: true };
+        });
+        await mount();
+        expect(events).toEqual(['failed-1']);
+        seed();
+        await act(async () => { pokeImportQueue(); });
+        await act(async () => { finishReplay({ ok: true }); });
+        await flush();
+        expect(events).toEqual(['failed-1', 'extract', 'failed-2']);
+        expect(getImport('job-1')?.notificationOutcome).toBe('review');
+    });
+
+    it.each([
+        ['video', "couldn't import that video"],
+        ['url', "couldn't finish that import"],
+    ] as const)('uses source-appropriate copy for a replayed %s failure', async (kind, title) => {
+        seed({ kind, url: kind === 'url' ? 'https://example.com/places' : undefined,
+            sourcePreparation: undefined, status: 'failed', notificationOutcome: 'pending' });
+        mockAppState.currentState = 'background';
+        await mount();
+        expect(mockLocalNotification).toHaveBeenCalledWith({ title, body: 'tap to try again' });
+        expect(getImport('job-1')?.notificationOutcome).toBe('failed');
+    });
+
+    it('releases the drain for a new import when the prior inbox request never settles', async () => {
+        jest.useFakeTimers();
+        try {
+            seed({ jobId: 'failed-1', status: 'failed', notificationOutcome: 'pending' });
+            let firstReplay = true;
+            mockEdge.mockImplementation(async (fn: string, options: any) => {
+                if (fn !== 'notifications') return { source_type: 'video', candidates: [candidate] };
+                if (options.body.subject_meta.outcome === 'failed' && firstReplay) {
+                    firstReplay = false;
+                    return new Promise(() => {});
+                }
+                return { ok: true };
+            });
+            await act(async () => { tree = TestRenderer.create(<Root />); });
+            const firstSignal = mockEdge.mock.calls[0][1].signal as AbortSignal;
+            seed();
+            await act(async () => { pokeImportQueue(); });
+            expect(mockExtract).not.toHaveBeenCalled();
+            await act(async () => { await jest.advanceTimersByTimeAsync(5_000); });
+            expect(firstSignal.aborted).toBe(true);
+            expect(getImport('failed-1')?.notificationOutcome).toBe('pending');
+            await act(async () => { await jest.advanceTimersByTimeAsync(1); });
+            expect(mockExtract).toHaveBeenCalledTimes(1);
+            expect(getImport('job-1')?.notificationOutcome).toBe('review');
+            await act(async () => { await jest.runOnlyPendingTimersAsync(); });
+            expect(getImport('failed-1')?.notificationOutcome).toBe('failed');
+        } finally {
+            jest.clearAllTimers();
+            jest.useRealTimers();
+        }
+    });
+
+    it('stops replay and leaves delivery pending when the owner changes during an inbox request', async () => {
+        seed({ jobId: 'failed-1', status: 'failed', notificationOutcome: 'pending' });
+        seed({ jobId: 'failed-2', status: 'failed', notificationOutcome: 'pending' });
+        let finishReplay!: (result: { ok: boolean }) => void;
+        mockEdge.mockReturnValue(new Promise((resolve) => { finishReplay = resolve; }));
+        await mount();
+        mockSession = { user: { id: 'user-2' } };
+        await act(async () => { tree.update(<Root />); });
+        await act(async () => { finishReplay({ ok: true }); });
+        await flush();
+        expect(mockEdge).toHaveBeenCalledTimes(1);
+        expect(mockEdge).toHaveBeenCalledWith('notifications', expect.objectContaining({
+            body: expect.objectContaining({ expected_owner_id: 'user-1' }),
+        }));
+        expect(getImport('failed-1')?.notificationOutcome).toBe('pending');
+        expect(getImport('failed-2')?.notificationOutcome).toBe('pending');
+    });
+
     it('does not resolve or notify an old owner after the account changes during OCR', async () => {
         seed();
         let finish!: (result: typeof evidence) => void;

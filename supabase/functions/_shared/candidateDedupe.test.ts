@@ -175,6 +175,19 @@ Deno.test('interactive address: absent and unparseable evidence keeps existing l
         { formattedAddress: 'Unit 1, 20 Lordship Lane, London SE22 8HN', city: 'London' }));
 });
 
+Deno.test('interactive address: postcode-only evidence is unknown, not a conflicting street', () => {
+    const venue = { name: 'Salvo Basement', city: 'Amsterdam' };
+    for (const address of ['1017 DW Amsterdam, Netherlands', '1017 DW, Amsterdam, Netherlands', '1017DW Amsterdam, Netherlands']) {
+        assertEquals(classifyInteractiveCandidate({ ...venue, address: 'Keizersgracht 703' },
+            { ...venue, formattedAddress: address }), 'matched');
+        assertEquals(classifyInteractiveCandidate({ ...venue, address },
+            { ...venue, formattedAddress: 'Keizersgracht 703, Amsterdam' }), 'matched');
+    }
+    // A four-digit house number with a real street still carries branch evidence.
+    assert(!streetAddressConsistent({ address: '1017 St John Street', city: 'London' },
+        { formattedAddress: '1018 St John Street, London', city: 'London' }));
+});
+
 Deno.test('namesOverlap: legit partial matches accepted', () => {
     assert(namesOverlap('Lanzhou Lamian Noodle Bar', 'Lanzhou Lamian'));
     assert(namesOverlap('The Roof Gardens', 'Roof Gardens Kensington'));

@@ -12,6 +12,7 @@ const mockCorrectMutateAsync = jest.fn();
 let mockExhaustedItems: Record<string, unknown>[] = [];
 let mockActiveImports: any[] = [];
 let mockOwnerId = 'user-1';
+let mockCanCaptureVideo = true;
 const mockNativeVideoPick = jest.fn();
 const mockRemoveImport = jest.fn();
 const mockGetImport = jest.fn();
@@ -142,7 +143,7 @@ jest.mock('@/lib/importResolution', () => ({
 }));
 jest.mock('@/modules/media-extract', () => ({
     deleteAppGroupFile: (...args: unknown[]) => mockDeleteVideo(...args),
-    isBackgroundVideoCaptureAvailable: () => true,
+    isBackgroundVideoCaptureAvailable: () => mockCanCaptureVideo,
     pickVideoForImport: (...args: unknown[]) => mockNativeVideoPick(...args),
 }));
 jest.mock('@/lib/localNotify', () => ({ maybeOfferNotifPrompt: () => mockOfferNotifications() }));
@@ -153,6 +154,7 @@ describe('ImportProgressScreen gallery preparation recovery', () => {
     let renderer: any;
     beforeEach(() => {
         mockOwnerId = 'user-1';
+        mockCanCaptureVideo = true;
         mockExhaustedItems = [];
         mockNativeVideoPick.mockReset();
         mockGetImport.mockReset().mockImplementation((id: string, owner: string) => owner === 'user-1'
@@ -221,6 +223,19 @@ describe('ImportProgressScreen gallery preparation recovery', () => {
         renderer = renderScreen();
         expect(actionByLabel(renderer, 'choose video again')).toBeUndefined();
         expect(actionByLabel(renderer, 'retry import')).toBeUndefined();
+        expect(mockNativeVideoPick).not.toHaveBeenCalled();
+    });
+
+    it('explains the required app update on API4 while keeping discard available', () => {
+        mockCanCaptureVideo = false;
+        renderer = renderScreen();
+        expect(actionByLabel(renderer, 'choose video again')).toBeUndefined();
+        expect(actionByLabel(renderer, 'retry import')).toBeUndefined();
+        expect(renderer.root.findAllByType('Text').some((node: any) =>
+            node.props.children === 'update Napkin to choose this video again')).toBe(true);
+        act(() => { actionByLabel(renderer, 'discard import')?.props.onPress(); });
+        expect(mockRemoveImport).toHaveBeenCalledWith('old-job');
+        expect(mockDeleteVideo).toHaveBeenCalledWith('/owned/old-job.mov');
         expect(mockNativeVideoPick).not.toHaveBeenCalled();
     });
 });
