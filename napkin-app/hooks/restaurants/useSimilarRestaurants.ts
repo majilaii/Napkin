@@ -2,9 +2,10 @@
  * useSimilarRestaurants — "Similar places" on the restaurant page.
  *
  * GET restaurant-history?action=similar&restaurant_id=X. Server-side it is
- * other `restaurants` rows in the same city (zero Google cost), ranked
- * cuisine match > specific place-type overlap > proximity, capped at 6 and
- * within 5 km. Empty rows = the section hides.
+ * other `restaurants` rows in the same city (zero Google cost) that match on
+ * cuisine or a specific place type, ranked cuisine first then type, each by
+ * distance, capped at 6 and within 5 km. A merely-nearby place is never
+ * returned. Empty rows = the section hides.
  */
 import { useQuery } from '@tanstack/react-query';
 
@@ -13,7 +14,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 import type { RestaurantPageRestaurant } from './useRestaurantPage';
 
-export type SimilarMatch = 'cuisine' | 'type' | 'nearby';
+export type SimilarMatch = 'cuisine' | 'type';
 
 export type SimilarRestaurant = {
     id: string;
