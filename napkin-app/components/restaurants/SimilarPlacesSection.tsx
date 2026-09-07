@@ -27,13 +27,6 @@ export function formatDistance(distanceM: number): string {
     return km < 10 ? `${Math.max(0.1, km).toFixed(1)} km` : `${Math.round(km)} km`;
 }
 
-/** `NEARBY` when nothing matched on cuisine or type, else `SIMILAR PLACES`. */
-export function similarKicker(rows: readonly SimilarRestaurant[]): string {
-    return rows.length > 0 && rows.every((row) => row.match === 'nearby')
-        ? 'NEARBY'
-        : 'SIMILAR PLACES';
-}
-
 function rowMeta(row: SimilarRestaurant): string {
     const distance = formatDistance(row.distance_m);
     const cuisine = row.cuisine?.trim().toLowerCase();
@@ -79,7 +72,7 @@ export function SimilarPlacesSection({
     return (
         <View style={styles.section}>
             <View style={styles.heading}>
-                <SectionHeading label={similarKicker(rows)} palette={palette} />
+                <SectionHeading label="SIMILAR PLACES" palette={palette} />
             </View>
             <ScrollView
                 horizontal

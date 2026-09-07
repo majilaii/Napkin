@@ -34,7 +34,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 
 import { Colors } from '@/constants/theme';
 import type { SimilarRestaurant } from '@/hooks/restaurants/useSimilarRestaurants';
-import { formatDistance, similarKicker, SimilarPlacesSection } from './SimilarPlacesSection';
+import { formatDistance, SimilarPlacesSection } from './SimilarPlacesSection';
 
 const row = (over: Partial<SimilarRestaurant>): SimilarRestaurant => ({
     id: 'r1',
@@ -120,16 +120,16 @@ describe('SimilarPlacesSection', () => {
         expect(screen.toJSON()).toBeNull();
     });
 
-    it('switches the kicker to NEARBY only when every row is a plain proximity match', () => {
-        const nearby = [row({ match: 'nearby' }), row({ id: 'r2', match: 'nearby' })];
-        expect(similarKicker(nearby)).toBe('NEARBY');
-        expect(similarKicker([...nearby, row({ id: 'r3', match: 'type' })])).toBe('SIMILAR PLACES');
-        expect(similarKicker([])).toBe('SIMILAR PLACES');
-
+    it('always reads SIMILAR PLACES — the server no longer returns merely-nearby rows', () => {
         const screen = render(
-            <SimilarPlacesSection rows={nearby} onPress={jest.fn()} palette={Colors.light} />,
+            <SimilarPlacesSection
+                rows={[row({ match: 'type' }), row({ id: 'r2', match: 'cuisine' })]}
+                onPress={jest.fn()}
+                palette={Colors.light}
+            />,
         );
-        expect(screen.getByText('NEARBY')).toBeTruthy();
+        expect(screen.getByText('SIMILAR PLACES')).toBeTruthy();
+        expect(screen.queryByText('NEARBY')).toBeNull();
     });
 
     it('formats distance to one decimal under 10 km', () => {

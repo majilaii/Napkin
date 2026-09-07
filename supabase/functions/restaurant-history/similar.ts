@@ -1,12 +1,16 @@
 /**
  * Similar places (restaurant page v3) — DB-backed, zero Google cost.
  *
- * Other `restaurants` rows in the same city, ranked:
+ * Other `restaurants` rows in the same city that are actually SIMILAR:
  *   1. same cuisine (case-insensitive; generic cuisines never match)
  *   2. overlap on a specific `place_types` value (generic types ignored)
- *   3. plain proximity
  * Within a tier: haversine distance ascending. Anything farther than 5 km
  * is dropped; at most 6 rows come back.
+ *
+ * A candidate that matches on neither is NOT returned — proximity alone is
+ * not similarity (founder, 2026-09-07). A venue whose own cuisine and types
+ * are all generic therefore has no similarity signal and yields no rows, and
+ * the section hides rather than padding itself with arbitrary neighbours.
  *
  * Privacy: reads only `restaurants` (public place facts). Never joins
  * entries, wishlist_items or profiles. Rows are fenced with the same
@@ -14,7 +18,7 @@
  */
 import { corsHeaders } from '../_shared/cors.ts';
 
-export type SimilarMatch = 'cuisine' | 'type' | 'nearby';
+export type SimilarMatch = 'cuisine' | 'type';
 
 export interface SimilarCandidate {
     id: string;
@@ -74,7 +78,7 @@ const GENERIC_CUISINES = new Set(['restaurant', 'food', 'point of interest', 'es
 /** Place types every venue carries — never a match key. bar/cafe/pub stay specific. */
 const GENERIC_TYPES = new Set(['restaurant', 'food', 'point_of_interest', 'establishment', 'store']);
 
-const TIER: Record<SimilarMatch, number> = { cuisine: 0, type: 1, nearby: 2 };
+const TIER: Record<SimilarMatch, number> = { cuisine: 0, type: 1 };
 
 function finite(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value);
@@ -133,7 +137,7 @@ export function rankSimilarRestaurants(
         const distance = haversineMeters(source.lat, source.lng, row.lat, row.lng);
         if (distance > maxDistanceM) continue;
 
-        let match: SimilarMatch = 'nearby';
+        let match: SimilarMatch | null = null;
         if (sourceCuisine && cuisineKey(row.cuisine) === sourceCuisine) {
             match = 'cuisine';
         } else if (sourceTypes.size > 0) {
@@ -144,6 +148,7 @@ export function rankSimilarRestaurants(
                 }
             }
         }
+        if (!match) continue;
 
         ranked.push({
             id: row.id,

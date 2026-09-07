@@ -38,9 +38,10 @@ function place(
     };
 }
 
+const thai = { cuisine: 'Thai' };
 const source = place('source', 0, 0, { cuisine: 'Thai', place_types: ['restaurant', 'thai_restaurant', 'bar'] });
 
-Deno.test('ranks cuisine > type > nearby, each tier by distance', () => {
+Deno.test('ranks cuisine > type by distance, and drops a merely-nearby place', () => {
     const rows = rankSimilarRestaurants(source, [
         place('near-plain', 100, 0),
         place('type-far', 1_500, 0, { place_types: ['bar', 'food'] }),
@@ -49,13 +50,15 @@ Deno.test('ranks cuisine > type > nearby, each tier by distance', () => {
         place('cuisine-close', 2_000, 0, { cuisine: 'THAI' }),
     ], { viewerId: VIEWER });
 
+    // 'near-plain' is the closest of all and still absent: proximity is not similarity.
     assertEquals(rows.map((r) => r.id), [
-        'cuisine-close', 'cuisine-far', 'type-close', 'type-far', 'near-plain',
+        'cuisine-close', 'cuisine-far', 'type-close', 'type-far',
     ]);
-    assertEquals(rows.map((r) => r.match), ['cuisine', 'cuisine', 'type', 'type', 'nearby']);
+    assertEquals(rows.map((r) => r.match), ['cuisine', 'cuisine', 'type', 'type']);
 });
 
-Deno.test('generic cuisines and place types never count as a match', () => {
+Deno.test('a source with only generic cuisine and types yields nothing at all', () => {
+    // AGORA souvla bar in prod: cuisine 'Restaurant', every place_type generic.
     const generic = place('generic-source', 0, 0, {
         cuisine: 'Restaurant',
         place_types: ['restaurant', 'food', 'point_of_interest', 'establishment', 'store'],
@@ -63,14 +66,15 @@ Deno.test('generic cuisines and place types never count as a match', () => {
     const rows = rankSimilarRestaurants(generic, [
         place('same-generic', 200, 0, { cuisine: 'restaurant', place_types: ['restaurant', 'food', 'store'] }),
         place('poi', 300, 0, { cuisine: 'Point Of Interest', place_types: ['point_of_interest'] }),
+        place('thai', 400, 0, { cuisine: 'Thai', place_types: ['thai_restaurant'] }),
     ], { viewerId: VIEWER });
 
-    assertEquals(rows.map((r) => r.match), ['nearby', 'nearby']);
+    assertEquals(rows, []);
 });
 
 Deno.test('drops anything farther than 5 km', () => {
     const rows = rankSimilarRestaurants(source, [
-        place('inside', 4_900, 0),
+        place('inside', 4_900, 0, { cuisine: 'Thai' }),
         place('outside', 5_100, 0, { cuisine: 'Thai' }),
     ], { viewerId: VIEWER });
 
@@ -80,11 +84,11 @@ Deno.test('drops anything farther than 5 km', () => {
 Deno.test('excludes self, merged aliases, coordinate-less rows and strangers’ unverified ghosts', () => {
     const rows = rankSimilarRestaurants(source, [
         place('source', 0, 0, { cuisine: 'Thai' }),
-        place('alias', 50, 0, { merged_into: 'elsewhere' }),
-        place('no-coords', 60, 0, { lat: null }),
-        place('their-ghost', 70, 0, { verification: 'unverified' }),
-        place('my-ghost', 80, 0, { verification: 'unverified', created_by: VIEWER }),
-        place('open', 90, 0),
+        place('alias', 50, 0, { cuisine: 'Thai', merged_into: 'elsewhere' }),
+        place('no-coords', 60, 0, { cuisine: 'Thai', lat: null }),
+        place('their-ghost', 70, 0, { cuisine: 'Thai', verification: 'unverified' }),
+        place('my-ghost', 80, 0, { cuisine: 'Thai', verification: 'unverified', created_by: VIEWER }),
+        place('open', 90, 0, { cuisine: 'Thai' }),
     ], { viewerId: VIEWER });
 
     assertEquals(rows.map((r) => r.id), ['my-ghost', 'open']);
@@ -92,14 +96,15 @@ Deno.test('excludes self, merged aliases, coordinate-less rows and strangers’ 
 
 Deno.test('caps at six rows and keeps integer distances', () => {
     const rows = rankSimilarRestaurants(source, [
-        place('a', 1_234.5, 0), place('b', 1_000, 0), place('c', 900, 0), place('d', 800, 0),
-        place('e', 700, 0), place('f', 600, 0), place('g', 500, 0), place('h', 400, 0),
+        place('a', 1_234.5, 0, thai), place('b', 1_000, 0, thai), place('c', 900, 0, thai),
+        place('d', 800, 0, thai), place('e', 700, 0, thai), place('f', 600, 0, thai),
+        place('g', 500, 0, thai), place('h', 400, 0, thai),
     ], { viewerId: VIEWER });
 
     assertEquals(rows.length, 6);
     assertEquals(rows.map((r) => r.id), ['h', 'g', 'f', 'e', 'd', 'c']);
     for (const row of rows) assert(Number.isInteger(row.distance_m));
-    const b = rankSimilarRestaurants(source, [place('b', 1_000, 0)], { viewerId: VIEWER })[0];
+    const b = rankSimilarRestaurants(source, [place('b', 1_000, 0, thai)], { viewerId: VIEWER })[0];
     assert(Math.abs(b.distance_m - 1_000) <= 1, `expected ~1000 m, got ${b.distance_m}`);
 });
 
