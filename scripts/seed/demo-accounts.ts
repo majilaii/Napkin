@@ -111,12 +111,18 @@ async function edge(
 // row already exists on prod this attaches to it instead of duplicating.
 const SPOTS = [
     {
-        external_id: 'ChIJy8yepQkbdkgRb-jkyrEa1Ns',
-        name: 'Padella',
-        location: { address: '6 Southwark St, London', locality: 'London', country: 'United Kingdom' },
+        // ROOT CAUSE OF THE 2026-09-07 DUPLICATE: this used to carry
+        // 'ChIJy8yepQkbdkgRb-jkyrEa1Ns', a stale Google place id for Padella that
+        // no longer resolves — Places returned nothing, so every seed run upserted
+        // a second, metadata-less Padella row alongside the real one and logged its
+        // entries there. The id below is the live place, and it is the row the
+        // 20260907130000 merge migration keeps. Do not "restore" the old id.
+        external_id: 'ChIJdZ6paFcDdkgRpPUHPngIeq8',
+        name: 'Padella Borough Market',
+        location: { address: '6 Southwark St, London SE1 1TQ, UK', locality: 'London', country: 'United Kingdom' },
         cuisine: 'Italian',
-        latitude: 51.5055,
-        longitude: -0.0910,
+        latitude: 51.5051655,
+        longitude: -0.0899202,
     },
     {
         external_id: 'ChIJC8Ir_JMEdkgRvBWTh-X-P-U',
