@@ -137,7 +137,7 @@ export interface ImportLinkSheetProps {
     visible: boolean;
     onDismiss: () => void;
     /** Additive launcher hint; existing callers keep the full source menu. */
-    openTo?: 'menu' | 'video';
+    openTo?: 'menu' | 'video' | 'screenshot';
     /**
      * When set, the sheet skips the paste step and jumps directly to the
      * 'loading' state with this URL pre-resolved. Used by the iOS share
@@ -176,6 +176,9 @@ export function ImportLinkSheet({
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
+    const directMediaStart = !initialUrl && !initialVideoPath && (
+        openTo === 'screenshot' || (openTo === 'video' && VIDEO_IMPORT_AVAILABLE)
+    );
 
     // ── State ──────────────────────────────────────────────────────────
     // The sheet opens on the import-source menu (paste · screenshot · video).
@@ -248,6 +251,8 @@ export function ImportLinkSheet({
     // TICKET-082: ignore a stale on-device video extraction that finishes after
     // the user cancelled/dismissed (the native op can't be aborted mid-flight).
     const videoReqRef = useRef(0);
+    const mediaPickerReqRef = useRef(0);
+    const lastPickerKindRef = useRef<'video' | 'screenshot'>('video');
     // Retain the picked video URI so "try again" can re-run on-device extraction
     // (video errors carry no URL to re-resolve).
     const lastVideoUriRef = useRef<string | null>(null);
@@ -401,16 +406,9 @@ export function ImportLinkSheet({
         resolve(url);
     }, [inputOk, inputValue, resolve, resetSaveError]);
 
-    const handleCancel = useCallback(() => {
-        videoReqRef.current++;
-        cancel();
-        // Cancelling an in-flight resolve drops the user back to the source menu
-        // (the top of the flow) rather than the bare paste field.
-        setSheetState('menu');
-    }, [cancel]);
-
     const handleDismiss = useCallback(() => {
         videoReqRef.current++;
+        mediaPickerReqRef.current++;
         cancel();
         // Reset to the source menu so the next open starts at step one.
         setSheetState('menu');
@@ -440,6 +438,17 @@ export function ImportLinkSheet({
         setChosenTable(null);
         onDismiss();
     }, [cancel, onDismiss, resetSaveError]);
+
+    const handleCancel = useCallback(() => {
+        if (directMediaStart) {
+            handleDismiss();
+            return;
+        }
+        videoReqRef.current++;
+        mediaPickerReqRef.current++;
+        cancel();
+        setSheetState('menu');
+    }, [cancel, directMediaStart, handleDismiss]);
 
     // Reads the clipboard only now — on an explicit tap. This is the single point
     // where iOS may show the paste prompt, and it's user-initiated by design.
@@ -708,21 +717,6 @@ export function ImportLinkSheet({
         }
     }, [resolve, resetSaveError]);
 
-    const handleRetry = useCallback(() => {
-        if (errorCode === 'VIDEO_UNAVAILABLE') {
-            setSheetState('menu');
-            return;
-        }
-        // Video errors have no URL to re-resolve — re-run the on-device extract.
-        if ((errorCode === 'VIDEO_FAILED' || errorCode === 'VIDEO_EMPTY') && lastVideoUriRef.current) {
-            runVideoExtraction(lastVideoUriRef.current);
-            return;
-        }
-        setSheetState('idle');
-        resetSaveError();
-        resolve(lastUrl);
-    }, [resolve, lastUrl, errorCode, runVideoExtraction, resetSaveError]);
-
     // ── Edit-match inline search ───────────────────────────────────────
     const runEditMatchSearch = useCallback(async (
         q: string,
@@ -756,38 +750,59 @@ export function ImportLinkSheet({
         runEditMatchSearch(defaultQuery, candidate);
     }, [runEditMatchSearch]);
 
+    const pickMedia = useCallback(async (kind: 'video' | 'screenshot') => {
+        const request = ++mediaPickerReqRef.current;
+        lastPickerKindRef.current = kind;
+        try {
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: kind === 'video'
+                    ? ImagePicker.MediaTypeOptions.Videos
+                    : ImagePicker.MediaTypeOptions.Images,
+                ...(kind === 'screenshot' ? { allowsEditing: false } : {}),
+                quality: 1,
+            });
+            if (request !== mediaPickerReqRef.current) return null;
+            if (result.canceled || !result.assets?.[0]) {
+                if (directMediaStart) handleDismiss();
+                return null;
+            }
+            return { asset: result.assets[0], request };
+        } catch {
+            if (request === mediaPickerReqRef.current) {
+                setErrorCode('MEDIA_PICKER_FAILED');
+                setSheetState('error');
+            }
+            return null;
+        }
+    }, [directMediaStart, handleDismiss]);
+
     // TICKET-060: handle screenshot/photo pick from OS image picker
     const handlePickScreenshot = useCallback(async () => {
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: false,
-            quality: 1,
-        });
-        if (result.canceled || !result.assets?.[0]) return;
-        const asset = result.assets[0];
+        const picked = await pickMedia('screenshot');
+        if (!picked || picked.request !== mediaPickerReqRef.current) return;
+        const { asset, request } = picked;
 
         resetSaveError();
         setSheetState('screenshot-uploading');
         try {
             if (!user?.id) throw new Error('Not authenticated');
             const { storagePath } = await downscaleAndUpload(asset.uri, user.id);
+            if (request !== mediaPickerReqRef.current) return;
             setScreenshotStoragePath(storagePath);
             resolve('', storagePath);
         } catch {
+            if (request !== mediaPickerReqRef.current) return;
             setErrorCode('UPLOAD_FAILED');
             setSheetState('error');
         }
-    }, [user?.id, resolve, resetSaveError]);
+    }, [user?.id, resolve, resetSaveError, pickMedia]);
 
     // TICKET-082: pick a saved video → on-device OCR + voiceover → resolve text.
     // The phone does all the perception (free); we only POST the extracted text.
     const handlePickVideo = useCallback(async () => {
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-            quality: 1,
-        });
-        if (result.canceled || !result.assets?.[0]) return;
-        const asset = result.assets[0];
+        const picked = await pickMedia('video');
+        if (!picked || picked.request !== mediaPickerReqRef.current) return;
+        const { asset } = picked;
 
         // Fresh nonces for this import (mirrors handleFindIt).
         importNonceRef.current = safeRandomUUID();
@@ -804,7 +819,27 @@ export function ImportLinkSheet({
 
         lastVideoUriRef.current = asset.uri;
         runVideoExtraction(asset.uri);
-    }, [runVideoExtraction]);
+    }, [runVideoExtraction, pickMedia]);
+
+    const handleRetry = useCallback(() => {
+        if (errorCode === 'MEDIA_PICKER_FAILED') {
+            if (lastPickerKindRef.current === 'video') void handlePickVideo();
+            else void handlePickScreenshot();
+            return;
+        }
+        if (errorCode === 'VIDEO_UNAVAILABLE') {
+            setSheetState('menu');
+            return;
+        }
+        // Video errors have no URL to re-resolve: re-run the on-device extract.
+        if ((errorCode === 'VIDEO_FAILED' || errorCode === 'VIDEO_EMPTY') && lastVideoUriRef.current) {
+            runVideoExtraction(lastVideoUriRef.current);
+            return;
+        }
+        setSheetState('idle');
+        resetSaveError();
+        resolve(lastUrl);
+    }, [resolve, lastUrl, errorCode, runVideoExtraction, resetSaveError, handlePickVideo, handlePickScreenshot]);
 
     // TICKET-082: share-extension video path → kick off extraction once on open.
     const videoStartedRef = useRef(false);
@@ -817,7 +852,7 @@ export function ImportLinkSheet({
         if (!visible) videoStartedRef.current = false;
     }, [visible, initialVideoPath, runVideoExtraction]);
 
-    // TICKET-230: the Places tray can launch the existing saved-video path
+    // TICKET-230: the Places tray can launch the existing media paths
     // directly. This stays additive: every existing caller defaults to `menu`.
     // The picker MUST NOT launch from the `visible` flip. This sheet is nested
     // inside the clip tray's already-open Modal, so launching here issued two
@@ -830,20 +865,24 @@ export function ImportLinkSheet({
     // `onShow` is the only signal that the presentation actually completed.
     const openToStartedRef = useRef(false);
     useEffect(() => {
-        if (!visible) openToStartedRef.current = false;
+        if (!visible) {
+            openToStartedRef.current = false;
+            mediaPickerReqRef.current++;
+        }
     }, [visible]);
+    useEffect(() => () => { mediaPickerReqRef.current++; }, []);
 
     const handleModalShown = useCallback(() => {
         if (
-            openTo === 'video' &&
-            !initialUrl &&
-            !initialVideoPath &&
+            visible &&
+            directMediaStart &&
             !openToStartedRef.current
         ) {
             openToStartedRef.current = true;
-            if (VIDEO_IMPORT_AVAILABLE) void handlePickVideo();
+            if (openTo === 'video') void handlePickVideo();
+            else void handlePickScreenshot();
         }
-    }, [handlePickVideo, initialUrl, initialVideoPath, openTo]);
+    }, [visible, directMediaStart, handlePickVideo, handlePickScreenshot, openTo]);
 
     // TICKET-060: handle destination confirm (async capture fan-out)
     const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
@@ -1006,16 +1045,19 @@ export function ImportLinkSheet({
     // ── Render ─────────────────────────────────────────────────────────
     const sheetBg = palette.surfaceContainerLow;
     const pb = Math.max(insets.bottom, Spacing.lg);
+    // Present a transparent host before Photos, without painting the source menu
+    // or a second scrim. This must be derived on the first render, before onShow.
+    const awaitingDirectMedia = directMediaStart && sheetState === 'menu';
 
     return (
         <Modal
             visible={visible}
             transparent
-            animationType="slide"
+            animationType={directMediaStart ? 'none' : 'slide'}
             onRequestClose={handleDismiss}
             onShow={handleModalShown}
         >
-            <Pressable
+            {!awaitingDirectMedia && <Pressable
                 style={[styles.backdrop, { backgroundColor: palette.overlay }]}
                 onPress={handleDismiss}
             >
@@ -1181,7 +1223,7 @@ export function ImportLinkSheet({
                         {sheetState === 'destination' && (
                             <DestinationPicker
                                 onConfirm={handleDestinationConfirm}
-                                onCancel={() => setSheetState('menu')}
+                                onCancel={handleCancel}
                                 isSaving={createImport.isPending}
                                 errorText={saveError}
                             />
@@ -1208,7 +1250,7 @@ export function ImportLinkSheet({
                         )}
                     </View>
                 </KeyboardAvoidingView>
-            </Pressable>
+            </Pressable>}
         </Modal>
     );
 }
@@ -1596,6 +1638,8 @@ function ErrorPanel({ palette, code, onRetry, onSearchManually }: {
     const isVideo = code === 'VIDEO_FAILED' || code === 'VIDEO_EMPTY';
     const msg = isTikTokBusy
         ? 'tiktok is busy — try again in a minute'
+        : code === 'MEDIA_PICKER_FAILED'
+        ? "couldn't open your photos"
         : isVideoUnavailable
         ? "video imports aren't available on this device"
         : isVideo

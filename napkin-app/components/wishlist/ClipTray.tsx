@@ -35,7 +35,7 @@ import { SnapSheet, type SnapSheetHandle } from '@/components/sheets/SnapSheet';
 import { FULL, HALF, PEEK } from '@/components/sheets/snapSheetMath';
 
 type Palette = typeof Colors.light;
-type ImportOpenTo = 'menu' | 'video';
+type ImportOpenTo = 'menu' | 'video' | 'screenshot';
 
 const VIDEO_IMPORT_AVAILABLE = Platform.OS === 'ios' && isVideoImportAvailable();
 
@@ -173,7 +173,7 @@ export function ClipTray({
                                 onOpenVideo={VIDEO_IMPORT_AVAILABLE
                                     ? () => openImport('video')
                                     : undefined}
-                                onOpenScreenshot={() => openImport('menu')}
+                                onOpenScreenshot={() => openImport('screenshot')}
                             />
                             <LedgerBand
                                 palette={palette}

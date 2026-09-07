@@ -970,8 +970,10 @@ import { LISTICLE_CANDIDATE_CAP } from "../_shared/visionExtract.ts";
 
 /** The caption section's own budget inside the fused window. */
 export const CAPTION_SECTION_CAP = 3000;
-/** Total fused-text window handed to the extractor (unchanged from TICKET-082). */
-export const VIDEO_FUSION_CAP = 8000;
+/** Leaves room for the client's complete 24k evidence, a caption and labels. */
+export const VIDEO_FUSION_CAP = 28000;
+/** Photo documents retain their existing fusion/cache contract. */
+export const PHOTO_FUSION_CAP = 8000;
 
 const VIDEO_TEXT_HEADER = "\n\n[video text]\n";
 
@@ -1040,21 +1042,22 @@ export function buildVideoFusion(
   const captionText = rawCaption
     ? stripTrailingTagBlock(rawCaption).slice(0, CAPTION_SECTION_CAP)
     : "";
+  const fusionCap = preservePhotoFusion ? PHOTO_FUSION_CAP : VIDEO_FUSION_CAP;
 
   if (!captionText) {
     if (preservePhotoFusion) {
-      const fullText = videoText.slice(0, VIDEO_FUSION_CAP);
+      const fullText = videoText.slice(0, fusionCap);
       return { fullText, hasVideoText: fullText.length > 0 };
     }
     const header = "[video text]\n";
     const fullText = videoText
-      ? header + preserveVideoTextEnding(videoText, VIDEO_FUSION_CAP - header.length)
+      ? header + preserveVideoTextCoverage(videoText, fusionCap - header.length)
       : "";
     return { fullText, hasVideoText: fullText.length > 0 };
   }
 
   const captionBlock = `[caption]\n${captionText}`;
-  const remaining = VIDEO_FUSION_CAP - captionBlock.length -
+  const remaining = fusionCap - captionBlock.length -
     VIDEO_TEXT_HEADER.length;
   if (!videoText || remaining <= 0) {
     return { fullText: captionBlock, hasVideoText: false };
@@ -1063,18 +1066,51 @@ export function buildVideoFusion(
     fullText: `${captionBlock}${VIDEO_TEXT_HEADER}${
       preservePhotoFusion
         ? videoText.slice(0, remaining)
-        : preserveVideoTextEnding(videoText, remaining)
+        : preserveVideoTextCoverage(videoText, remaining)
     }`,
     hasVideoText: true,
   };
 }
 
-/** Old clients send an unbounded mixed blob; never silently cut off its ending. */
-export function preserveVideoTextEnding(text: string, cap: number): string {
+/**
+ * Older clients can send unbounded OCR. Give each frame its own fair share so
+ * opening and ending footage cannot evict all the middle stops. Unlabelled
+ * blobs use evenly spaced sections instead. New bounded client text is intact.
+ */
+export function preserveVideoTextCoverage(text: string, cap: number): string {
+  if (cap <= 0) return "";
   if (text.length <= cap) return text;
   const marker = "\n[... omitted text ...]\n";
-  const head = Math.floor((cap - marker.length) / 2);
-  return text.slice(0, head) + marker + text.slice(-(cap - marker.length - head));
+  let sections = text.split(/(?=^\[frame \d+(?:\.\d+)?s(?:; ending)?\]$)/m)
+    .map((section) => section.trim()).filter(Boolean);
+  // Pathological frame counts also fall back to bounded, uniform coverage.
+  if (sections.length < 2 || sections.length * (marker.length + 32) > cap) {
+    const count = Math.max(1, Math.min(12, Math.floor(cap / (marker.length + 32))));
+    sections = Array.from({ length: count }, (_, index) =>
+      text.slice(Math.floor(index * text.length / count),
+        Math.floor((index + 1) * text.length / count)));
+  }
+  const budgets = sections.map(() => 0);
+  let remaining = cap - (sections.length - 1);
+  let pending = sections.map((_, index) => index);
+  // Redistribute unused budget from short frames rather than wasting it.
+  while (remaining > 0 && pending.length > 0) {
+    const share = Math.max(1, Math.floor(remaining / pending.length));
+    for (const index of pending) {
+      const added = Math.min(share, sections[index].length - budgets[index], remaining);
+      budgets[index] += added;
+      remaining -= added;
+    }
+    pending = pending.filter((index) => budgets[index] < sections[index].length);
+  }
+  return sections.map((section, index) => {
+    const budget = budgets[index];
+    if (section.length <= budget) return section;
+    if (budget <= marker.length) return section.slice(0, budget);
+    const head = Math.ceil((budget - marker.length) / 2);
+    const tail = budget - marker.length - head;
+    return section.slice(0, head) + marker + (tail ? section.slice(-tail) : "");
+  }).join("\n");
 }
 
 /** Decode jitter must not invalidate otherwise identical extraction evidence. */

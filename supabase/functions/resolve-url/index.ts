@@ -3695,10 +3695,10 @@ async function handleVideoText(
   // Namespace photo rows by mode + validated count + candidate-cap contract.
   // Including the cap invalidates TICKET-195 rows that were already truncated to
   // slide count; otherwise a repeat import would bypass this fix via cache.
-  // Video g3 invalidates the previous scene-noise prompt. Photo fusion/prompt
+  // Video g4 invalidates truncated timelines and the previous scene-noise prompt. Photo fusion/prompt
   // remain unchanged, including the legacy invalid-photo-context namespace.
   const cacheNamespace = photoSlideCount === null
-    ? `video:${hasPhotoContext ? "g2" : "g3"}:cap${effectiveCap}`
+    ? `video:${hasPhotoContext ? "g2" : "g4"}:cap${effectiveCap}`
     : `photo:listicle-${CAP}:g2:${photoSlideCount}`;
   const hashBuf = await crypto.subtle.digest(
     "SHA-256",
