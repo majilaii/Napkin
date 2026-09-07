@@ -39,14 +39,14 @@ do $pin_search_path$
 declare
     v_target text;
     v_targets constant text[] := array[
-        'public.can_view_entry(e entries)',
+        'public.can_view_entry(entries)',
         'public.cascade_delete_post_interactions()',
         'public.cascade_delete_post_interactions_extended()',
         'public.enforce_table_list_private()',
         'public.fn_entries_mirror_table_id_to_join()',
-        'public.is_entry_publicly_eligible(p_entry_id uuid)',
-        'public.is_table_admin(p_table_id uuid, p_user_id uuid)',
-        'public.is_table_member(p_table_id uuid, p_user_id uuid)',
+        'public.is_entry_publicly_eligible(uuid)',
+        'public.is_table_admin(uuid, uuid)',
+        'public.is_table_member(uuid, uuid)',
         'public.notifications_lock_columns()',
         'public.set_post_interaction_table_id()',
         'public.sync_comment_like_count()',
@@ -57,8 +57,10 @@ declare
     v_pinned integer := 0;
 begin
     foreach v_target in array v_targets loop
-        -- to_regprocedure returns null rather than raising when the function is
-        -- absent, which keeps a fresh replay and any future drop a clean no-op.
+        -- Signatures are TYPES ONLY: to_regprocedure does not accept parameter
+        -- names and raises 42601 on them (the CI replay guard caught exactly that).
+        -- It returns null rather than raising for an absent function, which keeps a
+        -- fresh replay and any future drop a clean no-op.
         if to_regprocedure(v_target) is not null then
             execute format('alter function %s set search_path = public, pg_temp', v_target);
             v_pinned := v_pinned + 1;
