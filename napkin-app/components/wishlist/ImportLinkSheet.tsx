@@ -819,10 +819,22 @@ export function ImportLinkSheet({
 
     // TICKET-230: the Places tray can launch the existing saved-video path
     // directly. This stays additive: every existing caller defaults to `menu`.
+    // The picker MUST NOT launch from the `visible` flip. This sheet is nested
+    // inside the clip tray's already-open Modal, so launching here issued two
+    // UIKit presentations in the same commit: iOS silently dropped one, and RN
+    // latches `_isPresented` on the refused Modal and never retries. The
+    // orphaned host view is full-screen, transparent and childless, so it
+    // returned itself from every hit test and swallowed every touch — a total,
+    // unrecoverable freeze (force-quit only, since these sheets set
+    // modalInPresentation and every dismiss control sat underneath it).
+    // `onShow` is the only signal that the presentation actually completed.
     const openToStartedRef = useRef(false);
     useEffect(() => {
+        if (!visible) openToStartedRef.current = false;
+    }, [visible]);
+
+    const handleModalShown = useCallback(() => {
         if (
-            visible &&
             openTo === 'video' &&
             !initialUrl &&
             !initialVideoPath &&
@@ -831,8 +843,7 @@ export function ImportLinkSheet({
             openToStartedRef.current = true;
             if (VIDEO_IMPORT_AVAILABLE) void handlePickVideo();
         }
-        if (!visible) openToStartedRef.current = false;
-    }, [handlePickVideo, initialUrl, initialVideoPath, openTo, visible]);
+    }, [handlePickVideo, initialUrl, initialVideoPath, openTo]);
 
     // TICKET-060: handle destination confirm (async capture fan-out)
     const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
@@ -1002,6 +1013,7 @@ export function ImportLinkSheet({
             transparent
             animationType="slide"
             onRequestClose={handleDismiss}
+            onShow={handleModalShown}
         >
             <Pressable
                 style={[styles.backdrop, { backgroundColor: palette.overlay }]}
