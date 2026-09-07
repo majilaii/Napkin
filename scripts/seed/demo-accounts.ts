@@ -160,6 +160,52 @@ const SPOTS = [
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 
+/**
+ * Review copy, one pool per seeded spot. Each demo generation draws a different
+ * line so re-seeding prod does not stamp the same sentence onto a restaurant
+ * again — see the note at the entryNotes call site. Keep every pool the same
+ * length, and keep `padella` and `padellaSecond` disjoint: Alex and Billie both
+ * log that one.
+ */
+const REVIEW_COPY = {
+    padella: [
+        'The pici cacio e pepe is still the benchmark. Queue moved fast at 5:45.',
+        'Twenty minutes in the queue, eight for the pasta. Still the best £9 in the city.',
+        'Tagliatelle with the ragu this time. The butter and sage is the one I keep coming back for.',
+    ],
+    padellaSecond: [
+        'Brown crab tagliarini over the cacio e pepe — controversial but right.',
+        'Sat at the counter and watched them roll it. The burrata starter is worth the extra tenner.',
+        'Went at open on a Tuesday and walked straight in. Cacio e pepe, then a second bowl.',
+    ],
+    brat: [
+        'Whole turbot over the fire — worth every minute of the wait. Burnt cheesecake to finish.',
+        'The spider crab is the thing to order. Smoke gets into everything, in the best way.',
+        'Grilled bread and anchovies, then the turbot to share. Slow lunch, no regrets.',
+    ],
+    stjohn: [
+        'Bone marrow on toast, a glass of the house red. Quietly perfect lunch.',
+        'Welsh rarebit and a madeleine. The dining room is as plain and as good as everyone says.',
+        'Ate the whole parsley salad myself. Came for the marrow, stayed for the eccles cake.',
+    ],
+    tayyabs: [
+        'Dry meat lamb chops, order double. BYOB keeps the bill honest.',
+        'Lamb chops still spitting when they land. Karahi and naan, four of us, forty quid.',
+        'Queued twenty minutes on a Thursday. Worth it for the chops and the seekh kebab.',
+    ],
+} as const;
+
+/** Stable per demo generation: same accounts re-seed identically, new ones differ. */
+function generationVariant(seed: string): number {
+    let h = 0;
+    for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+    return h;
+}
+
+function pick(pool: readonly string[], variant: number): string {
+    return pool[variant % pool.length];
+}
+
 async function main() {
     console.log('→ signing in demo accounts…');
     const a = await signUpOrIn(ACCOUNTS.a.email, ACCOUNTS.a.password);
@@ -260,10 +306,17 @@ async function main() {
     }
 
     console.log('→ entries for A (shared to the table)…');
+    // Review copy varies per demo generation. Re-seeding prod for a new review
+    // cycle used to write the SAME sentence again, so after the 2026-09-07 Padella
+    // merge the canonical page showed one identical review six times from four
+    // "different" people — obviously synthetic to anyone reading it. The variant is
+    // derived from the account email, so a given generation is stable across
+    // re-runs (the seeder is idempotent) while a new generation reads differently.
+    const variant = generationVariant(ACCOUNTS.a.email);
     const entryNotes: Array<[number, number, string]> = [
-        [0, 4.5, 'The pici cacio e pepe is still the benchmark. Queue moved fast at 5:45.'],
-        [1, 5, 'Whole turbot over the fire — worth every minute of the wait. Burnt cheesecake to finish.'],
-        [2, 4, 'Bone marrow on toast, a glass of the house red. Quietly perfect lunch.'],
+        [0, 4.5, pick(REVIEW_COPY.padella, variant)],
+        [1, 5, pick(REVIEW_COPY.brat, variant)],
+        [2, 4, pick(REVIEW_COPY.stjohn, variant)],
     ];
     let firstEntryId: string | null = null;
     let firstRestaurantId: string | null = null;
@@ -285,15 +338,18 @@ async function main() {
     await edge(b, 'entry', {
         restaurant: SPOTS[3],
         rating: 4.5,
-        content: 'Dry meat lamb chops, order double. BYOB keeps the bill honest.',
+        content: pick(REVIEW_COPY.tayyabs, variant),
         visited_at: daysAgo(4),
         table_ids: [tableId],
         visibility: 'table',
     });
     await edge(b, 'entry', {
+        // Billie logs the same restaurant as Alex, so her line must come from a
+        // different pool — otherwise the two accounts echo each other verbatim on
+        // the one page a reviewer is most likely to open.
         restaurant: SPOTS[0],
         rating: 4,
-        content: 'Brown crab tagliarini over the cacio e pepe — controversial but right.',
+        content: pick(REVIEW_COPY.padellaSecond, variant),
         visited_at: daysAgo(2),
         table_ids: [tableId],
         visibility: 'table',
