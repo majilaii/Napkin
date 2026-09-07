@@ -23,7 +23,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
-import { emitImportDone } from '../_shared/notify.ts';
+import { emitSelfImportDone } from './emitSelfImportDone.ts';
 import { encodeCursor, decodeCursor, type CursorTuple } from '../_shared/pagination.ts';
 import { viewerHasBeen } from './viewerHasBeen.ts';
 import { resolveCanonicalRestaurantIds } from '../_shared/canonicalRestaurant.ts';
@@ -795,45 +795,11 @@ serve(async (req) => {
         // a social kind. The notifications_lock_columns trigger still bars any
         // post-hoc mutation beyond read_at.
         if (action === 'emit_self') {
-            const kind: string = body.kind ?? '';
-            if (kind !== 'import_done') {
-                return new Response(
-                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: "kind must be 'import_done'" } }),
-                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-                );
-            }
-
-            const meta = (body.subject_meta ?? {}) as {
-                job_id?: unknown;
-                count?: unknown;
-                outcome?: unknown;
-            };
-            const outcome = meta.outcome;
-            // 'saved' is server-emitted only (rides resolve-url save_spots) — the
-            // client path may not forge a "pinned" row into its own inbox.
-            if (outcome !== 'review' && outcome !== 'failed') {
-                return new Response(
-                    JSON.stringify({ error: { code: 'INVALID_INPUT', message: 'outcome must be review|failed' } }),
-                    { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-                );
-            }
-            const rawCount = Number(meta.count);
-            const count = Number.isFinite(rawCount) && rawCount > 0 ? Math.floor(rawCount) : 0;
-            const jobId = typeof meta.job_id === 'string' ? meta.job_id : null;
-
-            // Recipient FORCED to the token user; DRY via the shared emitter (the
-            // same insert shape the server auto path uses). Best-effort — a failed
-            // insert never throws, so a flaky row never fails the caller's import.
-            await emitImportDone(supabase, {
-                recipientUserId: user.id,
-                jobId,
-                count,
-                outcome,
+            const result = await emitSelfImportDone(supabase, user.id, body);
+            return new Response(JSON.stringify(result.payload), {
+                status: result.status,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
-            return new Response(
-                JSON.stringify({ data: { ok: true } }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-            );
         }
 
         return new Response(

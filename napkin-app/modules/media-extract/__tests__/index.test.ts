@@ -1,6 +1,6 @@
 import type { ExtractResult } from '../src/MediaExtract.types';
 
-const mockNative: { apiVersion?: number; extractFromVideo: jest.Mock } = {
+const mockNative: { apiVersion?: number; extractFromVideo: jest.Mock; pickVideoForImport?: jest.Mock; addListener?: jest.Mock } = {
     apiVersion: 4,
     extractFromVideo: jest.fn(),
 };
@@ -28,12 +28,43 @@ beforeEach(() => {
     jest.resetModules();
     mockNative.apiVersion = 4;
     mockNative.extractFromVideo.mockReset().mockResolvedValue(result);
+    delete mockNative.pickVideoForImport;
+    delete mockNative.addListener;
 });
 
 test('v4 defaults give all entry points 240/2 and preserve timestamped evidence', async () => {
     const { extractFromVideo } = loadWrapper();
     await expect(extractFromVideo('file://clip.mp4')).resolves.toBe(result);
     expect(mockNative.extractFromVideo).toHaveBeenCalledWith('file://clip.mp4', 240, 2, true, 45000, 90000, 300);
+});
+
+test('pre-v5 binaries use the existing picker path without touching missing capture methods', () => {
+    const wrapper = loadWrapper();
+    expect(wrapper.isBackgroundVideoCaptureAvailable()).toBe(false);
+    expect(() => wrapper.pickVideoForImport('owner')).toThrow('unavailable');
+    expect(() => wrapper.onVideoImportPrepared(jest.fn())()).not.toThrow();
+});
+
+test('v5 gallery capture preserves owner, durable response, and prepared-event cleanup', async () => {
+    mockNative.apiVersion = 5;
+    const prepared = jest.fn();
+    const remove = jest.fn();
+    mockNative.addListener = jest.fn(() => ({ remove }));
+    mockNative.pickVideoForImport = jest.fn(async () => ({ canceled: false, jobId: 'durable-native-job' }));
+    const wrapper = loadWrapper();
+    expect(wrapper.isBackgroundVideoCaptureAvailable()).toBe(true);
+    await expect(wrapper.pickVideoForImport('owner')).resolves.toEqual({ canceled: false, jobId: 'durable-native-job' });
+    expect(mockNative.pickVideoForImport).toHaveBeenCalledWith('owner');
+    const unsubscribe = wrapper.onVideoImportPrepared(prepared);
+    expect(mockNative.addListener).toHaveBeenCalledWith('onVideoImportPrepared', prepared);
+    unsubscribe();
+    expect(remove).toHaveBeenCalledTimes(1);
+});
+
+test('v5 native persistence failures propagate instead of manufacturing a queued result', async () => {
+    mockNative.apiVersion = 5;
+    mockNative.pickVideoForImport = jest.fn(async () => { throw new Error('manifest write failed'); });
+    await expect(loadWrapper().pickVideoForImport('owner')).rejects.toThrow('manifest write failed');
 });
 
 test('v3 results need no frames field and retain the seven-argument signature', async () => {

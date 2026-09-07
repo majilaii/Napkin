@@ -88,6 +88,12 @@ export function namesOverlap(a: string | null | undefined, b: string | null | un
     // No signal to gate on (CJK/emoji-only names normalize to '' — \w is
     // ASCII-only): stay lenient, keep the pre-gate behavior of trusting Places.
     if (!na || !nb) return true;
+    // OCR can split a single-word brand ("Bagel Boy" / "Bagelboy"). A whole
+    // compact name can also match one complete token before a branch suffix
+    // ("BagelBoy Albert Cuyp"). Never match substrings ("Ria" / "Osteria").
+    const compactA = na.replace(/ /g, '');
+    const compactB = nb.replace(/ /g, '');
+    if (compactA === compactB || nb.split(' ').includes(compactA) || na.split(' ').includes(compactB)) return true;
     if (nameContainsTokens(na, nb)) return true;
     const tokensA = na.split(' ').filter((t) => t.length >= 3 && !GENERIC_TOKENS.has(t));
     if (tokensA.length === 0) return true; // nothing distinctive to gate on
@@ -161,6 +167,56 @@ export type InteractiveCandidateDecision =
     | 'name_reject'
     | 'locality_reject';
 
+const STREET_SUFFIXES: Record<string, string> = {
+    st: 'street', rd: 'road', ave: 'avenue', ln: 'lane', blvd: 'boulevard',
+    dr: 'drive', sq: 'square', ct: 'court', pl: 'place',
+};
+
+/** Parse only a street plus house number, not city-only or free-form hints. */
+function streetAddress(address: string | null | undefined, city?: string | null, area?: string | null) {
+    if (!address?.trim()) return null;
+    let line = address.split(',')[0].normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    // An extracted address may omit commas: "Keizersgracht 703 Amsterdam".
+    for (const locality of [city, area]) {
+        const suffix = normalizeName(locality);
+        if (suffix && line.endsWith(` ${suffix}`)) line = line.slice(0, -suffix.length).trim();
+    }
+    // A Dutch postcode may be all that remains after removing the locality.
+    // Its letters are not a street name ("1017 DW Amsterdam" → "1017 dw").
+    if (/^\d{4}\s*[a-z]{2}$/.test(line)) return null;
+    const numberPattern = '(\\d+(?:\\s*[-–]\\s*\\d+)?(?:\\s*[-/]?\\s*[a-z])?)';
+    const leading = line.match(new RegExp(`^${numberPattern}\\s+(.+)$`));
+    const trailing = leading ? null : line.match(new RegExp(`^(.+?)\\s+${numberPattern}$`));
+    const rawNumber = leading?.[1] ?? trailing?.[2];
+    const rawStreet = leading?.[2] ?? trailing?.[1];
+    if (!rawNumber || !rawStreet) return null;
+    const number = rawNumber.replace(/\s/g, '').match(/^(\d+)(?:[-–](\d+))?(?:[-/]?([a-z]))?$/);
+    const street = normalizeName(rawStreet).replace(/\b(st|rd|ave|ln|blvd|dr|sq|ct|pl)$/,
+        (suffix) => STREET_SUFFIXES[suffix]);
+    if (!number || !street || !/[a-z]/.test(street)) return null;
+    // Premise/unit labels and mixed postal lines need structured components.
+    // Treat them as unknown instead of guessing which number is the house.
+    if (/\d/.test(street) || /^(unit|suite|floor|level|flat|apartment|apt|room|shop|building|bldg|block)\b/.test(street)) return null;
+    const start = Number(number[1]);
+    const end = Number(number[2] ?? number[1]);
+    if (end < start) return null;
+    return { street, start, end, suffix: number[3] ?? null };
+}
+
+/** Explicit address evidence prevents accepting another branch in the same city. */
+export function streetAddressConsistent(
+    extracted: { address?: string | null; city?: string | null; area?: string | null },
+    place: { formattedAddress?: string | null; city?: string | null },
+): boolean {
+    const wanted = streetAddress(extracted.address, extracted.city, extracted.area);
+    const found = streetAddress(place.formattedAddress, place.city);
+    // Missing or unparseable address evidence keeps historical interactive behavior.
+    if (!wanted || !found) return true;
+    if (wanted.street.replace(/ /g, '') !== found.street.replace(/ /g, '')) return false;
+    if (wanted.end < found.start || found.end < wanted.start) return false;
+    return !wanted.suffix || !found.suffix || wanted.suffix === found.suffix;
+}
+
 /**
  * Preserve the exact interactive Places gates as an explicit provenance
  * decision. Callers used to collapse all three non-match branches to `null`,
@@ -168,12 +224,13 @@ export type InteractiveCandidateDecision =
  * ordinary empty result.
  */
 export function classifyInteractiveCandidate(
-    extracted: { name?: string | null; city?: string | null; area?: string | null },
+    extracted: { name?: string | null; city?: string | null; area?: string | null; address?: string | null },
     place: { name?: string | null; city?: string | null; formattedAddress?: string | null } | null,
 ): InteractiveCandidateDecision {
     if (!place) return 'no_result';
     if (!namesOverlap(extracted.name, place.name)) return 'name_reject';
     if (!localityConsistent(extracted, place)) return 'locality_reject';
+    if (!streetAddressConsistent(extracted, place)) return 'locality_reject';
     return 'matched';
 }
 

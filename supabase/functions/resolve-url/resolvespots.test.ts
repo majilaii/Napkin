@@ -29,6 +29,7 @@ import {
     resolveSpotsRateGate,
     resolutionDecisionForCandidate,
     buildPlacesSearchBody,
+    buildCandidatePlacesQuery,
     keepTypeRejectedAsGhost,
 } from './_helpers.ts';
 import { mapsItemsToStaged } from './mapsList.ts';
@@ -44,6 +45,17 @@ Deno.test('import Places request keeps name bare and forwards structured localit
         city: 'Paris',
         area: 'Le Marais',
     });
+});
+
+Deno.test('import Places request carries explicit branch address and preserves structured locality', () => {
+    const candidate = {
+        name: 'Salvo Bakery', address: 'Keizersgracht 703 Amsterdam', city: 'Amsterdam', area: 'Grachtengordel',
+    };
+    assertEquals(buildPlacesSearchBody(buildCandidatePlacesQuery(candidate), candidate), {
+        query: 'Salvo Bakery, Keizersgracht 703 Amsterdam', limit: 3, city: 'Amsterdam', area: 'Grachtengordel',
+    });
+    assertEquals(buildCandidatePlacesQuery({ name: 'Bagel Boy', address: null }), 'Bagel Boy');
+    assertEquals(buildCandidatePlacesQuery({ name: ' Bagel Boy ', address: '   ' }), 'Bagel Boy');
 });
 
 // ── 1. validateResolveSpotsArgs — the paid-amplifier arg gates (L3) ───────────

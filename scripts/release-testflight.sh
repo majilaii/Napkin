@@ -292,7 +292,10 @@ unset GOOGLE_MAPS_IOS_KEY
 unset EAS_LOCAL_BUILD_SKIP_CLEANUP
 export EAS_LOCAL_BUILD_WORKINGDIR="$eas_working_dir"
 export TMPDIR="$build_tmp_dir"
-mkdir -p "$eas_working_dir" "$build_tmp_dir"
+# Fastlane otherwise leaves archives in ~/Library/Developer/Xcode/Archives,
+# outside the wrapper's cleanup trap, even after a successful submission.
+export GYM_ARCHIVE_PATH="$scratch_dir/archive/napkin.xcarchive"
+mkdir -p "$eas_working_dir" "$build_tmp_dir" "$scratch_dir/archive"
 
 run_child npm ci
 run_child npx --yes "eas-cli@$eas_cli_version" build \

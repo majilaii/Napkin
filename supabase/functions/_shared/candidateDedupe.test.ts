@@ -14,6 +14,7 @@ import {
     namesOverlap,
     normalizeName,
     scoreDeferredCandidates,
+    streetAddressConsistent,
     tokenJaccard,
 } from './candidateDedupe.ts';
 import type { ExtractedCandidate } from './visionExtract.ts';
@@ -117,6 +118,74 @@ Deno.test('cap honored; high confidence ranks above low', () => {
 Deno.test('namesOverlap: unrelated popular place rejected', () => {
     assert(!namesOverlap('Guinness Market', 'Borough Kitchen'));
     assert(!namesOverlap('Picante', 'Dishoom Covent Garden'));
+});
+
+Deno.test('namesOverlap: whole-name spacing differences match without substring leakage', () => {
+    assert(namesOverlap('Bagel Boy', 'Bagelboy'));
+    assert(namesOverlap('Bagelboy', 'Bagel Boy'));
+    assert(namesOverlap('Bagel Boy', 'BagelBoy Albert Cuyp'));
+    assert(namesOverlap('BagelBoy Albert Cuyp', 'Bagel Boy'));
+    assert(namesOverlap('Zero Zero', 'Zerozero'));
+    assert(!namesOverlap('Ria', 'Osteria'));
+    assert(!namesOverlap('Norma', "Norman's"));
+    assert(!namesOverlap('Bagel Boy', 'Bagelboyz'));
+    assert(!namesOverlap('Bagel Boy', 'Bagelboyz Albert Cuyp'));
+    assert(!namesOverlap('Bagel', 'BagelBoy Albert Cuyp'));
+    // Spacing equivalence is interactive only; unattended thresholds stay frozen.
+    assertEquals(tokenJaccard('Bagel Boy', 'Bagelboy'), 0);
+    assertEquals(classifyInteractiveCandidate({ name: 'Bagel Boy', city: 'Amsterdam' },
+        { name: 'Bagelboy', city: 'Rotterdam' }), 'locality_reject');
+});
+
+Deno.test('interactive address: Salvo uses the explicit branch, not another Salvo in Amsterdam', () => {
+    const extracted = { name: 'Salvo Bakery', city: 'Amsterdam', address: 'Keizersgracht 703 Amsterdam' };
+    assertEquals(classifyInteractiveCandidate(extracted, {
+        name: 'SALVO', city: 'Amsterdam', formattedAddress: 'Tweede Hugo de Grootstraat 9, 1052 LA Amsterdam, Netherlands',
+    }), 'locality_reject');
+    assertEquals(classifyInteractiveCandidate(extracted, {
+        name: 'Salvo Basement', city: 'Amsterdam', formattedAddress: 'Keizersgracht 703, 1017 DW Amsterdam, Netherlands',
+    }), 'matched');
+    assertEquals(classifyInteractiveCandidate(extracted, {
+        name: 'Unrelated Bakery', city: 'Amsterdam', formattedAddress: 'Keizersgracht 703, Amsterdam',
+    }), 'name_reject');
+});
+
+Deno.test('interactive address: differing streets or house numbers cannot match just through city', () => {
+    const extracted = { address: '20 Lordship Lane', city: 'London' };
+    assert(!streetAddressConsistent(extracted, { formattedAddress: '22 Lordship Lane, London', city: 'London' }));
+    assert(!streetAddressConsistent(extracted, { formattedAddress: '20 High Street, London', city: 'London' }));
+    assert(streetAddressConsistent(extracted, { formattedAddress: '20 Lordship Ln, London', city: 'London' }));
+    assert(streetAddressConsistent(extracted, { formattedAddress: '18-22 Lordship Lane, London', city: 'London' }));
+    assert(streetAddressConsistent({ address: 'Prinsenstraat 30-H' }, { formattedAddress: '30H Prinsenstraat, Amsterdam' }));
+    assert(!streetAddressConsistent({ address: 'Prinsenstraat 30-H' }, { formattedAddress: 'Prinsenstraat 30-A, Amsterdam' }));
+});
+
+Deno.test('interactive address: absent and unparseable evidence keeps existing leniency', () => {
+    const place = { formattedAddress: 'Tweede Hugo de Grootstraat 9, Amsterdam', city: 'Amsterdam' };
+    for (const address of [null, '', 'Amsterdam', 'near the central station']) {
+        assert(streetAddressConsistent({ address, city: 'Amsterdam' }, place));
+    }
+    assert(streetAddressConsistent({ address: 'Keizersgracht 703' }, { formattedAddress: null }));
+    assert(streetAddressConsistent({ address: 'Keizersgracht 703' }, { formattedAddress: 'Amsterdam' }));
+    assert(streetAddressConsistent({ address: 'Unit 1, 20 Lordship Lane, London', city: 'London' },
+        { formattedAddress: '20 Lordship Ln, London SE22 8HN', city: 'London' }));
+    assert(streetAddressConsistent({ address: '20 Lordship Lane London SE22 8HN', city: 'London' },
+        { formattedAddress: '20 Lordship Ln, London SE22 8HN', city: 'London' }));
+    assert(streetAddressConsistent({ address: '20 Lordship Lane, London', city: 'London' },
+        { formattedAddress: 'Unit 1, 20 Lordship Lane, London SE22 8HN', city: 'London' }));
+});
+
+Deno.test('interactive address: postcode-only evidence is unknown, not a conflicting street', () => {
+    const venue = { name: 'Salvo Basement', city: 'Amsterdam' };
+    for (const address of ['1017 DW Amsterdam, Netherlands', '1017 DW, Amsterdam, Netherlands', '1017DW Amsterdam, Netherlands']) {
+        assertEquals(classifyInteractiveCandidate({ ...venue, address: 'Keizersgracht 703' },
+            { ...venue, formattedAddress: address }), 'matched');
+        assertEquals(classifyInteractiveCandidate({ ...venue, address },
+            { ...venue, formattedAddress: 'Keizersgracht 703, Amsterdam' }), 'matched');
+    }
+    // A four-digit house number with a real street still carries branch evidence.
+    assert(!streetAddressConsistent({ address: '1017 St John Street', city: 'London' },
+        { formattedAddress: '1018 St John Street, London', city: 'London' }));
 });
 
 Deno.test('namesOverlap: legit partial matches accepted', () => {

@@ -10,6 +10,15 @@ const mockDismissMutate = jest.fn();
 const mockRetryMutate = jest.fn();
 const mockCorrectMutateAsync = jest.fn();
 let mockExhaustedItems: Record<string, unknown>[] = [];
+let mockActiveImports: any[] = [];
+let mockOwnerId = 'user-1';
+let mockCanCaptureVideo = true;
+const mockNativeVideoPick = jest.fn();
+const mockRemoveImport = jest.fn();
+const mockGetImport = jest.fn();
+const mockDeleteVideo = jest.fn();
+const mockToast = jest.fn();
+const mockOfferNotifications = jest.fn();
 
 jest.mock('react-native', () => {
     const ReactModule = require('react');
@@ -66,13 +75,13 @@ jest.mock('@/constants/theme', () => {
 });
 jest.mock('@/hooks/use-color-scheme', () => ({ useColorScheme: () => 'light' }));
 jest.mock('@/providers/AuthProvider', () => ({
-    useAuth: () => ({ user: { id: 'user-1' } }),
+    useAuth: () => ({ user: { id: mockOwnerId } }),
 }));
 jest.mock('@/providers/ToastProvider', () => ({
-    useToast: () => ({ show: jest.fn() }),
+    useToast: () => ({ show: mockToast }),
 }));
 jest.mock('@/hooks/wishlist/useActiveImports', () => ({
-    useActiveImports: () => [],
+    useActiveImports: () => mockActiveImports,
 }));
 jest.mock('@/hooks/wishlist/useRecentImports', () => ({
     useRecentImports: () => ({ data: [] }),
@@ -123,7 +132,8 @@ jest.mock('@/components/wishlist/PlacePickerModal', () => ({
 }));
 jest.mock('@/lib/importQueue', () => ({
     retryImport: jest.fn(),
-    removeImport: jest.fn(),
+    removeImport: (...args: unknown[]) => mockRemoveImport(...args),
+    getImportForUser: (...args: unknown[]) => mockGetImport(...args),
     setImportMode: jest.fn(),
     setImportSpots: jest.fn(),
     pokeImportQueue: jest.fn(),
@@ -132,10 +142,103 @@ jest.mock('@/lib/importResolution', () => ({
     mintImportMatchCorrection: jest.fn(),
 }));
 jest.mock('@/modules/media-extract', () => ({
-    deleteAppGroupFile: jest.fn(),
+    deleteAppGroupFile: (...args: unknown[]) => mockDeleteVideo(...args),
+    isBackgroundVideoCaptureAvailable: () => mockCanCaptureVideo,
+    pickVideoForImport: (...args: unknown[]) => mockNativeVideoPick(...args),
 }));
+jest.mock('@/lib/localNotify', () => ({ maybeOfferNotifPrompt: () => mockOfferNotifications() }));
 
 import ImportProgressScreen from '../app/import-progress';
+
+describe('ImportProgressScreen gallery preparation recovery', () => {
+    let renderer: any;
+    beforeEach(() => {
+        mockOwnerId = 'user-1';
+        mockCanCaptureVideo = true;
+        mockExhaustedItems = [];
+        mockNativeVideoPick.mockReset();
+        mockGetImport.mockReset().mockImplementation((id: string, owner: string) => owner === 'user-1'
+            ? { jobId: id, userId: owner, status: id === 'old-job' ? 'failed' : 'pending', videoPath: `/owned/${id}.mov` } : null);
+        mockActiveImports = [{
+            jobId: 'old-job', phase: 'failed', spotCount: 0,
+            manifest: { jobId: 'old-job', kind: 'video', userId: 'user-1', sourcePreparation: 'failed',
+                videoPath: '/owned/old-job.mov', status: 'failed', mode: 'review', spots: [] },
+        }];
+    });
+    afterEach(() => {
+        if (renderer) act(() => renderer.unmount());
+        renderer = undefined;
+        mockActiveImports = [];
+        mockOwnerId = 'user-1';
+    });
+
+    it.each(['cancel', 'failure'] as const)('retains the old failure when reselect ends in %s', async (outcome) => {
+        if (outcome === 'cancel') mockNativeVideoPick.mockResolvedValue({ canceled: true });
+        else mockNativeVideoPick.mockRejectedValue(new Error('capture failed'));
+        renderer = renderScreen();
+        await act(async () => { actionByLabel(renderer, 'choose video again')?.props.onPress(); });
+        expect(mockNativeVideoPick).toHaveBeenCalledWith('user-1');
+        expect(mockRemoveImport).not.toHaveBeenCalled();
+        expect(mockDeleteVideo).not.toHaveBeenCalled();
+        expect(mockOfferNotifications).not.toHaveBeenCalled();
+    });
+
+    it('removes only the prior owned failure after another capture is verified durable', async () => {
+        mockNativeVideoPick.mockResolvedValue({ canceled: false, jobId: 'new-job' });
+        renderer = renderScreen();
+        await act(async () => { actionByLabel(renderer, 'choose video again')?.props.onPress(); });
+        expect(mockGetImport).toHaveBeenCalledWith('new-job', 'user-1');
+        expect(mockRemoveImport).toHaveBeenCalledWith('old-job');
+        expect(mockDeleteVideo).toHaveBeenCalledWith('/owned/old-job.mov');
+        expect(mockRemoveImport).not.toHaveBeenCalledWith('new-job');
+        expect(mockOfferNotifications).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not accept a native response whose replacement manifest is missing', async () => {
+        mockNativeVideoPick.mockResolvedValue({ canceled: false, jobId: 'missing-job' });
+        mockGetImport.mockReturnValue(null);
+        renderer = renderScreen();
+        await act(async () => { actionByLabel(renderer, 'choose video again')?.props.onPress(); });
+        expect(mockRemoveImport).not.toHaveBeenCalled();
+        expect(mockToast).toHaveBeenCalledWith("couldn't add that video");
+    });
+
+    it('preserves both jobs when a native response arrives after an account switch', async () => {
+        let finish!: (result: { canceled: boolean; jobId: string }) => void;
+        mockNativeVideoPick.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+        renderer = renderScreen();
+        await act(async () => { actionByLabel(renderer, 'choose video again')?.props.onPress(); });
+        mockOwnerId = 'user-2';
+        act(() => { renderer.update(<ImportProgressScreen />); });
+        await act(async () => { finish({ canceled: false, jobId: 'new-job' }); });
+        expect(mockRemoveImport).not.toHaveBeenCalled();
+        expect(mockDeleteVideo).not.toHaveBeenCalled();
+        expect(mockOfferNotifications).not.toHaveBeenCalled();
+    });
+
+    it('does not offer review, retry or reselect while native download owns the file', () => {
+        mockActiveImports[0].phase = 'reading';
+        mockActiveImports[0].manifest.status = 'pending';
+        mockActiveImports[0].manifest.sourcePreparation = 'pending';
+        renderer = renderScreen();
+        expect(actionByLabel(renderer, 'choose video again')).toBeUndefined();
+        expect(actionByLabel(renderer, 'retry import')).toBeUndefined();
+        expect(mockNativeVideoPick).not.toHaveBeenCalled();
+    });
+
+    it('explains the required app update on API4 while keeping discard available', () => {
+        mockCanCaptureVideo = false;
+        renderer = renderScreen();
+        expect(actionByLabel(renderer, 'choose video again')).toBeUndefined();
+        expect(actionByLabel(renderer, 'retry import')).toBeUndefined();
+        expect(renderer.root.findAllByType('Text').some((node: any) =>
+            node.props.children === 'update Napkin to choose this video again')).toBe(true);
+        act(() => { actionByLabel(renderer, 'discard import')?.props.onPress(); });
+        expect(mockRemoveImport).toHaveBeenCalledWith('old-job');
+        expect(mockDeleteVideo).toHaveBeenCalledWith('/owned/old-job.mov');
+        expect(mockNativeVideoPick).not.toHaveBeenCalled();
+    });
+});
 
 const IMPORT_NONCE = '00000000-0000-4000-8000-000000000010';
 

@@ -1,3 +1,4 @@
+/* eslint-disable import/first */
 /**
  * importQueue readAll round-trip tests (TICKET-180).
  *
@@ -58,6 +59,12 @@ import {
     ensureImportV2Routing,
     importManifestProtocol,
     effectivePinWishlist,
+    listPendingImports,
+    listActiveManifests,
+    listUnnotifiedImportFailures,
+    failImport,
+    retryImport,
+    markImportNotification,
     type ImportManifest,
     type PersistedImportSpot,
 } from './importQueue';
@@ -91,6 +98,12 @@ beforeEach(() => {
 });
 
 describe('review-first import creation', () => {
+    it('runs the active-capture fence immediately before committing a queued video', async () => {
+        await expect(enqueueVideoImport('/owned/video.mov', 'owner', () => {
+            throw new Error('owner changed');
+        })).rejects.toThrow('owner changed');
+        expect(store.size).toBe(0);
+    });
     it('queues fallback video shares for confirmation with no preselected collections', async () => {
         const manifest = await enqueueVideoImport('/shared/video-review-first.mov');
 
@@ -168,6 +181,52 @@ describe('review-first import creation', () => {
 
         expect(claimImportOwner('ownerless-write-fail', 'user-a')).toBeNull();
         expect(getImport('ownerless-write-fail')?.userId).toBeNull();
+    });
+});
+
+describe('native gallery preparation and terminal outcomes', () => {
+    it.each(['pending', 'failed'] as const)('keeps %s preparation visible while refusing OCR and confirmation', (sourcePreparation) => {
+        seedManifest({ jobId: 'native-job', kind: 'video', videoPath: '/owned/video.mov', userId: 'owner', sourcePreparation,
+            status: sourcePreparation === 'failed' ? 'failed' : 'pending' });
+        expect(listActiveManifests('owner')).toHaveLength(1);
+        expect(listActiveManifests('other')).toHaveLength(0);
+        expect(listPendingImports()).toHaveLength(0);
+        setImportMode('native-job', 'auto');
+        setImportSpots('native-job', []);
+        setImportDestinations('native-job', { tableIds: ['table-1'] });
+        expect(confirmImportReview('native-job', { spots: [], listIds: [], newListTitles: [], tableIds: [], pinWishlist: true })).toBe(false);
+        expect(getImport('native-job')).toMatchObject({ mode: 'review', sourcePreparation, destinations: { tableIds: [] } });
+        if (sourcePreparation === 'failed') {
+            retryImport('native-job');
+            expect(getImport('native-job')?.status).toBe('failed');
+        }
+    });
+
+    it('preserves preparation and notification checkpoints through ordinary manifest rewrites', () => {
+        seedManifest({ jobId: 'ready-job', kind: 'video', videoPath: '/owned/video.mov', userId: 'owner', sourcePreparation: 'ready' });
+        markImportNotification('ready-job', 'review');
+        setImportStage('ready-job', 'matching spots');
+        expect(listPendingImports()[0]).toMatchObject({ sourcePreparation: 'ready', notificationOutcome: 'review' });
+    });
+
+    it('retains failed source files and retries the notification until its checkpoint is committed', () => {
+        seedManifest({ jobId: 'failed-job', kind: 'video', videoPath: '/owned/video.mov', userId: 'owner', sourcePreparation: 'ready' });
+        failImport('failed-job');
+        expect(getImport('failed-job')).toMatchObject({ status: 'failed', videoPath: '/owned/video.mov' });
+        expect(listUnnotifiedImportFailures()).toHaveLength(1);
+        markImportNotification('failed-job', 'failed');
+        setImportStage('failed-job', 'reading the video');
+        expect(listUnnotifiedImportFailures()).toHaveLength(0);
+        retryImport('failed-job');
+        expect(listPendingImports()).toHaveLength(1);
+        expect(getImport('failed-job')?.videoPath).toBe('/owned/video.mov');
+    });
+
+    it('does not claim a durable failure when the native rewrite fails', () => {
+        seedManifest({ jobId: 'write-fails' });
+        nativeMock.__failNextWrite();
+        expect(() => failImport('write-fails')).toThrow('Failed to persist import failure');
+        expect(getImport('write-fails')?.status).toBe('pending');
     });
 });
 

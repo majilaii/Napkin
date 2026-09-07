@@ -11,6 +11,12 @@ const mockUpload = jest.fn();
 const mockResolve = jest.fn();
 const mockCancel = jest.fn();
 const mockRequestLocation = jest.fn();
+const mockQueueVideo = jest.fn();
+const mockNativePick = jest.fn();
+const mockToast = jest.fn();
+const mockOfferNotifications = jest.fn();
+let mockBackgroundCapture = false;
+let mockUserId = 'owner-1';
 
 jest.mock('react-native', () => ({
     Modal: 'Modal', View: 'View', Text: 'Text', TextInput: 'TextInput',
@@ -33,8 +39,11 @@ jest.mock('@/hooks/use-color-scheme', () => ({ useColorScheme: () => 'light' }))
 jest.mock('@/hooks/useNearbyLocation', () => ({
     useNearbyLocation: () => ({ coords: null, requestIfGranted: mockRequestLocation }),
 }));
-jest.mock('@/providers/AuthProvider', () => ({ useAuth: () => ({ user: { id: 'owner-1' } }) }));
-jest.mock('@/providers/ToastProvider', () => ({ useToast: () => ({ show: jest.fn() }) }));
+jest.mock('@/providers/AuthProvider', () => ({ useAuth: () => ({ user: { id: mockUserId } }) }));
+jest.mock('@/providers/ToastProvider', () => ({ useToast: () => ({ show: mockToast }) }));
+jest.mock('@/lib/queuePickedVideo', () => ({ queuePickedVideo: (...args: unknown[]) => mockQueueVideo(...args) }));
+jest.mock('@/lib/importQueue', () => ({ pokeImportQueue: jest.fn(), getImportForUser: () => ({ userId: mockUserId }) }));
+jest.mock('@/lib/localNotify', () => ({ maybeOfferNotifPrompt: () => mockOfferNotifications() }));
 jest.mock('@/hooks/wishlist/useResolveUrl', () => ({
     useResolveUrl: () => ({ resolve: mockResolve, cancel: mockCancel, state: 'idle' }),
 }));
@@ -47,6 +56,8 @@ jest.mock('@/lib/imageDownscale', () => ({ downscaleAndUpload: (...args: unknown
 jest.mock('@/lib/uuid', () => ({ safeRandomUUID: () => 'test-nonce' }));
 jest.mock('@/modules/media-extract', () => ({
     isVideoImportAvailable: () => true,
+    isBackgroundVideoCaptureAvailable: () => mockBackgroundCapture,
+    pickVideoForImport: (...args: unknown[]) => mockNativePick(...args),
     extractFromVideo: (...args: unknown[]) => mockExtract(...args),
 }));
 jest.mock('../DestinationPicker', () => ({ DestinationPicker: 'DestinationPicker' }));
@@ -74,6 +85,10 @@ describe('ImportLinkSheet direct media entry', () => {
 
     beforeEach(() => {
         props = { visible: true, openTo: 'video', onDismiss: jest.fn() };
+        mockBackgroundCapture = false;
+        mockUserId = 'owner-1';
+        mockNativePick.mockReset();
+        mockQueueVideo.mockReset().mockResolvedValue({ jobId: 'job-1' });
         mockPick.mockReset().mockImplementation(() => new Promise(() => {}));
         mockExtract.mockReset().mockImplementation(() => new Promise(() => {}));
         mockUpload.mockReset().mockImplementation(() => new Promise(() => {}));
@@ -128,15 +143,65 @@ describe('ImportLinkSheet direct media entry', () => {
         expect(props.onDismiss).toHaveBeenCalledTimes(2);
     });
 
-    it('shows video extraction only after selecting a video', async () => {
+    it('hands a selected video to the durable queue and closes without awaiting OCR', async () => {
+        const queued = deferred<{ jobId: string }>();
+        mockQueueVideo.mockReturnValue(queued.promise);
         mockPick.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///video.mp4' }] });
         await render();
         await shown();
-        expect(mockExtract).toHaveBeenCalledWith('file:///video.mp4');
-        expect(text()).toContain('watching the video');
+        expect(mockQueueVideo).toHaveBeenCalledWith('file:///video.mp4', 'owner-1', expect.any(Function), expect.any(Function));
+        expect(text()).toContain('adding your video');
         expect(text()).not.toContain('import spots');
-        await act(async () => { tree.root.findByProps({ accessibilityLabel: 'cancel' }).props.onPress(); });
+        expect(props.onDismiss).not.toHaveBeenCalled();
+        await act(async () => { queued.resolve({ jobId: 'job-1' }); });
         expect(props.onDismiss).toHaveBeenCalledTimes(1);
+        expect(mockExtract).not.toHaveBeenCalled();
+        expect(mockToast).not.toHaveBeenCalled();
+        expect(mockOfferNotifications).not.toHaveBeenCalled();
+        await act(async () => { modal().props.onDismiss(); });
+        expect(mockToast).toHaveBeenCalledWith(expect.stringContaining('video added'), expect.objectContaining({ label: 'view' }));
+        expect(mockOfferNotifications).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes after native selection while native download remains independently queued', async () => {
+        mockBackgroundCapture = true;
+        mockNativePick.mockResolvedValue({ canceled: false, jobId: 'native-preparing-job' });
+        const onVideoQueued = jest.fn();
+        await render({ onVideoQueued });
+        await shown();
+        expect(mockNativePick).toHaveBeenCalledWith('owner-1');
+        expect(mockQueueVideo).not.toHaveBeenCalled();
+        expect(mockPick).not.toHaveBeenCalled();
+        expect(mockExtract).not.toHaveBeenCalled();
+        expect(props.onDismiss).toHaveBeenCalledTimes(1);
+        expect(onVideoQueued).not.toHaveBeenCalled();
+        await act(async () => { modal().props.onDismiss(); });
+        expect(onVideoQueued).toHaveBeenCalledWith('native-preparing-job');
+    });
+
+    it('keeps a capture failure visible and never claims the video was queued', async () => {
+        mockPick.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///video.mp4' }] });
+        mockQueueVideo.mockRejectedValue(new Error('native write failed'));
+        await render();
+        await shown();
+        expect(text()).toContain("couldn't add that video");
+        expect(props.onDismiss).not.toHaveBeenCalled();
+        expect(mockToast).not.toHaveBeenCalled();
+        expect(mockOfferNotifications).not.toHaveBeenCalled();
+    });
+
+    it('suppresses old-account feedback when native selection returns after an account switch', async () => {
+        mockBackgroundCapture = true;
+        const native = deferred<{ canceled: boolean; jobId: string }>();
+        mockNativePick.mockReturnValue(native.promise);
+        await render();
+        await shown();
+        mockUserId = 'owner-2';
+        await render();
+        await act(async () => { native.resolve({ canceled: false, jobId: 'old-owner-job' }); });
+        expect(mockToast).not.toHaveBeenCalled();
+        expect(props.onDismiss).not.toHaveBeenCalled();
+        expect(mockQueueVideo).not.toHaveBeenCalled();
     });
 
     it('shows screenshot progress only after selection and ignores upload after dismissal', async () => {

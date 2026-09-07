@@ -67,6 +67,8 @@ type NativeMediaExtract = {
     // drain that finished while suspended can post its notification.
     beginBackgroundTask(): number;
     endBackgroundTask(taskId: number): boolean;
+    pickVideoForImport(userId: string): Promise<{ canceled: boolean; jobId?: string }>;
+    addListener(event: 'onVideoImportPrepared', listener: (event: { jobId: string }) => void): { remove(): void };
 };
 
 let cached: NativeMediaExtract | null = null;
@@ -104,6 +106,24 @@ export function isVideoImportAvailable(): boolean {
     } catch {
         return false;
     }
+}
+
+/** API 5 returns after selection; native code owns iCloud preparation afterward. */
+export function isBackgroundVideoCaptureAvailable(): boolean {
+    if (Platform.OS !== 'ios') return false;
+    try { return (getNative().apiVersion ?? 0) >= 5 && typeof getNative().pickVideoForImport === 'function'; }
+    catch { return false; }
+}
+
+export function pickVideoForImport(userId: string): Promise<{ canceled: boolean; jobId?: string }> {
+    if (!isBackgroundVideoCaptureAvailable()) throw new Error('Background video capture is unavailable');
+    return getNative().pickVideoForImport(userId);
+}
+
+export function onVideoImportPrepared(listener: (event: { jobId: string }) => void): () => void {
+    if (!isBackgroundVideoCaptureAvailable()) return () => {};
+    const subscription = getNative().addListener('onVideoImportPrepared', listener);
+    return () => subscription.remove();
 }
 
 /**

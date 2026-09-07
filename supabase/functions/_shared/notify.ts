@@ -157,7 +157,8 @@ export async function emitTopFourSwap(
  * one insert shape for all three outcomes.
  *
  * Best-effort — a failed insert NEVER throws (never fail an import over a
- * notification). subject_meta must carry `outcome` (notifications_import_done_shape
+ * notification). Returns whether insertion succeeded so durable clients can retry delivery.
+ * subject_meta must carry `outcome` (notifications_import_done_shape
  * CHECK); actor_user_id is null (notifications_actor_not_self allows it).
  */
 export async function emitImportDone(
@@ -167,23 +168,44 @@ export async function emitImportDone(
         jobId: string | null;
         count: number;
         outcome: 'saved' | 'review' | 'failed';
+        deduplicate?: boolean;
     },
-): Promise<void> {
+): Promise<boolean> {
     try {
+        // Client drains may retry after a committed insert whose HTTP response
+        // was lost. A stable primary key makes retries safe without a new index.
+        const id = args.deduplicate && args.jobId
+            ? await importNotificationId(args.recipientUserId, args.jobId, args.outcome)
+            : null;
         const { error } = await supabase.from('notifications').insert({
+            ...(id ? { id } : {}),
             user_id: args.recipientUserId,
             kind: 'import_done',
             actor_user_id: null,
             subject_meta: { job_id: args.jobId, count: args.count, outcome: args.outcome },
         });
         if (error) {
+            if (id && error.code === '23505') return true;
             console.error('[notify] import_done insert failed:', error.message);
             reportError(error, { fn: 'notify', action: 'import_done' });
+            return false;
         }
+        return true;
     } catch (e) {
         console.error('[notify] import_done threw:', e);
         reportError(e, { fn: 'notify', action: 'import_done' });
+        return false;
     }
+}
+
+/** UUIDv8: a namespaced SHA-256 digest, scoped to owner, job and outcome. */
+export async function importNotificationId(userId: string, jobId: string, outcome: string): Promise<string> {
+    const key = JSON.stringify(['napkin:import-done:v1', userId, jobId, outcome]);
+    const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))).slice(0, 16);
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function uniqueExcluding(ids: string[], exclude: string): string[] {

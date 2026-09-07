@@ -39,9 +39,10 @@ import {
 import { WatchAgainLink } from '@/components/wishlist/ImportSourceCard';
 import { ClipThumb } from '@/components/wishlist/ClipThumb';
 import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
-import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue } from '@/lib/importQueue';
+import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue, getImportForUser } from '@/lib/importQueue';
 import { mintImportMatchCorrection } from '@/lib/importResolution';
-import { deleteAppGroupFile } from '@/modules/media-extract';
+import { deleteAppGroupFile, isBackgroundVideoCaptureAvailable, pickVideoForImport } from '@/modules/media-extract';
+import { maybeOfferNotifPrompt } from '@/lib/localNotify';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -84,17 +85,59 @@ export default function ImportProgressScreen() {
     // there's anything to see (in-flight or recently imported), thumbnail-first rows
     // lead and the banner steps aside.
     const hasRows = active.length > 0 || recentBatches.length > 0 || exhausted.length > 0;
+    const canCaptureVideo = isBackgroundVideoCaptureAvailable();
 
     const toast = useToast();
+    const activeUserRef = React.useRef(user?.id);
+    activeUserRef.current = user?.id;
+    const recaptureAttemptRef = React.useRef(0);
+    const recaptureBusyRef = React.useRef(false);
+    const [recapturingJob, setRecapturingJob] = React.useState<string | null>(null);
+    React.useEffect(() => () => { recaptureAttemptRef.current++; }, []);
 
     const discard = (m: ActiveImport) => {
+        if (m.manifest.userId !== activeUserRef.current) return;
+        const current = getImportForUser(m.jobId, activeUserRef.current);
+        if (!current || current.sourcePreparation === 'pending') return;
         removeImport(m.jobId);
-        if (m.manifest.videoPath) {
+        if (current.videoPath) {
             try {
-                deleteAppGroupFile(m.manifest.videoPath);
+                deleteAppGroupFile(current.videoPath);
             } catch {
                 /* best-effort */
             }
+        }
+    };
+
+    const chooseVideoAgain = async (m: ActiveImport) => {
+        if (recaptureBusyRef.current || !user?.id || m.manifest.userId !== user.id) return;
+        if (!isBackgroundVideoCaptureAvailable()) {
+            toast.show('update Napkin to choose this video again');
+            return;
+        }
+        const owner = user.id;
+        const attempt = ++recaptureAttemptRef.current;
+        recaptureBusyRef.current = true;
+        setRecapturingJob(m.jobId);
+        try {
+            const result = await pickVideoForImport(owner);
+            if (attempt !== recaptureAttemptRef.current || owner !== activeUserRef.current) return;
+            if (result.canceled) return;
+            if (!result.jobId) throw new Error('Video capture was not persisted');
+            if (!getImportForUser(result.jobId, owner)) throw new Error('Video capture was not persisted');
+            // Keep the old failure through cancel/errors. Replace it only once
+            // native capture confirms that another owner-bound job is durable.
+            if (getImportForUser(m.jobId, owner)?.status === 'failed') discard(m);
+            pokeImportQueue();
+            toast.show('video added; we’ll let you know when it’s ready');
+            void maybeOfferNotifPrompt();
+        } catch {
+            if (attempt === recaptureAttemptRef.current && owner === activeUserRef.current) {
+                toast.show("couldn't add that video");
+            }
+        } finally {
+            recaptureBusyRef.current = false;
+            if (attempt === recaptureAttemptRef.current) setRecapturingJob(null);
         }
     };
 
@@ -111,18 +154,24 @@ export default function ImportProgressScreen() {
     const approveSpotTotal = reviewBatches.reduce((sum, m) => sum + keptFor(m).length, 0);
 
     const approveAll = () => {
+        let savingCount = 0;
         for (const m of reviewBatches) {
-            const spots = m.manifest.spots ?? [];
-            const kept = keptFor(m);
+            if (m.manifest.userId !== activeUserRef.current) continue;
+            const current = getImportForUser(m.jobId, activeUserRef.current);
+            if (!current || current.mode !== 'review' || current.status !== 'pending'
+                || current.sourcePreparation === 'pending' || current.sourcePreparation === 'failed') continue;
+            const spots = current.spots ?? [];
+            const kept = spots.filter((spot) => spot.stance !== 'warned');
             if (kept.length === 0 && spots.length > 0) {
                 discard(m); // nothing default-kept — same as unticking everything
                 continue;
             }
             if (kept.length !== spots.length) setImportSpots(m.jobId, kept);
             setImportMode(m.jobId, 'auto'); // release; spots already persisted
+            savingCount += kept.length;
         }
         pokeImportQueue();
-        toast.show(`saving ${approveSpotTotal} ${approveSpotTotal === 1 ? 'spot' : 'spots'}…`);
+        if (savingCount > 0) toast.show(`saving ${savingCount} ${savingCount === 1 ? 'spot' : 'spots'}…`);
     };
 
     const discardAll = () => {
@@ -301,6 +350,7 @@ export default function ImportProgressScreen() {
                         // imports only.
                         const failedStage =
                             m.phase === 'failed' && !m.large ? m.manifest.stage : undefined;
+                        const needsVideoUpdate = m.manifest.sourcePreparation === 'failed' && !canCaptureVideo;
                         return (
                             <Pressable
                                 key={m.jobId}
@@ -361,23 +411,42 @@ export default function ImportProgressScreen() {
                                         </View>
                                     ) : null}
                                     {m.phase === 'failed' ? (
-                                        <View style={styles.failRow}>
-                                            <Pressable
-                                                onPress={() => retryImport(m.jobId)}
-                                                hitSlop={6}
-                                                style={styles.failActionTarget}
-                                            >
-                                                <Text style={[styles.failAction, { color: palette.primary }]}>try again</Text>
-                                            </Pressable>
-                                            <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
-                                            <Pressable
-                                                onPress={() => discard(m)}
-                                                hitSlop={6}
-                                                style={styles.failActionTarget}
-                                            >
-                                                <Text style={[styles.failAction, { color: palette.textMuted }]}>discard</Text>
-                                            </Pressable>
-                                        </View>
+                                        <>
+                                            {needsVideoUpdate ? (
+                                                <Text style={[styles.stageNote, { color: palette.textMuted }]}>
+                                                    update Napkin to choose this video again
+                                                </Text>
+                                            ) : null}
+                                            <View style={styles.failRow}>
+                                                {!needsVideoUpdate ? (
+                                                    <>
+                                                        <Pressable
+                                                            onPress={() => m.manifest.sourcePreparation === 'failed'
+                                                                ? void chooseVideoAgain(m) : retryImport(m.jobId)}
+                                                            disabled={recapturingJob !== null}
+                                                            accessibilityRole="button"
+                                                            accessibilityLabel={m.manifest.sourcePreparation === 'failed' ? 'choose video again' : 'retry import'}
+                                                            hitSlop={6}
+                                                            style={styles.failActionTarget}
+                                                        >
+                                                            <Text style={[styles.failAction, { color: palette.primary }]}>
+                                                                {m.manifest.sourcePreparation === 'failed' ? 'choose video again' : 'try again'}
+                                                            </Text>
+                                                        </Pressable>
+                                                        <Text style={[styles.failDot, { color: palette.textMuted }]}>·</Text>
+                                                    </>
+                                                ) : null}
+                                                <Pressable
+                                                    onPress={() => discard(m)}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel="discard import"
+                                                    hitSlop={6}
+                                                    style={styles.failActionTarget}
+                                                >
+                                                    <Text style={[styles.failAction, { color: palette.textMuted }]}>discard</Text>
+                                                </Pressable>
+                                            </View>
+                                        </>
                                     ) : null}
                                 </View>
                                 {/* right slot: a working row keeps a live spinner; a
