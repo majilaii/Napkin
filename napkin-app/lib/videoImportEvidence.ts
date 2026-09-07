@@ -2,18 +2,44 @@ import type { ExtractResult } from '@/modules/media-extract/src/MediaExtract.typ
 
 // Leaves room for the server's separately budgeted 3,000-character caption.
 // Keep speech in its own allowance so a busy scene cannot evict the voiceover.
-export const VIDEO_EVIDENCE_CAP = 4800;
+export const VIDEO_EVIDENCE_CAP = 24000;
 
 function cleanLine(value: string): string {
     // Native/platform text is content, never a new section of the evidence.
     return value.trim().replace(/^\[/, '(').replace(/\]$/, ')');
 }
 
-function keepEnds(text: string, cap: number): string {
-    if (text.length <= cap) return text;
-    const gap = '\n[... omitted text ...]\n';
-    const head = Math.floor((cap - gap.length) / 2);
-    return text.slice(0, head) + gap + text.slice(-(cap - gap.length - head));
+/** Spend the bound across every frame, never delete the middle of a tour. */
+function fitBlocks(blocks: string[], cap: number): string {
+    if (blocks.join('\n').length <= cap) return blocks.join('\n');
+    // Native OCR has at most 240 frames. Bound pathological legacy arrays too,
+    // keeping samples across the entire source instead of only its endpoints.
+    const maxBlocks = Math.max(1, Math.floor(cap / 48));
+    if (blocks.length > maxBlocks) {
+        blocks = Array.from({ length: maxBlocks }, (_, i) =>
+            blocks[Math.round(i * (blocks.length - 1) / Math.max(1, maxBlocks - 1))]);
+    }
+    let remaining = cap - Math.max(0, blocks.length - 1);
+    const quotas = new Map<number, number>();
+    // Small frames keep all their text and donate unused room to busy frames.
+    const ordered = blocks.map((text, index) => ({ text, index }))
+        .sort((a, b) => a.text.length - b.text.length);
+    ordered.forEach(({ text, index }, i) => {
+        const quota = Math.min(text.length, Math.floor(remaining / (ordered.length - i)));
+        quotas.set(index, quota);
+        remaining -= quota;
+    });
+    return blocks.map((text, i) => {
+        const quota = quotas.get(i) ?? 0;
+        if (text.length <= quota) return text;
+        const gap = '\n[…]\n';
+        if (quota <= gap.length) return text.slice(0, quota);
+        // Any omission is confined to this frame, with its heading and ending
+        // retained. A noisy menu cannot evict a different numbered stop.
+        const head = Math.ceil((quota - gap.length) / 2);
+        const tail = quota - gap.length - head;
+        return text.slice(0, head) + gap + (tail ? text.slice(-tail) : '');
+    }).join('\n');
 }
 
 /** Preserve source and chronological context, including a late location card. */
@@ -51,7 +77,8 @@ export function buildVideoImportEvidence(
         if (!lines.length) continue;
         const label = frame.timeSec < 0 ? ''
             : `[frame ${frame.timeSec.toFixed(1)}s${ending ? '; ending' : ''}]\n`;
-        blocks.push(label + lines.join('\n'));
+        if (frame.timeSec < 0) blocks.push(...lines);
+        else blocks.push(label + lines.join('\n'));
     }
     const screen = blocks.join('\n');
     const speech = (platformTranscript?.trim() || result.transcript || '')
@@ -59,11 +86,15 @@ export function buildVideoImportEvidence(
     const screenHeader = '[on-screen text]\n';
     const speechHeader = '[spoken words]\n';
     if (!screen && !speech) return '';
-    if (!screen) return speechHeader + keepEnds(speech, VIDEO_EVIDENCE_CAP - speechHeader.length);
-    if (!speech) return screenHeader + keepEnds(screen, VIDEO_EVIDENCE_CAP - screenHeader.length);
+    const speechBlocks = speech.match(/[\s\S]{1,400}/g) ?? [];
+    // Joining speech chunks would invent whitespace inside a word. Only split
+    // when compaction is actually required.
+    const fitSpeech = (cap: number) => speech.length <= cap ? speech : fitBlocks(speechBlocks, cap);
+    if (!screen) return speechHeader + fitSpeech(VIDEO_EVIDENCE_CAP - speechHeader.length);
+    if (!speech) return screenHeader + fitBlocks(blocks, VIDEO_EVIDENCE_CAP - screenHeader.length);
     const available = VIDEO_EVIDENCE_CAP - screenHeader.length - speechHeader.length - 2;
     const speechCap = Math.min(speech.length, Math.floor(available * 0.4));
     const screenCap = Math.min(screen.length, available - speechCap);
-    return screenHeader + keepEnds(screen, screenCap) + '\n\n' +
-        speechHeader + keepEnds(speech, available - screenCap);
+    return screenHeader + fitBlocks(blocks, screenCap) + '\n\n' +
+        speechHeader + fitSpeech(available - screenCap);
 }

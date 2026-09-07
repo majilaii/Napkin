@@ -532,6 +532,26 @@ Deno.test('buildMultiSystemPrompt: caption-only video (no video text) drops the 
     // those requests actually carry.
     assertEquals(prompt.includes('location-pin prefix'), false);
     assertEquals(prompt.includes('Bottle labels'), false);
+    assertEquals(prompt.includes("creator's numbered venue overlays"), false);
+});
+
+Deno.test('buildMultiSystemPrompt: numbered video stops stay authoritative without creating a count cap', async () => {
+    const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
+    for (const captionPresent of [false, true]) {
+        const prompt = buildMultiSystemPrompt(12, {
+            sourceKind: 'video', captionPresent, hasVideoText: true, captionCap: null,
+        });
+        assertStringIncludes(prompt, 'When no caption enumerates the venues');
+        assertStringIncludes(prompt, 'numbered venue-name overlay is independent');
+        assertStringIncludes(prompt, 'including the middle stops');
+        assertStringIncludes(prompt, 'SAME numbered stop');
+        assertStringIncludes(prompt, 'fish-stall sign inside a featured market');
+        assertStringIncludes(prompt, 'Do not infer a numeric candidate');
+        assertStringIncludes(prompt, 'Cap at 12 restaurants');
+        assertEquals(prompt.includes('do not return more than'), false);
+    }
+    const photoPrompt = buildMultiSystemPrompt(12, { sourceKind: 'photo', slideCount: 3 });
+    assertEquals(photoPrompt.includes("creator's numbered venue overlays"), false);
 });
 
 Deno.test('buildMultiSystemPrompt: caption cap adds the count sentence and the numeric cap', async () => {

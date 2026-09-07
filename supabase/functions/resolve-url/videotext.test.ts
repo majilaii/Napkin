@@ -13,6 +13,8 @@ import {
   canonicalVideoCacheText,
   CAPTION_SECTION_CAP,
   deriveCaptionCap,
+  PHOTO_FUSION_CAP,
+  preserveVideoTextCoverage,
   routesToVideoText,
   stripTrailingTagBlock,
   VIDEO_FUSION_CAP,
@@ -203,7 +205,7 @@ Deno.test("fusion + cap tolerate a non-string caption (untrusted body)", () => {
 });
 
 Deno.test("fusion: both caption-free and captioned long input retain the final reveal", () => {
-  const text = "Paris\n" + "bottle label\n".repeat(1500) + "\n* LOTTA";
+  const text = "Paris\n" + "bottle label\n".repeat(4000) + "\n* LOTTA";
   for (const caption of [null, "Save this dinner spot in Paris"]) {
     const { fullText } = buildVideoFusion(caption, text);
     assertEquals(fullText.length <= VIDEO_FUSION_CAP, true);
@@ -214,10 +216,50 @@ Deno.test("fusion: both caption-free and captioned long input retain the final r
 
 Deno.test("fusion: photo documents preserve their original fusion and cap", () => {
   const photo = "[slide 1 of 2]\nCasa Urola\n" + "x".repeat(9000);
-  assertEquals(buildVideoFusion(null, photo, true).fullText, photo.slice(0, VIDEO_FUSION_CAP));
+  assertEquals(PHOTO_FUSION_CAP, 8000);
+  assertEquals(buildVideoFusion(null, photo, true).fullText, photo.slice(0, PHOTO_FUSION_CAP));
   const prefix = "[caption]\nMy two spots\n\n[video text]\n";
   assertEquals(buildVideoFusion("My two spots", photo, true).fullText,
-    prefix + photo.slice(0, VIDEO_FUSION_CAP - prefix.length));
+    prefix + photo.slice(0, PHOTO_FUSION_CAP - prefix.length));
+});
+
+Deno.test("fusion: the complete 24k client evidence survives even a maximum caption", () => {
+  const text = "[on-screen text]\n[frame 0.0s]\n1. Opening venue\n" +
+    "middle stop evidence\n".repeat(1200);
+  const clientText = text.slice(0, 23960) + "\n[frame 89.0s; ending]\n11. Final venue";
+  assertEquals(clientText.length <= 24000, true);
+  for (const caption of [null, "caption context ".repeat(1000)]) {
+    const { fullText } = buildVideoFusion(caption, clientText);
+    assertEquals(fullText.length <= VIDEO_FUSION_CAP, true);
+    assertEquals(fullText.endsWith(clientText), true);
+    assertEquals(fullText.includes("omitted text"), false);
+  }
+});
+
+Deno.test("fusion: oversized legacy frame evidence retains every numbered stop across the timeline", () => {
+  const names = ["Kikkie van de Prinsensluis", "Salvo", "Middle cafe three",
+    "Middle cafe four", "Middle cafe five", "Middle cafe six", "Middle cafe seven",
+    "Middle cafe eight", "Middle cafe nine", "Albert Cuyp Market", "Fabel Friet"];
+  const text = "[on-screen text]\n" + names.map((name, index) =>
+    `[frame ${index * 8}.0s${index === 10 ? "; ending" : ""}]\n${index + 1}. ${name}\n` +
+    "scene text\n".repeat(500)).join("\n");
+  for (const caption of [null, "A day in Amsterdam ".repeat(300)]) {
+    const { fullText } = buildVideoFusion(caption, text);
+    assertEquals(fullText.length <= VIDEO_FUSION_CAP, true);
+    for (const name of names) assertStringIncludes(fullText, name);
+    assertStringIncludes(fullText, "[frame 80.0s; ending]");
+    assertStringIncludes(fullText, "omitted text");
+  }
+});
+
+Deno.test("legacy coverage: unlabelled oversized evidence retains middle sections and stays bounded", () => {
+  const text = Array.from({ length: 12 }, (_, index) =>
+    `Stop ${index + 1}`.padEnd(6000, ".")).join("");
+  const bounded = preserveVideoTextCoverage(text, 24000);
+  assertEquals(bounded.length <= 24000, true);
+  for (let index = 1; index <= 12; index++) assertStringIncludes(bounded, `Stop ${index}`);
+  assertEquals(preserveVideoTextCoverage(text, 0), "");
+  assertEquals(preserveVideoTextCoverage(text, 10).length, 10);
 });
 
 Deno.test("cache: decode timestamp jitter is ignored but evidence and ending status are not", () => {
