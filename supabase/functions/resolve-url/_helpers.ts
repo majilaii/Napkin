@@ -36,6 +36,11 @@ export function buildPlacesSearchBody(
   };
 }
 
+/** A creator-supplied address distinguishes same-name branches within a city. */
+export function buildCandidatePlacesQuery(candidate: { name?: string | null; address?: string | null }): string {
+  return [candidate.name?.trim(), candidate.address?.trim()].filter(Boolean).join(", ");
+}
+
 export interface InlineDestinationResult {
   destination_kind: "wishlist" | "table" | "list" | "new_list";
   outcome: "pending" | "fulfilled" | "rejected";

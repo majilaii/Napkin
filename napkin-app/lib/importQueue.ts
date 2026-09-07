@@ -111,6 +111,11 @@ export interface ImportManifest {
     kind: 'video' | 'url';
     /** Present for kind 'video'. */
     videoPath?: string;
+    /** Native Photos preparation owns pending files; the drain must wait. */
+    sourcePreparation?: 'pending' | 'ready' | 'failed';
+    /** Notification attempts are checkpointed after emission, allowing replay. */
+    notificationOutcome?: 'pending' | 'review' | 'failed';
+    localNotificationOutcome?: 'review' | 'failed';
     /** Present for kind 'url'. */
     url?: string;
     importNonce: string;
@@ -297,6 +302,12 @@ function readAll(): ImportManifest[] {
                     jobId: p.jobId,
                     kind,
                     videoPath,
+                    sourcePreparation: p.sourcePreparation === 'pending' || p.sourcePreparation === 'ready' || p.sourcePreparation === 'failed'
+                        ? p.sourcePreparation : undefined,
+                    notificationOutcome: p.notificationOutcome === 'pending' || p.notificationOutcome === 'review' || p.notificationOutcome === 'failed'
+                        ? p.notificationOutcome : undefined,
+                    localNotificationOutcome: p.localNotificationOutcome === 'review' || p.localNotificationOutcome === 'failed'
+                        ? p.localNotificationOutcome : undefined,
                     url,
                     importNonce: typeof p.importNonce === 'string' ? p.importNonce : safeRandomUUID(),
                     protocolGeneration:
@@ -382,8 +393,15 @@ let enqueueChain: Promise<unknown> = Promise.resolve();
 export function enqueueVideoImport(
     videoPath: string,
     userId?: string | null,
+    beforeCommit?: () => void,
+    sourcePreparation?: 'ready',
 ): Promise<ImportManifest> {
-    const run = enqueueChain.then(() => doEnqueue(videoPath, userId));
+    const run = enqueueChain.then(() => {
+        // A gallery copy can outlive its sheet/account while waiting its turn.
+        // Fence immediately before the synchronous durable manifest write.
+        beforeCommit?.();
+        return doEnqueue(videoPath, userId, sourcePreparation);
+    });
     enqueueChain = run.catch(() => undefined);
     return run;
 }
@@ -391,6 +409,7 @@ export function enqueueVideoImport(
 async function doEnqueue(
     videoPath: string,
     userId?: string | null,
+    sourcePreparation?: 'ready',
 ): Promise<ImportManifest> {
     const existing = readAll().find((m) =>
         m.videoPath === videoPath &&
@@ -413,6 +432,7 @@ async function doEnqueue(
         jobId: safeRandomUUID(),
         kind: 'video',
         videoPath,
+        ...(sourcePreparation ? { sourcePreparation } : {}),
         importNonce: safeRandomUUID(),
         protocolGeneration: 'v2',
         createdAt: Date.now(),
@@ -440,8 +460,29 @@ async function doEnqueue(
 /** Pending (not-yet-poisoned) manifests, oldest first. */
 export function listPendingImports(): ImportManifest[] {
     return readAll()
-        .filter((m) => m.status === 'pending')
+        .filter((m) => m.status === 'pending' && m.sourcePreparation !== 'pending' && m.sourcePreparation !== 'failed')
         .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export function listUnnotifiedImportFailures(): ImportManifest[] {
+    return readAll().filter((m) => m.status === 'failed' && m.notificationOutcome !== 'failed'
+        && (m.sourcePreparation === 'failed' || m.notificationOutcome === 'pending'));
+}
+
+export function markImportLocalNotification(jobId: string, outcome: 'review' | 'failed'): void {
+    const manifest = readAll().find((item) => item.jobId === jobId);
+    if (!manifest) return;
+    if (!writeManifest({ ...manifest, localNotificationOutcome: outcome })) {
+        throw new Error('Failed to persist local import notification checkpoint');
+    }
+}
+
+export function markImportNotification(jobId: string, outcome: 'review' | 'failed'): void {
+    const manifest = readAll().find((item) => item.jobId === jobId);
+    if (!manifest) return;
+    if (!writeManifest({ ...manifest, notificationOutcome: outcome })) {
+        throw new Error('Failed to persist import notification checkpoint');
+    }
 }
 
 export function removeImport(jobId: string): void {
@@ -487,7 +528,7 @@ export function claimImportOwner(
 /** Flip auto↔review (the review screen flips to 'auto' on confirm, then pokes). */
 export function setImportMode(jobId: string, mode: 'auto' | 'review'): void {
     const m = readAll().find((x) => x.jobId === jobId);
-    if (!m) return;
+    if (!m || m.sourcePreparation === 'pending' || m.sourcePreparation === 'failed') return;
     writeManifest({ ...m, mode });
 }
 
@@ -495,8 +536,19 @@ export function setImportMode(jobId: string, mode: 'auto' | 'review'): void {
 export function retryImport(jobId: string): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
-    writeManifest({ ...m, attempts: 0, status: 'pending' });
+    if (m.sourcePreparation === 'failed') return; // Photos must be selected again.
+    writeManifest({ ...m, attempts: 0, status: 'pending', notificationOutcome: undefined });
     pokeImportQueue();
+}
+
+/** Keep a terminal failure visible and retain its owned video for retry/discard. */
+export function failImport(jobId: string, sourceUnavailable = false): ImportManifest | null {
+    const manifest = readAll().find((item) => item.jobId === jobId);
+    if (!manifest) return null;
+    const failed: ImportManifest = { ...manifest, status: 'failed', notificationOutcome: 'pending', localNotificationOutcome: undefined,
+        ...(sourceUnavailable ? { sourcePreparation: 'failed' as const } : {}) };
+    if (!writeManifest(failed)) throw new Error('Failed to persist import failure');
+    return failed;
 }
 
 /**
@@ -529,10 +581,12 @@ export function pokeImportQueue(): void {
 }
 
 /** Persist resolved spots (checkpoint after first resolve) so re-drains reuse them. */
-export function setImportSpots(jobId: string, spots: PersistedImportSpot[]): void {
+export function setImportSpots(jobId: string, spots: PersistedImportSpot[], awaitingNotification = false): void {
     const m = readAll().find((x) => x.jobId === jobId);
-    if (!m) return;
-    writeManifest({ ...m, spots });
+    if (!m || m.sourcePreparation === 'pending' || m.sourcePreparation === 'failed') return;
+    writeManifest({ ...m, spots, ...(awaitingNotification ? {
+        notificationOutcome: 'pending' as const, localNotificationOutcome: undefined,
+    } : {}) });
 }
 
 /**
@@ -551,7 +605,7 @@ export function setImportDestinations(
     },
 ): void {
     const m = readAll().find((x) => x.jobId === jobId);
-    if (!m) return;
+    if (!m || m.sourcePreparation === 'pending' || m.sourcePreparation === 'failed') return;
     const tableIds = edits.tableIds === undefined ? undefined : [...new Set(edits.tableIds)];
     writeManifest({
         ...m,
@@ -588,7 +642,7 @@ export function confirmImportReview(
     },
 ): boolean {
     const m = readAll().find((x) => x.jobId === jobId);
-    if (!m) return false;
+    if (!m || m.sourcePreparation === 'pending' || m.sourcePreparation === 'failed') return false;
     const tableIds = [...new Set(confirmation.tableIds)];
     const confirmed: ImportManifest = {
         ...m,
@@ -711,6 +765,7 @@ export function bumpImportAttempt(jobId: string): ImportManifest | null {
         ...m,
         attempts,
         status: attempts >= MAX_ATTEMPTS ? 'failed' : 'pending',
+        ...(attempts >= MAX_ATTEMPTS ? { notificationOutcome: 'pending' as const, localNotificationOutcome: undefined } : {}),
     };
     writeManifest(updated);
     return updated;

@@ -83,7 +83,7 @@ import {
     type ImportDestinationTarget,
 } from '@/lib/importProtocol';
 import { downscaleAndUpload } from '@/lib/imageDownscale';
-import { extractFromVideo, isVideoImportAvailable } from '@/modules/media-extract';
+import { extractFromVideo, isVideoImportAvailable, isBackgroundVideoCaptureAvailable, pickVideoForImport } from '@/modules/media-extract';
 import { buildVideoImportEvidence } from '@/lib/videoImportEvidence';
 import {
     buildImportEditMatchSearchBody,
@@ -91,6 +91,9 @@ import {
 } from '@/lib/importEditMatch';
 
 import { safeRandomUUID } from '@/lib/uuid';
+import { queuePickedVideo } from '@/lib/queuePickedVideo';
+import { pokeImportQueue, getImportForUser } from '@/lib/importQueue';
+import { maybeOfferNotifPrompt } from '@/lib/localNotify';
 import { sourceNoun } from '@/lib/sourceNoun';
 import { DestinationPicker, type DestinationSelection } from './DestinationPicker';
 import { useToast } from '@/providers/ToastProvider';
@@ -114,6 +117,7 @@ type SheetState =
     | 'rate-limited'
     | 'screenshot-uploading'
     | 'video-extracting'      // TICKET-082: on-device OCR + voiceover in progress
+    | 'video-queueing'        // own a durable copy, then let the root queue inspect it
     | 'destination'
     | 'share-destination'     // TICKET-063b: single-table picker launched from picking
     | 'ig-nudge';
@@ -138,6 +142,8 @@ export interface ImportLinkSheetProps {
     onDismiss: () => void;
     /** Additive launcher hint; existing callers keep the full source menu. */
     openTo?: 'menu' | 'video' | 'screenshot';
+    /** Called after this native modal has closed following a durable video handoff. */
+    onVideoQueued?: (jobId: string) => void;
     /**
      * When set, the sheet skips the paste step and jumps directly to the
      * 'loading' state with this URL pre-resolved. Used by the iOS share
@@ -167,6 +173,7 @@ export function ImportLinkSheet({
     visible,
     onDismiss,
     openTo = 'menu',
+    onVideoQueued,
     initialUrl,
     initialImportNonce,
     initialVideoPath,
@@ -176,6 +183,9 @@ export function ImportLinkSheet({
     const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
+    const activeUserIdRef = useRef(user?.id);
+    activeUserIdRef.current = user?.id;
+    const queuedVideoRef = useRef<string | null>(null);
     const directMediaStart = !initialUrl && !initialVideoPath && (
         openTo === 'screenshot' || (openTo === 'video' && VIDEO_IMPORT_AVAILABLE)
     );
@@ -797,32 +807,61 @@ export function ImportLinkSheet({
         }
     }, [user?.id, resolve, resetSaveError, pickMedia]);
 
-    // TICKET-082: pick a saved video → on-device OCR + voiceover → resolve text.
-    // The phone does all the perception (free); we only POST the extracted text.
+    // Gallery videos use the same durable review-first queue as shared videos.
+    // Only local capture is awaited here; OCR and matching outlive this sheet.
     const handlePickVideo = useCallback(async () => {
+        const expectedOwner = user?.id;
+        if (isBackgroundVideoCaptureAvailable()) {
+            const request = ++mediaPickerReqRef.current;
+            lastPickerKindRef.current = 'video';
+            try {
+                if (!expectedOwner) throw new Error('Sign in to import');
+                const result = await pickVideoForImport(expectedOwner);
+                if (request !== mediaPickerReqRef.current || expectedOwner !== activeUserIdRef.current) return;
+                if (result.canceled) {
+                    if (directMediaStart) handleDismiss();
+                    return;
+                }
+                if (!result.jobId) throw new Error('Video capture was not persisted');
+                if (!getImportForUser(result.jobId, expectedOwner)) throw new Error('Video capture was not persisted');
+                pokeImportQueue();
+                queuedVideoRef.current = result.jobId;
+                handleDismiss();
+                return;
+            } catch {
+                if (request !== mediaPickerReqRef.current) return;
+                setErrorCode('VIDEO_CAPTURE_FAILED');
+                setSheetState('error');
+                return;
+            }
+        }
         const picked = await pickMedia('video');
         if (!picked || picked.request !== mediaPickerReqRef.current) return;
-        const { asset } = picked;
-
-        // Fresh nonces for this import (mirrors handleFindIt).
-        importNonceRef.current = safeRandomUUID();
-        spotNonceMapRef.current.clear();
-        savedCandidateIdsRef.current.clear();
-        tableNonceMapRef.current.clear();
-        destinationNoncesRef.current = undefined;
-        destinationTargetsRef.current = undefined;
-        expectedDestinationsRef.current = undefined;
-        setFailedCandidateKeys(new Set());
-        setTickedKeys(new Set());
-        setChosenTable(null);
-        setLastUrl('');
-
-        lastVideoUriRef.current = asset.uri;
-        runVideoExtraction(asset.uri);
-    }, [runVideoExtraction, pickMedia]);
+        const { asset, request } = picked;
+        setSheetState('video-queueing');
+        try {
+            const manifest = await queuePickedVideo(
+                asset.uri,
+                expectedOwner,
+                () => activeUserIdRef.current,
+                () => request === mediaPickerReqRef.current,
+            );
+            if (request !== mediaPickerReqRef.current || expectedOwner !== activeUserIdRef.current) return;
+            queuedVideoRef.current = manifest.jobId;
+            handleDismiss();
+        } catch {
+            if (request !== mediaPickerReqRef.current) return;
+            if (expectedOwner !== activeUserIdRef.current) {
+                handleDismiss();
+                return;
+            }
+            setErrorCode('VIDEO_CAPTURE_FAILED');
+            setSheetState('error');
+        }
+    }, [user?.id, directMediaStart, pickMedia, handleDismiss]);
 
     const handleRetry = useCallback(() => {
-        if (errorCode === 'MEDIA_PICKER_FAILED') {
+        if (errorCode === 'MEDIA_PICKER_FAILED' || errorCode === 'VIDEO_CAPTURE_FAILED') {
             if (lastPickerKindRef.current === 'video') void handlePickVideo();
             else void handlePickScreenshot();
             return;
@@ -883,6 +922,19 @@ export function ImportLinkSheet({
             else void handlePickScreenshot();
         }
     }, [visible, directMediaStart, handlePickVideo, handlePickScreenshot, openTo]);
+
+    const handleModalDismissed = useCallback(() => {
+        const jobId = queuedVideoRef.current;
+        if (!jobId) return;
+        queuedVideoRef.current = null;
+        if (onVideoQueued) onVideoQueued(jobId);
+        else {
+            toast.show('video added; we’ll let you know when it’s ready', {
+                label: 'view', onPress: () => router.push('/import-progress'),
+            });
+            void maybeOfferNotifPrompt();
+        }
+    }, [onVideoQueued, toast, router]);
 
     // TICKET-060: handle destination confirm (async capture fan-out)
     const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
@@ -1056,6 +1108,7 @@ export function ImportLinkSheet({
             animationType={directMediaStart ? 'none' : 'slide'}
             onRequestClose={handleDismiss}
             onShow={handleModalShown}
+            onDismiss={handleModalDismissed}
         >
             {!awaitingDirectMedia && <Pressable
                 style={[styles.backdrop, { backgroundColor: palette.overlay }]}
@@ -1211,6 +1264,13 @@ export function ImportLinkSheet({
                         )}
 
                         {/* ── VIDEO EXTRACTING (on-device OCR + voiceover) ── */}
+                        {sheetState === 'video-queueing' && (
+                            <LoadingPanel
+                                palette={palette}
+                                onCancel={handleCancel}
+                                copy="adding your video…"
+                            />
+                        )}
                         {sheetState === 'video-extracting' && (
                             <LoadingPanel
                                 palette={palette}
@@ -1640,6 +1700,8 @@ function ErrorPanel({ palette, code, onRetry, onSearchManually }: {
         ? 'tiktok is busy — try again in a minute'
         : code === 'MEDIA_PICKER_FAILED'
         ? "couldn't open your photos"
+        : code === 'VIDEO_CAPTURE_FAILED'
+        ? "couldn't add that video"
         : isVideoUnavailable
         ? "video imports aren't available on this device"
         : isVideo

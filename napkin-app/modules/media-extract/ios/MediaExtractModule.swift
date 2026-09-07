@@ -25,8 +25,32 @@ public class MediaExtractModule: Module {
     // TICKET-245: v4 adds optional timestamped `frames` to the result, retaining
     // the v2 seven-argument signature and legacy `ocr` field.
     Constants([
-      "apiVersion": 4
+      "apiVersion": 5
     ])
+    Events("onVideoImportPrepared")
+    OnCreate {
+      VideoImportCapture.shared.onPrepared = { [weak self] jobId in
+        self?.sendEvent("onVideoImportPrepared", ["jobId": jobId])
+      }
+    }
+
+    // v5 adds native-owned gallery acquisition; v4 extraction signatures stay intact.
+    AsyncFunction("pickVideoForImport") { (userId: String, promise: Promise) in
+      guard let presenter = self.appContext?.utilities?.currentViewController() else {
+        promise.reject("ERR_VIDEO_PICKER", "The video picker is not ready.")
+        return
+      }
+      do {
+        try VideoImportCapture.shared.present(from: presenter, userId: userId) { result in
+          switch result {
+          case .success(let payload): promise.resolve(payload)
+          case .failure: promise.reject("ERR_VIDEO_PICKER", "Could not prepare the selected video.")
+          }
+        }
+      } catch {
+        promise.reject("ERR_VIDEO_PICKER", "Could not open the video picker.")
+      }
+    }.runOnQueue(DispatchQueue.main)
 
     // uri: file:// or absolute path to the picked/shared video.
     // Returns legacy ocr/transcript/durationSec plus timestamped frame evidence.
@@ -116,37 +140,20 @@ public class MediaExtractModule: Module {
 
     // All manifest JSON strings currently in the queue dir.
     Function("listImportManifests") { () -> [String] in
-      guard let dir = Self.queueDir() else { return [] }
-      let files = (try? FileManager.default.contentsOfDirectory(
-        at: dir, includingPropertiesForKeys: nil)) ?? []
-      var out: [String] = []
-      for f in files where f.pathExtension == "json" {
-        if let data = try? Data(contentsOf: f),
-           let s = String(data: data, encoding: .utf8) {
-          out.append(s)
-        }
-      }
-      return out
+      VideoImportPreparationStore.shared?.listManifests() ?? []
     }
 
     // Write/overwrite a manifest atomically. Data's atomic option writes a
     // sibling temporary file and replaces the destination without deleting the
     // last good manifest first.
     Function("writeImportManifest") { (jobId: String, json: String) -> Bool in
-      guard let dir = Self.queueDir(), let data = json.data(using: .utf8) else { return false }
-      let final = dir.appendingPathComponent(jobId + ".json")
-      do {
-        try data.write(to: final, options: .atomic)
-        return true
-      } catch {
-        return false
-      }
+      VideoImportPreparationStore.shared?.writeManifest(id: jobId, json: json) ?? false
     }
 
     Function("removeImportManifest") { (jobId: String) -> Bool in
-      guard let dir = Self.queueDir() else { return false }
-      try? FileManager.default.removeItem(at: dir.appendingPathComponent(jobId + ".json"))
-      return true
+      let removed = VideoImportPreparationStore.shared?.removeManifest(id: jobId) ?? false
+      DispatchQueue.main.async { VideoImportCapture.shared.cancel(jobId: jobId) }
+      return removed
     }
 
     // { exists: Bool, size: Int } for an absolute App-Group file path.
@@ -232,15 +239,7 @@ public class MediaExtractModule: Module {
 
   // MARK: - App Group queue dir
 
-  private static let appGroup = "group.com.majilaii.napkin.shared"
-
-  private static func queueDir() -> URL? {
-    guard let container = FileManager.default
-      .containerURL(forSecurityApplicationGroupIdentifier: appGroup) else { return nil }
-    let dir = container.appendingPathComponent("import-queue", isDirectory: true)
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return dir
-  }
+  private static let appGroup = VideoImportPreparationStore.appGroup
 
   // MARK: - URL resolution
 
@@ -294,7 +293,15 @@ public class MediaExtractModule: Module {
       DispatchQueue.global().asyncAfter(deadline: .now() + Double(timeoutMs) / 1000.0) {
         finishAuth(.notDetermined)
       }
-      SFSpeechRecognizer.requestAuthorization { finishAuth($0) }
+      DispatchQueue.main.async {
+        guard Date() < deadlineAt else { finishAuth(.notDetermined); return }
+        VideoSpeechAuthorization.resolve(
+          status: SFSpeechRecognizer.authorizationStatus(),
+          applicationIsActive: UIApplication.shared.applicationState == .active,
+          request: { SFSpeechRecognizer.requestAuthorization($0) },
+          finish: finishAuth
+        )
+      }
     }
     guard status == .authorized else { return "" }
     // Whatever the auth wait consumed comes out of the recognition budget.

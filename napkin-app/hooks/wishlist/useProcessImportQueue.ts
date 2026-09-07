@@ -40,11 +40,16 @@ import {
     deleteAppGroupFile,
     beginBackgroundTask,
     endBackgroundTask,
+    onVideoImportPrepared,
 } from '@/modules/media-extract';
 import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
 import { markImportCompleted } from '@/lib/importActivation';
 import {
     listPendingImports,
+    listUnnotifiedImportFailures,
+    markImportNotification,
+    markImportLocalNotification,
+    failImport,
     removeImport,
     setImportSpots,
     setImportListCount,
@@ -215,7 +220,7 @@ function v2SaveFields(
     };
 }
 
-function assertV2ResolutionIds(spots: Array<{ resolution_id?: string | null }>): void {
+function assertV2ResolutionIds(spots: { resolution_id?: string | null }[]): void {
     if (
         spots.some(
             (spot) => typeof spot.resolution_id !== 'string' || spot.resolution_id.length === 0,
@@ -322,6 +327,42 @@ export function useProcessImportQueue() {
             ),
         [runOwnerBound],
     );
+
+    const announceImportOutcome = useCallback(async (m: ImportManifest, outcome: 'review' | 'failed', copy: string) => {
+        requireActiveImportOwner(m.userId, activeUserIdRef.current);
+        try {
+            if (m.localNotificationOutcome !== outcome) {
+                if (AppState.currentState === 'active') {
+                    toast.show(copy, { label: 'view', onPress: () => router.push('/import-progress') });
+                } else {
+                    await presentImportNotification({
+                        title: copy,
+                        body: outcome === 'review' ? 'tap to confirm your import' : 'tap to try again',
+                    });
+                }
+                requireActiveImportOwner(m.userId, activeUserIdRef.current);
+                markImportLocalNotification(m.jobId, outcome);
+            }
+            await runOwnerBound(m, () => callEdgeFn('notifications', {
+                action: 'emit_self',
+                body: { kind: 'import_done', expected_owner_id: m.userId, subject_meta: {
+                    job_id: m.jobId, count: outcome === 'review' ? (m.spots?.length ?? 0) : 0, outcome,
+                } },
+            }));
+            markImportNotification(m.jobId, outcome);
+        } catch {
+            // The durable row remains visible. Retry notification on the next
+            // drain instead of losing the event between checkpoint and delivery.
+        }
+    }, [toast, runOwnerBound]);
+
+    const failAndAnnounceImport = useCallback(async (m: ImportManifest, copy: string, sourceUnavailable = false) => {
+        requireActiveImportOwner(m.userId, activeUserIdRef.current);
+        const failed = failImport(m.jobId, sourceUnavailable);
+        if (!failed) return;
+        await announceImportOutcome(failed, 'failed', copy);
+        pokeImportQueue();
+    }, [announceImportOutcome]);
 
     // ── TICKET-152: large Maps-list drain ─────────────────────────────────────
     // A large job is client-pumped in chunks of 20 through resolve_spots →
@@ -784,6 +825,7 @@ export function useProcessImportQueue() {
     const processOne = useCallback(
         async (m: ImportManifest) => {
             requireActiveImportOwner(m.userId, activeUserIdRef.current);
+            if (m.status === 'failed' || m.sourcePreparation === 'pending' || m.sourcePreparation === 'failed') return;
             // TICKET-152: a large Maps-list job takes its own client-pumped chunk
             // drain — never the single-shot resolve/save below.
             if (m.largeJob) {
@@ -1026,7 +1068,7 @@ export function useProcessImportQueue() {
                                     (perception as { slideUrls?: string[] }).slideUrls ?? [];
                                 // TICKET-180 stage 2/6: photo branch — on-device slide OCR.
                                 if (slideUrls.length > 0) setImportStage(m.jobId, 'reading slides');
-                                const slideFiles: Array<string | null> = Array(
+                                const slideFiles: (string | null)[] = Array(
                                     slideUrls.length,
                                 ).fill(null);
                                 for (
@@ -1364,8 +1406,7 @@ export function useProcessImportQueue() {
                         /* native absent — let extractFromVideo surface it */
                     }
                     if (!info.exists || info.size === 0) {
-                        removeImport(m.jobId); // file gone — fail fast
-                        toast.show("couldn't read that video");
+                        await failAndAnnounceImport(m, "couldn't read that video", true);
                         return;
                     }
                     // TICKET-180 stage 4/6: shared-file video → on-device OCR + STT.
@@ -1375,9 +1416,7 @@ export function useProcessImportQueue() {
                     );
                     const extractedText = buildVideoImportEvidence(videoEvidence);
                     if (!extractedText) {
-                        removeImport(m.jobId);
-                        safeDeleteMov(m.videoPath);
-                        toast.show("couldn't read spots from that video");
+                        await failAndAnnounceImport(m, "couldn't read spots from that video");
                         return;
                     }
                     // TICKET-180 stage 5/6: resolving candidates against the OCR text.
@@ -1449,9 +1488,7 @@ export function useProcessImportQueue() {
                 }
 
                 if (candidates.length === 0) {
-                    removeImport(m.jobId);
-                    safeDeleteMov(m.videoPath);
-                    toast.show("couldn't find spots in that import");
+                    await failAndAnnounceImport(m, "couldn't find spots in that import");
                     return;
                 }
 
@@ -1478,7 +1515,7 @@ export function useProcessImportQueue() {
                         stance: c.stance ?? null,
                     };
                 });
-                setImportSpots(m.jobId, spots);
+                setImportSpots(m.jobId, spots, true);
                 // TICKET-151: checkpoint the list size alongside the spots so it
                 // survives the review hold + any re-drain (readAll parses it back).
                 if (listCount != null) setImportListCount(m.jobId, listCount);
@@ -1500,32 +1537,9 @@ export function useProcessImportQueue() {
             // screen prunes the spots, flips mode to 'auto', and re-pokes the
             // drain, which re-enters here and saves (spots already persisted).
             if (m.mode === 'review') {
-                if (freshlyResolved) {
+                if (freshlyResolved || m.notificationOutcome === 'pending') {
                     const n = spots.length;
-                    toast.show(`${n} ${n === 1 ? 'spot' : 'spots'} ready to review`);
-                    // TICKET-120: the toast is invisible if the user backgrounded the
-                    // app mid-import — post a local notification instead. Foreground
-                    // stays toast-only (never double-announce).
-                    if (AppState.currentState !== 'active') {
-                        presentImportNotification({
-                            title: `${n} ${n === 1 ? 'spot' : 'spots'} ready to review`,
-                            body: 'tap to confirm your import',
-                        });
-                    }
-                    // TICKET-123: write the SILENT durable inbox row (outcome
-                    // 'review'). Always — never AppState-gated (the loud channel
-                    // above is; the row is the quiet always-on third). The drain
-                    // has no service-role INSERT, so it emits via the self-directed
-                    // notifications action. Fire-and-forget — never fail the import.
-                    void runOwnerBound(m, () =>
-                        callEdgeFn('notifications', {
-                            action: 'emit_self',
-                            body: {
-                                kind: 'import_done',
-                                subject_meta: { job_id: m.jobId, count: n, outcome: 'review' },
-                            },
-                        })
-                    ).catch(() => {});
+                    await announceImportOutcome({ ...m, spots }, 'review', `${n} ${n === 1 ? 'spot' : 'spots'} ready to review`);
                     if (userId) {
                         queryClient.invalidateQueries({
                             queryKey: queryKeys.importJobs.all(userId),
@@ -1533,7 +1547,7 @@ export function useProcessImportQueue() {
                     }
                     // Refresh the wishlist "to review" band live (safe — the drain's
                     // own listener no-ops behind the held lock).
-                    pokeImportQueue();
+                    if (freshlyResolved) pokeImportQueue();
                 }
                 return;
             }
@@ -1816,6 +1830,8 @@ export function useProcessImportQueue() {
             processLargeJob,
             callImportResolveUrl,
             runOwnerBound,
+            failAndAnnounceImport,
+            announceImportOutcome,
         ],
     );
 
@@ -1841,6 +1857,13 @@ export function useProcessImportQueue() {
         }
 
         try {
+            for (const failed of listUnnotifiedImportFailures()) {
+                if (activeUserIdRef.current !== userId) break;
+                if (failed.userId === userId) {
+                    await announceImportOutcome(failed, 'failed', "couldn't import that video");
+                }
+            }
+            if (activeUserIdRef.current !== userId) return;
             const pending = listPendingImports().flatMap((manifest) => {
                 // Review-mode manifests ARE drained — they get resolved (OCR/caption)
                 // and persisted, then HELD (processOne returns before save) until the
@@ -1852,7 +1875,10 @@ export function useProcessImportQueue() {
             });
             // TICKET-120: actively draining ≥1 import while the user is here is the
             // demonstrated-value beat to (quietly, cadence-gated) offer notifications.
-            if (pending.length > 0 && AppState.currentState === 'active') {
+            // Gallery capture asks only after its native picker and tray close.
+            // Even a very fast preparation event must not present a sibling
+            // permission modal while that handoff is still dismissing.
+            if (pending.some((m) => m.sourcePreparation === undefined) && AppState.currentState === 'active') {
                 maybeOfferNotifPrompt();
             }
             for (const m of pending) {
@@ -1864,32 +1890,7 @@ export function useProcessImportQueue() {
                     if (isSessionError(err) || isTransientError(err)) break;
                     const updated = bumpImportAttempt(m.jobId);
                     if (updated?.status === 'failed') {
-                        toast.show("couldn't import that");
-                        // TICKET-120: notify the poison too when backgrounded (the
-                        // toast is invisible then). Foreground = toast-only.
-                        if (AppState.currentState !== 'active') {
-                            presentImportNotification({
-                                title: "couldn't import that",
-                                body: 'tap to try again',
-                            });
-                        }
-                        // TICKET-123: SILENT durable inbox row (outcome 'failed',
-                        // count 0). Always written regardless of AppState; the row
-                        // is the quiet always-on record so a decliner/missed-banner
-                        // user can still catch it. Fire-and-forget.
-                        void runOwnerBound(m, () =>
-                            callEdgeFn('notifications', {
-                                action: 'emit_self',
-                                body: {
-                                    kind: 'import_done',
-                                    subject_meta: {
-                                        job_id: m.jobId,
-                                        count: 0,
-                                        outcome: 'failed',
-                                    },
-                                },
-                            })
-                        ).catch(() => {});
+                        await announceImportOutcome(updated, 'failed', "couldn't import that");
                         // Keep the .mov: a poisoned manifest stays for "try again" in
                         // the progress hub (re-OCR needs the source). The .mov is
                         // deleted on success (processOne) or when the user discards.
@@ -1915,7 +1916,7 @@ export function useProcessImportQueue() {
                 setTimeout(() => pokeImportQueue(), 0);
             }
         }
-    }, [userId, session, processOne, toast]);
+    }, [userId, session, processOne, announceImportOutcome]);
 
     useEffect(() => {
         drain();
@@ -1923,9 +1924,11 @@ export function useProcessImportQueue() {
             if (s === 'active') drain();
         });
         const unsub = onImportEnqueued(() => drain());
+        const unsubPrepared = onVideoImportPrepared(() => pokeImportQueue());
         return () => {
             sub.remove();
             unsub();
+            unsubPrepared();
         };
     }, [drain]);
 }

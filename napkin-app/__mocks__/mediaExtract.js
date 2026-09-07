@@ -5,6 +5,9 @@
  */
 module.exports = {
     isVideoImportAvailable: () => false,
+    isBackgroundVideoCaptureAvailable: () => false,
+    pickVideoForImport: async () => { throw new Error('native module unavailable in jest'); },
+    onVideoImportPrepared: () => () => {},
     extractFromVideo: async () => { throw new Error('native module unavailable in jest'); },
     extractFromImages: async () => { throw new Error('native module unavailable in jest'); },
     listImportManifests: () => [],

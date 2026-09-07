@@ -33,6 +33,8 @@ import type { ClipLedgerRow } from './clipTrayUtils';
 import { ImportLinkSheet } from './ImportLinkSheet';
 import { SnapSheet, type SnapSheetHandle } from '@/components/sheets/SnapSheet';
 import { FULL, HALF, PEEK } from '@/components/sheets/snapSheetMath';
+import { useToast } from '@/providers/ToastProvider';
+import { maybeOfferNotifPrompt } from '@/lib/localNotify';
 
 type Palette = typeof Colors.light;
 type ImportOpenTo = 'menu' | 'video' | 'screenshot';
@@ -58,6 +60,8 @@ export function ClipTray({
 }: ClipTrayProps) {
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const toast = useToast();
+    const queuedVideoRef = useRef(false);
     const [inputValue, setInputValue] = useState('');
     const [importOpen, setImportOpen] = useState(false);
     const [pendingUrl, setPendingUrl] = useState<string | undefined>();
@@ -73,11 +77,18 @@ export function ClipTray({
     const inputOk = validateUrl(inputValue.trim()).ok;
 
     const finishNavigation = useCallback(() => {
+        if (queuedVideoRef.current) {
+            queuedVideoRef.current = false;
+            toast.show('video added; we’ll let you know when it’s ready', {
+                label: 'view', onPress: () => router.push('/import-progress'),
+            });
+            void maybeOfferNotifPrompt();
+        }
         const route = pendingRouteRef.current;
         if (!route) return;
         pendingRouteRef.current = null;
         router.push(route as never);
-    }, [router]);
+    }, [router, toast]);
 
     const dismissTray = useCallback(() => {
         pendingRouteRef.current = null;
@@ -193,6 +204,10 @@ export function ClipTray({
                     onDismiss={() => setImportOpen(false)}
                     initialUrl={pendingUrl}
                     openTo={pendingOpenTo}
+                    onVideoQueued={() => {
+                        queuedVideoRef.current = true;
+                        onDismiss();
+                    }}
                 />
             </GestureHandlerRootView>
         </Modal>

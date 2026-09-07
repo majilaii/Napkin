@@ -672,6 +672,7 @@ function callImportPlacesSearch(
 // import them without triggering the HTTP server.
 import {
   attemptedExternalIdFromResolutionEvidence,
+  buildCandidatePlacesQuery,
   buildGhostExternalId,
   buildInlineCompletenessClaims,
   buildPlacesSearchBody,
@@ -960,10 +961,10 @@ async function resolveCandidateToPlace(
     }
   }
 
-  // No google_place_id → search by the bare name with structured locality.
+  // No google_place_id → search by name and any explicit branch address.
   // `city` outranks device/home bias in places-search; `area` still refines
   // same-name venues and ASR-denoised names without double-welding locality.
-  const query = candidate.name;
+  const query = buildCandidatePlacesQuery(candidate);
   try {
     const { candidates: results, typeRejected, rejectedCandidate } =
       await callImportPlacesSearch(
