@@ -440,6 +440,9 @@ serve(async (req) => {
             const { data: reviewRows, error: reviewsErr } = await supabase
                 .rpc('get_public_reviews_page', {
                     p_restaurant_id: resolvedId,
+                    // Both-direction block filter lives in the RPC and fails
+                    // closed without a viewer — service role bypasses RLS here.
+                    p_viewer: user.id,
                     p_limit: pageSize + 1,
                     p_cursor_date: cursor?.sort_date ?? null,
                     p_cursor_id: cursor?.id ?? null,
@@ -1347,6 +1350,7 @@ serve(async (req) => {
             const { data: publicReviewRows, error: publicReviewsErr } = await supabase
                 .rpc('get_public_reviews', {
                     p_restaurant_id: resolvedRestaurantId,
+                    p_viewer: user.id,
                     p_limit: 20,
                 });
             if (publicReviewsErr) throw publicReviewsErr;
