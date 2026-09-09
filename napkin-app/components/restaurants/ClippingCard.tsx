@@ -46,11 +46,23 @@ function hostGlyph(source: ClippingCardData['source']): Glyph {
     return 'link-outline';
 }
 
-/** Lowercase "last {month}" — reuses this page's relationshipLine date grammar. */
-function lastMonth(dateStr: string): string {
+/**
+ * Lowercase relative month for the attribution row. Grammar, relative to `now`:
+ *   - same month        → `this september`
+ *   - previous month    → `last august`   (crosses the year boundary: jan → `last december`)
+ *   - earlier this year → `june`
+ *   - any other year    → `march 2025`
+ * `now` is injectable so tests stay hermetic (never calendar-dependent).
+ */
+export function clipDateLabel(dateStr: string, now: Date = new Date()): string {
     const d = new Date(dateStr);
     if (Number.isNaN(d.getTime())) return '';
-    return `last ${d.toLocaleDateString('en-US', { month: 'long' }).toLowerCase()}`;
+    const month = d.toLocaleDateString('en-US', { month: 'long' }).toLowerCase();
+    const monthsAgo = (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
+    if (monthsAgo === 0) return `this ${month}`;
+    if (monthsAgo === 1) return `last ${month}`;
+    if (d.getFullYear() === now.getFullYear()) return month;
+    return `${month} ${d.getFullYear()}`;
 }
 
 interface Props {
@@ -75,7 +87,7 @@ export function ClippingCard({ clip }: Props) {
     // @handle row: only when a creator handle exists AND this isn't a video-type.
     const handle = !isVideoType && source.author_handle ? source.author_handle : null;
 
-    const dateLabel = lastMonth(clip.created_at);
+    const dateLabel = clipDateLabel(clip.created_at);
     const glyph = hostGlyph(source);
 
     const url = source.url;
