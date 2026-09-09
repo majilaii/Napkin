@@ -44,6 +44,9 @@
 --                                              (list_entries.added_by is ON DELETE SET NULL from auth.users: the SET NULL is an UPDATE)
 --   cascade_delete_post_interactions           legacy twin of the _extended function; not attached to any trigger today,
 --                                              flipped so re-attaching it can never reintroduce the defect
+--   sync_post_counts                           legacy twin of sync_post_counts_and_top_emojis; no trigger, and 20260907190000
+--                                              never pinned its search_path either, so re-attaching it would bring back BOTH
+--                                              halves of the incident. Flipped and pinned for the same reason as the twin above.
 --
 -- Deliberately NOT changed:
 --   fn_entries_mirror_table_id_to_join  Its trigger is AFTER INSERT OR UPDATE OF table_id, so no statement on the
@@ -60,20 +63,24 @@
 --   restaurants_bump_completeness_version, restaurant_completeness_*): they only inspect NEW/OLD and RAISE; no
 --   table access, so no privilege is needed. The two append-only guards already let FK cascades through at
 --   pg_trigger_depth() > 1.
---   sync_post_counts: dead legacy function, no trigger, left as is.
 --
 -- Behaviour change for non-GoTrue callers: a trigger body now runs as the
--- table owner instead of `authenticated`. For these five that is strictly the
--- intended semantics (an entry's reactions and replies from OTHER users must
--- be swept when the entry goes, whoever deletes it; counters and list
--- timestamps are derived data, not caller-authorised writes); today an
+-- table owner instead of `authenticated`. For the four live functions that is
+-- strictly the intended semantics (an entry's reactions and replies from OTHER
+-- users must be swept when the entry goes, whoever deletes it; counters and
+-- list timestamps are derived data, not caller-authorised writes); today an
 -- RLS-filtered caller could leave orphans behind. None of them takes
 -- arguments, returns data, or enforces an authorisation policy (contrast the
 -- mirror trigger above), and a function returning `trigger` cannot be called
--- directly ("trigger functions can only be called as triggers"), so SECURITY
--- DEFINER adds no callable surface. search_path stays pinned to
--- `public, pg_temp` from 20260907190000; ALTER ... SECURITY DEFINER does not
--- touch it.
+-- directly ("trigger functions can only be called as triggers"). The one
+-- remaining surface is CREATE TRIGGER: a role that owns a table could attach
+-- a definer sweep to it. So, matching the trigger-function idiom of
+-- 20260716121000 (trg_tables_account_deletion_guard), EXECUTE is revoked from
+-- PUBLIC / anon / authenticated and granted to service_role. PostgreSQL checks
+-- EXECUTE on a trigger function only at CREATE TRIGGER time, never when the
+-- trigger fires (trigger.c ExecCallTriggerFunc performs no ACL check), so
+-- this cannot affect GoTrue's cascade or any caller's writes.
+-- search_path is re-pinned to `public, pg_temp` in the same loop.
 --
 -- Replay-from-zero: pure DDL against functions created earlier in the chain,
 -- guarded with to_regprocedure (TYPES ONLY in the signature) so a chain that
@@ -90,7 +97,8 @@ declare
         'public.cascade_delete_post_interactions()',
         'public.sync_post_counts_and_top_emojis()',
         'public.sync_comment_like_count()',
-        'public.touch_list_updated_at()'
+        'public.touch_list_updated_at()',
+        'public.sync_post_counts()'
     ];
     v_flipped integer := 0;
 begin
@@ -101,6 +109,11 @@ begin
             -- the caller's path. Re-pin in case a future CREATE OR REPLACE of
             -- one of these bodies drops the config.
             execute format('alter function %s set search_path = public, pg_temp', v_target);
+            -- Only CREATE TRIGGER consults EXECUTE on a trigger function; firing
+            -- never does. Keep the definer sweeps attachable by the service
+            -- role and the owner only.
+            execute format('revoke all on function %s from public, anon, authenticated', v_target);
+            execute format('grant execute on function %s to service_role', v_target);
             v_flipped := v_flipped + 1;
         else
             raise notice 'security definer: % not present; skipped', v_target;

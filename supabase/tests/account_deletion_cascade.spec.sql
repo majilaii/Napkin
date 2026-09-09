@@ -9,18 +9,20 @@
 -- fire_triggers=false, so they fire at the end of the OUTER statement as the
 -- session user, supabase_auth_admin. That role has no grant on public tables,
 -- so a SECURITY INVOKER trigger body fails with 42501 and the whole delete
--- aborts. 20260909120000 makes the six table-touching trigger functions on
--- that path SECURITY DEFINER.
+-- aborts. 20260909120000 makes the four table-touching trigger functions that
+-- fire on that path (plus two dead legacy twins) SECURITY DEFINER.
 --
 -- Test 0 proves the spec bites: with the observed function flipped back to
--- SECURITY INVOKER inside a savepoint, the delete raises insufficient_privilege.
--- Tests 1-6 run the delete under the migrated definitions and assert every
--- path the migration names: post interactions swept (1), reaction/reply counts
+-- SECURITY INVOKER inside a savepoint, the delete raises insufficient_privilege
+-- naming post_reactions. Tests 1-6 run the delete under the migrated
+-- definitions and assert every path the migration names: post interactions
+-- swept on the entries AND table_shares branches (1), reaction/reply counts
 -- and comment like counts resynced on the surviving user's rows (2, 3), list
--- touch on the SET NULL of list_entries.added_by (4), the SET NULL of
--- entries.supper_id on another user's Table-shared entry when the deleted
--- host's supper cascades, leaving that entry and its entry_tables mirror
--- intact (5), and the auth row itself gone (6).
+-- touch on the SET NULL of list_entries.added_by and on the DELETE of the
+-- deleted user's own list spots (4), the SET NULL of entries.supper_id on
+-- another user's Table-shared entry when the deleted host's supper cascades,
+-- leaving that entry and its entry_tables mirror intact (5), and the auth row
+-- itself gone (6).
 --
 -- Runs after all repository migrations, against the CI replay database, and
 -- needs a SUPERUSER session: it SET ROLEs to supabase_auth_admin and grants
@@ -84,9 +86,15 @@ INSERT INTO public.entries (id, user_id, restaurant_id, rating, content, visibil
    'Table entry by the surviving peer at the deleted host''s supper', 'table',
    'ad0d0000-0000-0000-0000-00000000000d', 'ad0e0000-0000-0000-0000-00000000000e');
 
+-- A's Table share (table_shares.author_id cascades via profiles) with B's
+-- reaction on it: the table_shares branch of the interactions sweep.
+INSERT INTO public.table_shares (id, table_id, author_id, restaurant_id)
+VALUES ('ad040000-0000-0000-0000-0000000000e1', 'ad0d0000-0000-0000-0000-00000000000d', 'ad0a0000-0000-0000-0000-00000000000a', 'ad0c0000-0000-0000-0000-00000000000c');
+
 INSERT INTO public.post_reactions (target_type, target_id, user_id, emoji, scope) VALUES
   ('entry', 'ad010000-0000-0000-0000-0000000000a1', 'ad0b0000-0000-0000-0000-00000000000b', '❤️', 'public'),
-  ('entry', 'ad010000-0000-0000-0000-0000000000b1', 'ad0a0000-0000-0000-0000-00000000000a', '❤️', 'public');
+  ('entry', 'ad010000-0000-0000-0000-0000000000b1', 'ad0a0000-0000-0000-0000-00000000000a', '❤️', 'public'),
+  ('table_share', 'ad040000-0000-0000-0000-0000000000e1', 'ad0b0000-0000-0000-0000-00000000000b', '❤️', 'table');
 
 INSERT INTO public.post_comments (id, target_type, target_id, user_id, body, scope) VALUES
   ('ad020000-0000-0000-0000-0000000000c1', 'entry', 'ad010000-0000-0000-0000-0000000000a1', 'ad0b0000-0000-0000-0000-00000000000b', 'Reply by B on A''s entry', 'public'),
@@ -108,6 +116,14 @@ ALTER TABLE public.lists DISABLE TRIGGER lists_self_touch;
 UPDATE public.lists SET updated_at = '2020-01-01T00:00:00Z' WHERE id = 'ad030000-0000-0000-0000-0000000000d1';
 ALTER TABLE public.lists ENABLE TRIGGER lists_self_touch;
 
+-- A's own list with a spot: lists.owner_id cascades via profiles, list_entries
+-- cascades from the list, and touch_list_updated_at then fires on the DELETE
+-- branch (the SET NULL above exercises its UPDATE branch).
+INSERT INTO public.lists (id, owner_id, title, privacy)
+VALUES ('ad030000-0000-0000-0000-0000000000d2', 'ad0a0000-0000-0000-0000-00000000000a', 'Deleted list', 'private');
+INSERT INTO public.list_entries (list_id, restaurant_id, added_by)
+VALUES ('ad030000-0000-0000-0000-0000000000d2', 'ad0c0000-0000-0000-0000-00000000000c', 'ad0a0000-0000-0000-0000-00000000000a');
+
 -- Seed sanity: the count-sync triggers ran on insert, so the surviving rows
 -- carry the counters the deletion must later bring back down.
 DO $seed$
@@ -118,6 +134,8 @@ BEGIN
     'seed: EB.public_reply_count should be 1';
   ASSERT (SELECT like_count FROM public.post_comments WHERE id = 'ad020000-0000-0000-0000-0000000000c2') = 1,
     'seed: CB2.like_count should be 1';
+  ASSERT (SELECT reaction_count FROM public.table_shares WHERE id = 'ad040000-0000-0000-0000-0000000000e1') = 1,
+    'seed: the Table share''s reaction_count should be 1';
   ASSERT EXISTS (SELECT 1 FROM public.entry_tables WHERE entry_id = 'ad010000-0000-0000-0000-0000000000b2'
                    AND table_id = 'ad0d0000-0000-0000-0000-00000000000d'),
     'seed: EBT should be mirrored into entry_tables';
@@ -148,6 +166,12 @@ BEGIN
   RAISE EXCEPTION 'TEST 0 FAILED: delete succeeded under SECURITY INVOKER; the spec no longer reproduces the defect';
 EXCEPTION
   WHEN insufficient_privilege THEN
+    -- The only INVOKER body left on the cascade is the one flipped back
+    -- above, and its first statement is the post_reactions sweep. Any other
+    -- 42501 (auth.users itself, a schema) would be a harness problem, not
+    -- the defect.
+    ASSERT SQLERRM LIKE '%post_reactions%',
+      'TEST 0: 42501 came from somewhere other than the trigger under test: ' || SQLERRM;
     RAISE NOTICE 'TEST 0 PASSED: SECURITY INVOKER reproduces 42501 (%)', SQLERRM;
 END;
 $t0$;
@@ -180,7 +204,11 @@ BEGIN
     'TEST 1: reactions on A''s entry must be swept';
   ASSERT NOT EXISTS (SELECT 1 FROM public.post_comments WHERE target_id = 'ad010000-0000-0000-0000-0000000000a1'),
     'TEST 1: replies on A''s entry must be swept';
-  RAISE NOTICE 'TEST 1 PASSED: post interactions on the deleted user''s entry swept';
+  ASSERT NOT EXISTS (SELECT 1 FROM public.table_shares WHERE id = 'ad040000-0000-0000-0000-0000000000e1'),
+    'TEST 1: A''s Table share must cascade';
+  ASSERT NOT EXISTS (SELECT 1 FROM public.post_reactions WHERE target_id = 'ad040000-0000-0000-0000-0000000000e1'),
+    'TEST 1: reactions on A''s Table share must be swept (table_shares branch)';
+  RAISE NOTICE 'TEST 1 PASSED: post interactions on the deleted user''s entry and Table share swept';
 
   -- 2. sync_post_counts_and_top_emojis: A's reaction on B's entry cascaded
   --    away and B's counters were resynced.
@@ -208,7 +236,11 @@ BEGIN
     'TEST 4: list_entries.added_by must be set to NULL';
   ASSERT (SELECT updated_at FROM public.lists WHERE id = 'ad030000-0000-0000-0000-0000000000d1') > '2020-01-01T00:00:00Z',
     'TEST 4: the list must be touched by the SET NULL update';
-  RAISE NOTICE 'TEST 4 PASSED: list touched on added_by SET NULL';
+  ASSERT NOT EXISTS (SELECT 1 FROM public.lists WHERE id = 'ad030000-0000-0000-0000-0000000000d2'),
+    'TEST 4: A''s own list must cascade';
+  ASSERT NOT EXISTS (SELECT 1 FROM public.list_entries WHERE list_id = 'ad030000-0000-0000-0000-0000000000d2'),
+    'TEST 4: A''s list spots must cascade (touch trigger DELETE branch)';
+  RAISE NOTICE 'TEST 4 PASSED: list touched on added_by SET NULL; owned list cascaded';
 
   -- 5. The supper cascade UPDATEs another user's Table-shared entry
   --    (supper_id SET NULL) through the entries BEFORE UPDATE triggers; the
