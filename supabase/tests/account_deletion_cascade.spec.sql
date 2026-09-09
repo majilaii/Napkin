@@ -21,11 +21,15 @@
 -- the deleted host's supper updated without the entry_tables mirror insert
 -- failing (5), and the auth row itself gone (6).
 --
--- Runs after all repository migrations, as the local superuser, against the
--- CI replay database. Everything is rolled back at the end.
+-- Runs after all repository migrations, against the CI replay database, and
+-- needs a SUPERUSER session: it SET ROLEs to supabase_auth_admin and grants
+-- on auth.users. In the Supabase image that is `supabase_admin`, not
+-- `postgres` (which is a plain CREATEROLE member of the API roles and gets
+-- "permission denied to set role"). Everything is rolled back at the end.
 --
 -- Run with:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/account_deletion_cascade.spec.sql
+--   psql "postgresql://supabase_admin:postgres@127.0.0.1:54329/postgres" \
+--     -v ON_ERROR_STOP=1 -f supabase/tests/account_deletion_cascade.spec.sql
 
 BEGIN;
 
