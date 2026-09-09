@@ -17,9 +17,10 @@
 -- Tests 1-6 run the delete under the migrated definitions and assert every
 -- path the migration names: post interactions swept (1), reaction/reply counts
 -- and comment like counts resynced on the surviving user's rows (2, 3), list
--- touch on the SET NULL of list_entries.added_by (4), Table-shared entry at
--- the deleted host's supper updated without the entry_tables mirror insert
--- failing (5), and the auth row itself gone (6).
+-- touch on the SET NULL of list_entries.added_by (4), the SET NULL of
+-- entries.supper_id on another user's Table-shared entry when the deleted
+-- host's supper cascades, leaving that entry and its entry_tables mirror
+-- intact (5), and the auth row itself gone (6).
 --
 -- Runs after all repository migrations, against the CI replay database, and
 -- needs a SUPERUSER session: it SET ROLEs to supabase_auth_admin and grants
@@ -65,8 +66,9 @@ INSERT INTO public.table_members (table_id, member_id, role) VALUES
   ('ad0d0000-0000-0000-0000-00000000000d', 'ad0a0000-0000-0000-0000-00000000000a', 'member');
 
 -- A hosts a supper; B's Table-shared entry sits at it (entries.supper_id is
--- ON DELETE SET NULL, and the SET NULL is an UPDATE that fires the AFTER
--- UPDATE entry_tables mirror trigger).
+-- ON DELETE SET NULL, so the host's deletion UPDATEs another user's entry
+-- through the BEFORE UPDATE triggers on entries; the entry_tables mirror
+-- trigger is UPDATE OF table_id and must NOT fire here).
 INSERT INTO public.suppers (id, restaurant_id, host_user_id)
 VALUES ('ad0e0000-0000-0000-0000-00000000000e', 'ad0c0000-0000-0000-0000-00000000000c', 'ad0a0000-0000-0000-0000-00000000000a');
 
@@ -93,13 +95,18 @@ INSERT INTO public.post_comments (id, target_type, target_id, user_id, body, sco
 INSERT INTO public.post_comment_likes (comment_id, user_id)
 VALUES ('ad020000-0000-0000-0000-0000000000c2', 'ad0a0000-0000-0000-0000-00000000000a');
 
--- B's list with a spot A added. updated_at is pinned in the past so the
--- touch trigger's now() is observable inside this transaction.
-INSERT INTO public.lists (id, owner_id, title, privacy, updated_at)
-VALUES ('ad030000-0000-0000-0000-0000000000d1', 'ad0b0000-0000-0000-0000-00000000000b', 'Peer list', 'public', '2020-01-01T00:00:00Z');
+-- B's list with a spot A added. updated_at is then pinned in the past so the
+-- touch trigger's now() is observable inside this transaction. The pin has to
+-- go around lists_self_touch (BEFORE UPDATE on lists overwrites updated_at with
+-- now() on every update, including this one), so that trigger is disabled for
+-- the one backdating statement and re-enabled before the delete under test.
+INSERT INTO public.lists (id, owner_id, title, privacy)
+VALUES ('ad030000-0000-0000-0000-0000000000d1', 'ad0b0000-0000-0000-0000-00000000000b', 'Peer list', 'public');
 INSERT INTO public.list_entries (list_id, restaurant_id, added_by)
 VALUES ('ad030000-0000-0000-0000-0000000000d1', 'ad0c0000-0000-0000-0000-00000000000c', 'ad0a0000-0000-0000-0000-00000000000a');
+ALTER TABLE public.lists DISABLE TRIGGER lists_self_touch;
 UPDATE public.lists SET updated_at = '2020-01-01T00:00:00Z' WHERE id = 'ad030000-0000-0000-0000-0000000000d1';
+ALTER TABLE public.lists ENABLE TRIGGER lists_self_touch;
 
 -- Seed sanity: the count-sync triggers ran on insert, so the surviving rows
 -- carry the counters the deletion must later bring back down.
@@ -114,6 +121,10 @@ BEGIN
   ASSERT EXISTS (SELECT 1 FROM public.entry_tables WHERE entry_id = 'ad010000-0000-0000-0000-0000000000b2'
                    AND table_id = 'ad0d0000-0000-0000-0000-00000000000d'),
     'seed: EBT should be mirrored into entry_tables';
+  ASSERT (SELECT updated_at FROM public.lists WHERE id = 'ad030000-0000-0000-0000-0000000000d1') = '2020-01-01T00:00:00Z',
+    'seed: the list backdate must stick (lists_self_touch was disabled for it)';
+  ASSERT (SELECT tgenabled FROM pg_trigger WHERE tgrelid = 'public.lists'::regclass AND tgname = 'lists_self_touch') = 'O',
+    'seed: lists_self_touch must be re-enabled before the delete under test';
   ASSERT (SELECT prosecdef FROM pg_proc WHERE oid = 'public.cascade_delete_post_interactions_extended()'::regprocedure),
     'seed: cascade_delete_post_interactions_extended must be SECURITY DEFINER after 20260909120000';
 END;
@@ -199,13 +210,15 @@ BEGIN
     'TEST 4: the list must be touched by the SET NULL update';
   RAISE NOTICE 'TEST 4 PASSED: list touched on added_by SET NULL';
 
-  -- 5. fn_entries_mirror_table_id_to_join: the supper is gone, B's Table
-  --    entry lost its supper_id, and the AFTER UPDATE mirror insert
-  --    (ON CONFLICT DO NOTHING) did not fail.
+  -- 5. The supper cascade UPDATEs another user's Table-shared entry
+  --    (supper_id SET NULL) through the entries BEFORE UPDATE triggers; the
+  --    entry survives with its table binding and entry_tables mirror intact.
   ASSERT NOT EXISTS (SELECT 1 FROM public.suppers WHERE id = 'ad0e0000-0000-0000-0000-00000000000e'),
     'TEST 5: the deleted host''s supper must cascade';
   ASSERT (SELECT supper_id FROM public.entries WHERE id = 'ad010000-0000-0000-0000-0000000000b2') IS NULL,
     'TEST 5: EBT.supper_id must be set to NULL';
+  ASSERT (SELECT table_id FROM public.entries WHERE id = 'ad010000-0000-0000-0000-0000000000b2') = 'ad0d0000-0000-0000-0000-00000000000d',
+    'TEST 5: EBT must keep its table_id';
   ASSERT EXISTS (SELECT 1 FROM public.entry_tables WHERE entry_id = 'ad010000-0000-0000-0000-0000000000b2'
                    AND table_id = 'ad0d0000-0000-0000-0000-00000000000d'),
     'TEST 5: EBT must keep its entry_tables mirror';

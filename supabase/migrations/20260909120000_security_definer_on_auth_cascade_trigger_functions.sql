@@ -21,7 +21,7 @@
 -- second half.
 --
 -- Fix: make every SECURITY INVOKER trigger function that touches ANOTHER table
--- and sits on the auth.users delete cascade SECURITY DEFINER. They are owned by
+-- and actually fires on the auth.users delete cascade SECURITY DEFINER. They are owned by
 -- `postgres`, which owns the tables, so the bodies run with the owner's
 -- privileges (and, RLS being enabled but not forced, without RLS filtering)
 -- regardless of whether the statement was started by GoTrue, PostgREST, or the
@@ -42,18 +42,20 @@
 --   touch_list_updated_at                      AFTER INSERT/UPDATE/DELETE on list_entries (+ BEFORE UPDATE on lists)
 --                                              -> UPDATE lists
 --                                              (list_entries.added_by is ON DELETE SET NULL from auth.users: the SET NULL is an UPDATE)
---   fn_entries_mirror_table_id_to_join         AFTER INSERT/UPDATE on entries
---                                              -> INSERT entry_tables ... ON CONFLICT DO NOTHING
---                                              (entries.supper_id is ON DELETE SET NULL from suppers, which cascades from the deleted host;
---                                               a Table-shared entry by ANOTHER user at that supper is UPDATEd, the trigger fires, and even
---                                               a DO NOTHING insert needs INSERT privilege)
 --   cascade_delete_post_interactions           legacy twin of the _extended function; not attached to any trigger today,
 --                                              flipped so re-attaching it can never reintroduce the defect
 --
 -- Deliberately NOT changed:
---   set_post_interaction_table_id  BEFORE INSERT only; never on a delete path. It reads entries / entry_tables
---                                  under the caller's RLS to fill table_id, and widening that read is a
---                                  visibility change this fix does not need.
+--   fn_entries_mirror_table_id_to_join  Its trigger is AFTER INSERT OR UPDATE OF table_id, so no statement on the
+--                                       auth.users cascade fires it (the cascade never writes entries.table_id; the
+--                                       suppers -> entries.supper_id SET NULL is an UPDATE of a different column).
+--                                       It MUST stay SECURITY INVOKER: an authenticated caller may PATCH their own
+--                                       entries.table_id, and the mirror insert is what runs the entry_tables_insert
+--                                       policy (author AND is_table_member). As a definer that membership gate would
+--                                       be bypassed and a non-member could attach an entry to any Table.
+--   set_post_interaction_table_id       BEFORE INSERT only; never on a delete path. It reads entries / entry_tables
+--                                       under the caller's RLS to fill table_id, and widening that read is a
+--                                       visibility change this fix does not need.
 --   the BEFORE guards (notifications_lock_columns, enforce_table_list_private, tg_critic_reviews_touch_updated_at,
 --   restaurants_bump_completeness_version, restaurant_completeness_*): they only inspect NEW/OLD and RAISE; no
 --   table access, so no privilege is needed. The two append-only guards already let FK cascades through at
@@ -61,14 +63,17 @@
 --   sync_post_counts: dead legacy function, no trigger, left as is.
 --
 -- Behaviour change for non-GoTrue callers: a trigger body now runs as the
--- table owner instead of `authenticated`. For these six that is strictly the
+-- table owner instead of `authenticated`. For these five that is strictly the
 -- intended semantics (an entry's reactions and replies from OTHER users must
--- be swept when the entry goes, whoever deletes it); today an RLS-filtered
--- caller could leave orphans behind. None of them takes arguments or returns
--- data, and a function returning `trigger` cannot be called directly
--- ("trigger functions can only be called as triggers"), so SECURITY DEFINER
--- adds no callable surface. search_path stays pinned to `public, pg_temp`
--- from 20260907190000; ALTER ... SECURITY DEFINER does not touch it.
+-- be swept when the entry goes, whoever deletes it; counters and list
+-- timestamps are derived data, not caller-authorised writes); today an
+-- RLS-filtered caller could leave orphans behind. None of them takes
+-- arguments, returns data, or enforces an authorisation policy (contrast the
+-- mirror trigger above), and a function returning `trigger` cannot be called
+-- directly ("trigger functions can only be called as triggers"), so SECURITY
+-- DEFINER adds no callable surface. search_path stays pinned to
+-- `public, pg_temp` from 20260907190000; ALTER ... SECURITY DEFINER does not
+-- touch it.
 --
 -- Replay-from-zero: pure DDL against functions created earlier in the chain,
 -- guarded with to_regprocedure (TYPES ONLY in the signature) so a chain that
@@ -85,8 +90,7 @@ declare
         'public.cascade_delete_post_interactions()',
         'public.sync_post_counts_and_top_emojis()',
         'public.sync_comment_like_count()',
-        'public.touch_list_updated_at()',
-        'public.fn_entries_mirror_table_id_to_join()'
+        'public.touch_list_updated_at()'
     ];
     v_flipped integer := 0;
 begin
