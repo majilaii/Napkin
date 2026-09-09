@@ -118,11 +118,16 @@ ALTER TABLE public.lists ENABLE TRIGGER lists_self_touch;
 
 -- A's own list with a spot: lists.owner_id cascades via profiles, list_entries
 -- cascades from the list, and touch_list_updated_at then fires on the DELETE
--- branch (the SET NULL above exercises its UPDATE branch).
+-- branch (the SET NULL above exercises its UPDATE branch). added_by is left
+-- NULL on purpose: a row inserted in the SAME transaction has its FKs
+-- re-checked on any UPDATE (ri_triggers.c fires the check when the old tuple
+-- is ours, keys equal or not), so a SET NULL of added_by here would re-check
+-- list_id against a list the cascade has already removed and fail with
+-- list_entries_list_id_fkey. Prod rows are never that young.
 INSERT INTO public.lists (id, owner_id, title, privacy)
 VALUES ('ad030000-0000-0000-0000-0000000000d2', 'ad0a0000-0000-0000-0000-00000000000a', 'Deleted list', 'private');
-INSERT INTO public.list_entries (list_id, restaurant_id, added_by)
-VALUES ('ad030000-0000-0000-0000-0000000000d2', 'ad0c0000-0000-0000-0000-00000000000c', 'ad0a0000-0000-0000-0000-00000000000a');
+INSERT INTO public.list_entries (list_id, restaurant_id)
+VALUES ('ad030000-0000-0000-0000-0000000000d2', 'ad0c0000-0000-0000-0000-00000000000c');
 
 -- Seed sanity: the count-sync triggers ran on insert, so the surviving rows
 -- carry the counters the deletion must later bring back down.
