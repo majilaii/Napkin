@@ -178,6 +178,15 @@ jobs:
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/undated_visit_merge.spec.sql
+          # Account deletion issued the way GoTrue issues it (as
+          # supabase_auth_admin) must sweep clean; AFTER triggers on the
+          # cascade run as that role, so their functions must be definers.
+          # Connects as supabase_admin, the image's superuser: the local
+          # `postgres` role is not a superuser and cannot SET ROLE to
+          # supabase_auth_admin ("permission denied to set role").
+          psql "postgresql://supabase_admin:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 \
+            -f supabase/tests/account_deletion_cascade.spec.sql
 
       - name: Assert image-moderation multi-session invariants
         if: steps.changes.outputs.run == 'true'
