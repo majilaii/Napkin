@@ -373,7 +373,7 @@ Workflow lives in `.kanban/`:
 - `review/` → implementation done, awaiting review
 - `done/` → shipped
 
-Use the project slash commands: `/project:board`, `/project:spec TICKET-NNN`, `/project:start TICKET-NNN`, `/project:review`.
+Use the slash commands: `/board`, `/spec TICKET-NNN`, `/start TICKET-NNN`, `/review`.
 
 ## Deploy doctrine — auto-deploy with smoke + auto-revert (locked 2026-04-30)
 
