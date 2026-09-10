@@ -373,7 +373,7 @@ Workflow lives in `.kanban/`:
 - `review/` → implementation done, awaiting review
 - `done/` → shipped
 
-Use the project slash commands: `/project:board`, `/project:spec TICKET-NNN`, `/project:start TICKET-NNN`, `/project:review`.
+Use the slash commands: `/board`, `/spec TICKET-NNN`, `/start TICKET-NNN`, `/review`.
 
 ## Deploy doctrine — auto-deploy with smoke + auto-revert (locked 2026-04-30)
 
@@ -440,7 +440,11 @@ When a migration adds a join table, the blast-radius checklist (item 1 above) MU
 
 ### Dual-review protocol
 
-For high-stakes work, every gated phase (spec, architecture, build) gets BOTH a Claude review and a Codex review. Two model architectures, independent failure modes — catches what a single reviewer misses. Single-reviewer is fine for routine adds.
+**This is a stricter project gate and the September 10, 2026 shared workflow explicitly preserves it** (`~/.codex/orchestrator-playbook.md` names Napkin as still requiring review at gated spec, architecture and build phases). Where the global default would allow a single reviewer, this section wins for this repo.
+
+For high-stakes work, every gated phase (spec, architecture, build) gets BOTH a Claude review and a Codex review. Two model architectures, independent failure modes — catches what a single reviewer misses. Single-reviewer is fine for routine adds; a trivial reversible copy or cosmetic edit may use owner review.
+
+Reviewer independence is about context, not model identity: the reviewer must not have built or fixed the change. A separate architect or product-designer agent is optional under the shared workflow — the task owner may write the spec or design directly — but the gated *reviews* below remain required for triggered work.
 
 **Triggers** (any one is enough — applies at spec, architecture, AND build phases):
 
@@ -459,13 +463,19 @@ For high-stakes work, every gated phase (spec, architecture, build) gets BOTH a 
 
 | Phase | Claude reviewer | Codex pass | What Codex looks for |
 |-------|------------------|--------------|------------------------|
-| Spec (`/project:spec`) | (n/a, product-designer writes spec) | Sanity-check spec | Missing acceptance criteria, ambiguous scope statements, security/data-integrity gaps |
-| Architecture (`/project:start` Phase 1) | (n/a, architect writes design) | Adversarial design review | Hidden coupling, lazy-import landmines, scope creep, lock-in choices |
-| Build (`/project:start` Phase 3) | code-reviewer subagent | `/codex:adversarial-review` | Runtime landmines, swallowed errors, broken callers, test bypass |
+| Spec (`/spec`) | (n/a, the spec's author is not its reviewer) | Sanity-check spec | Missing acceptance criteria, ambiguous scope statements, security/data-integrity gaps |
+| Architecture (design stage of `/start`) | (n/a, the design's author is not its reviewer) | Adversarial design review | Hidden coupling, lazy-import landmines, scope creep, lock-in choices |
+| Build (review stage of `/start`) | code-reviewer subagent | Codex adversarial review | Runtime landmines, swallowed errors, broken callers, test bypass |
 
-**Reconciliation:** if either reviewer returns FAIL, the phase fails. PASS from one + PASS-WITH-NITS from the other = pass with nits documented. Conflicting findings on the same code path → orchestrator does a third pass.
+**Reconciliation:** if either reviewer returns FAIL, the phase fails. PASS from one + PASS-WITH-NITS from the other = pass with nits documented. Conflicting findings on the same code path → the task owner investigates and resolves them. Reuse the same reviewer for delta rounds and dispose of each prior finding explicitly; review the final changed revision rather than adding a summary-only round. A missing or failed reviewer is never approval.
 
-**Invocation:** Codex runs via `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task` (for spec/arch sanity) or `adversarial-review` (for build review). See `~/.claude/commands/spec.md`, `~/.claude/commands/start.md`, `~/.claude/commands/review.md` for the exact invocation per phase.
+**Invocation:** use the installed codex-loop skill, or the app-bundled binary directly:
+
+```
+/Applications/ChatGPT.app/Contents/Resources/codex exec -s read-only -m gpt-6-astra -c model_reasoning_effort="xhigh" --skip-git-repo-check "$PROMPT"
+```
+
+Always pass an explicit sandbox (`-s read-only` for reviews) — the global Codex config default is `danger-full-access`. The old `codex-companion.mjs` path is **stale**: the standalone CLI and the plugin cannot run GPT-6 Astra at any version (see the `codex-runtime-broken` project memory). See `~/.claude/commands/spec.md`, `~/.claude/commands/start.md`, `~/.claude/commands/review.md` for the current per-phase flow.
 
 ## Feature map and UI verification
 

@@ -10,90 +10,32 @@ tags: []
 
 # [Title]
 
-## Problem
-[What problem does this solve? Who has it? Why does it matter?]
+## Outcome
+[Problem, intended behavior and why it matters.]
 
-## Notes
-[Free-form brainstorming notes, context, links, whatever]
+## Done when
+- [ ] [An observable acceptance check.]
 
----
-<!-- Everything below this line is populated by agents as the ticket progresses -->
+## Constraints
+[Scope boundaries, material decisions and relevant context links; omit irrelevant detail.]
 
-## Product Spec
-<!-- Filled by product-designer agent when ticket moves to 'ready' -->
+## Progress and result
+[Current state; remaining work, next step or blocker.]
 
-### User Stories
-- 
+<!-- Append dated evidence as work proceeds: actual checks/artifact links;
+     review phase, reviewer, exact revision, Verdict: and finding dispositions;
+     completion date, required release and cleanup evidence. Preserve prior records.
+     Add Technical design only when useful or required. Napkin migrations MUST
+     add ## Notes / Blast Radius with the CLAUDE.md checklist before build.
+     Preserve required spec/architecture/build reviews. No empty review rounds.
+     The UI subsection below is required for UI tasks; omit it for non-UI tasks. -->
 
-### Acceptance Criteria
-- [ ] 
-
-### UX Decisions
-- 
-
-### Out of Scope
-- 
-
-### Open Questions
-- 
-
----
-
-## Technical Design
-<!-- Filled by architect agent -->
-
-### Approach
-
-
-### Architecture Decisions
-- 
-
-### File Changes
-- 
-
-### Implementation Order
-1. 
-
-### Risks
-- 
-
----
-
-## Build Log
-<!-- Filled by builder agent -->
-
-### Files Changed
-- 
-
-### Tests
-- 
-
-### Builder Questions
-- 
-
----
-
-## Review History
-<!-- Filled by code-reviewer agent -->
-
-### Review 1
-```
-Date: 
-Verdict: 
-Score: X PASS / X WARN / X FAIL
-```
-
-### Review 2 (if needed)
-```
-Date: 
-Verdict: 
-Score: 
-```
-
----
-
-## Completion
-<!-- Filled when ticket moves to done -->
-- Completed: YYYY-MM-DD
-- Final verdict: 
-- Notes: 
+### Verification (mandatory for any UI-touching ticket)
+<!-- Tests passing ≠ working. Drive every changed state in the running app
+     (iOS simulator dev client), screenshot each, read-only against live data.
+     Write paths verify in tests, never by clicking production.
+     See FEATURE-MAP.md § Verification protocol. Reviewers reject UI tickets
+     with an empty table. FEATURE-MAP.md updated in the same PR. -->
+| State driven | Screenshot | Result |
+|---|---|---|
+| | | |
