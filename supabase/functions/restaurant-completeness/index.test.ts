@@ -1,6 +1,9 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import type { CompletenessWorkerBackend } from "./_worker.ts";
-import { createRestaurantCompletenessHandler } from "./index.ts";
+import {
+  createRestaurantCompletenessHandler,
+  isTransientTransportError,
+} from "./index.ts";
 
 const OWNER = "00000000-0000-4000-8000-000000000001";
 const RESTAURANT = "00000000-0000-4000-8000-000000000002";
@@ -385,4 +388,68 @@ Deno.test("enabled deploy gate validates UUIDs and invokes the same backend gate
     import_nonce: NONCE,
   });
   assertEquals((await response.json()).data.state, "verified");
+});
+
+
+/**
+ * 2026-09-12: a single sweep RPC took a 504 from the gateway at 06:05 UTC, the
+ * handler reported it, and Sentry paged the founder — while curl's own retry
+ * got a 200 one second later and the cron run stayed green. A blip that heals
+ * itself must not wake anyone, or the alert stops meaning anything.
+ */
+Deno.test("transient gateway failures return a retryable 503 instead of reporting", async () => {
+  const handler = createRestaurantCompletenessHandler({
+    env: environment({ COMPLETENESS_WORKER_ENABLED: "true" }),
+    createSupabase: () => fakeSupabase(),
+    createBackend: () => ({} as CompletenessWorkerBackend),
+    drain: () => {
+      throw new Error("Gateway Timeout");
+    },
+  });
+  const response = await handler(request("drain", {}, cronHeaders()));
+  // reportError is reached only on the 500 branch, so the status IS the
+  // assertion that nothing paged.
+  assertEquals(response.status, 503);
+  assertEquals((await response.json()).error.code, "UPSTREAM_UNAVAILABLE");
+});
+
+Deno.test("a genuine worker failure still returns 500 so it is reported", async () => {
+  const handler = createRestaurantCompletenessHandler({
+    env: environment({ COMPLETENESS_WORKER_ENABLED: "true" }),
+    createSupabase: () => fakeSupabase(),
+    createBackend: () => ({} as CompletenessWorkerBackend),
+    drain: () => {
+      throw new Error("null value in column \"state\" violates not-null");
+    },
+  });
+  const response = await handler(request("drain", {}, cronHeaders()));
+  assertEquals(response.status, 500);
+  assertEquals((await response.json()).error.code, "INTERNAL");
+});
+
+Deno.test("isTransientTransportError separates gateway blips from real slowness", () => {
+  for (
+    const transient of [
+      new Error("Gateway Timeout"),
+      new Error("504 Gateway Time-out"),
+      new Error("Bad Gateway"),
+      new Error("Service Unavailable"),
+      new Error("error sending request for url"),
+      new Error("connection closed before message completed"),
+    ]
+  ) {
+    assertEquals(isTransientTransportError(transient), true);
+  }
+  // A statement timeout means a query genuinely got too slow. That is the
+  // signal worth waking for, even though the word "timeout" appears.
+  for (
+    const real of [
+      new Error("canceling statement due to statement timeout"),
+      new Error("canceling statement due to user request"),
+      new Error("STALE_LEASE"),
+      new Error("permission denied for table restaurants"),
+    ]
+  ) {
+    assertEquals(isTransientTransportError(real), false);
+  }
 });
