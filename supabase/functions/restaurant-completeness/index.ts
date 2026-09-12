@@ -29,6 +29,41 @@ type SupabaseLike = any;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Transport failures between the edge runtime and PostgREST that the caller's
+ * own retry already absorbs: the gateway returned 502/503/504, or the request
+ * never completed. The 2026-09-12 page was one of these — a single sweep RPC
+ * took a 504 at 06:05 UTC, curl retried one second later and got a 200, and the
+ * cron run was green the whole time. Paging a human for a blip that healed
+ * itself trains them to ignore the alert, so these log and return a retryable
+ * 503 instead of reporting.
+ *
+ * Deliberately NOT transient: Postgres's own "canceling statement due to
+ * statement timeout" and "canceling statement due to user request". Those mean
+ * a query genuinely got too slow, which is exactly the signal worth waking for.
+ *
+ * If the gateway is down rather than blipping, the retries are exhausted, the
+ * scheduled workflow goes red, and that is the durable escalation.
+ */
+const TRANSIENT_TRANSPORT_PATTERNS = [
+  "gateway timeout",
+  "gateway time-out",
+  "bad gateway",
+  "service unavailable",
+  "fetch failed",
+  "error sending request",
+  "connection closed before message completed",
+] as const;
+
+export function isTransientTransportError(error: unknown): boolean {
+  const message =
+    (typeof (error as { message?: unknown })?.message === "string"
+      ? (error as { message: string }).message
+      : String(error)).toLowerCase();
+  if (message.includes("canceling statement")) return false;
+  return TRANSIENT_TRANSPORT_PATTERNS.some((p) => message.includes(p));
+}
+
 interface HandlerDependencies {
   createSupabase?: (url: string, key: string) => SupabaseLike;
   env?: (name: string) => string | undefined;
@@ -323,6 +358,17 @@ export function createRestaurantCompletenessHandler(
           "INVALID_CORRECTION",
           "Correction provenance is no longer valid",
           409,
+        );
+      }
+      if (isTransientTransportError(error)) {
+        console.warn(
+          "restaurant-completeness transient upstream error:",
+          message,
+        );
+        return edgeError(
+          "UPSTREAM_UNAVAILABLE",
+          "Upstream temporarily unavailable",
+          503,
         );
       }
       reportError(error, { fn: "restaurant-completeness", action });
