@@ -15,6 +15,7 @@ import { upsertRestaurant, type RestaurantInput } from '../_shared/restaurant.ts
 import { validateWishlistSource } from '../_shared/wishlistSource.ts';
 import { isUuid } from '../_shared/uuid.ts';
 import { aggregateTableWishlist, type TableWishlistRow } from './listTable.ts';
+import { listImportItems } from './listImportItems.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -465,33 +466,9 @@ serve(async (req) => {
                 return jsonResponse({ error: 'job_id must be a UUID' }, 400);
             }
 
-            const { data: job, error: jobErr } = await supabase
-                .from('import_jobs')
-                .select('job_id, source, status, created_at')
-                .eq('job_id', job_id)
-                .eq('user_id', user.id)
-                .maybeSingle();
-            if (jobErr) throw jobErr;
-            if (!job) return jsonResponse({ error: 'Not found' }, 404);
-
-            const { data: items, error: itemsErr } = await supabase
-                .from('wishlist_items')
-                .select(`
-                    id,
-                    note,
-                    created_at,
-                    restaurant:restaurants (
-                        id, name, address, city, country, photo_url, cuisine,
-                        google_rating, price_level, external_id, lat, lng
-                    )
-                `)
-                .eq('user_id', user.id)
-                .eq('job_id', job_id)
-                .is('deleted_at', null)
-                .order('created_at', { ascending: true });
-            if (itemsErr) throw itemsErr;
-
-            return jsonResponse({ data: { job, items: items ?? [] } });
+            const detail = await listImportItems(supabase, user.id, job_id);
+            if (!detail) return jsonResponse({ error: 'Not found' }, 404);
+            return jsonResponse({ data: detail });
         }
 
         // ── repoint ────────────────────────────────────────────────────────

@@ -13,6 +13,11 @@ const mockAddSpot = jest.fn(async (_input: { restaurant_id: string }) => undefin
 const mockToast = jest.fn();
 const mockRefetchBatch = jest.fn();
 const mockRefetchChecks = jest.fn();
+const mockOpenUrl = jest.fn(async (_url: string) => undefined);
+const mockRouterBack = jest.fn();
+const mockRouterPush = jest.fn();
+let mockSource: { type: string; url?: string } | null = null;
+let mockEmptyItems = false;
 let mockChecks: any[] = [];
 let mockBackgroundRefetching = false;
 
@@ -44,6 +49,7 @@ jest.mock('react-native', () => {
 
     return {
         ActivityIndicator: 'ActivityIndicator',
+        Linking: { openURL: (url: string) => mockOpenUrl(url) },
         FlatList,
         Platform: {
             OS: 'ios',
@@ -62,7 +68,7 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('expo-router', () => ({
     Stack: { Screen: 'Stack.Screen' },
     useLocalSearchParams: () => ({ jobId: 'job-1' }),
-    useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
+    useRouter: () => ({ back: mockRouterBack, push: mockRouterPush }),
 }));
 jest.mock('@tanstack/react-query', () => ({
     useQueryClient: () => ({ invalidateQueries: jest.fn() }),
@@ -85,11 +91,11 @@ jest.mock('@/hooks/wishlist/useImportBatch', () => ({
         data: {
             job: {
                 job_id: 'job-1',
-                source: null,
+                source: mockSource,
                 status: 'resolved',
                 created_at: '2026-09-04T08:00:00.000Z',
             },
-            items: [{
+            items: mockEmptyItems ? [] : [{
                 id: ITEM_ID,
                 note: null,
                 created_at: '2026-09-04T08:00:00.000Z',
@@ -166,7 +172,51 @@ describe('/imports/[jobId] place persistence', () => {
         mockRefetchChecks.mockReset();
         mockChecks = [];
         mockBackgroundRefetching = false;
+        mockSource = null;
+        mockEmptyItems = false;
+        mockOpenUrl.mockReset().mockResolvedValue(undefined);
+        mockRouterBack.mockReset();
+        mockRouterPush.mockReset();
     });
+
+    it('opens the original TikTok above unconfirmed places without navigating away from review', async () => {
+        mockSource = { type: 'tiktok', url: 'https://vm.tiktok.com/example/' };
+        mockChecks = [{ id: 'check-1', job_id: 'job-1', restaurant_id: '22222222-2222-4222-8222-222222222222' }];
+        const renderer = renderScreen();
+        const link = renderer.root.findByProps({ accessibilityRole: 'link' });
+        expect(link.props.accessibilityLabel).toBe('open TikTok, opens the original clip');
+        expect(renderer.root.findAllByProps({ accessibilityLabel: 'view place: Wrong place' })).toHaveLength(0);
+        await act(async () => link.props.onPress());
+        expect(mockOpenUrl).toHaveBeenCalledWith(mockSource.url);
+        expect(mockRouterBack).not.toHaveBeenCalled();
+        expect(mockRouterPush).not.toHaveBeenCalled();
+        expect(renderer.root.findByType('ImportChecks').props.items).toEqual(mockChecks);
+        act(() => renderer.unmount());
+    });
+
+    it('keeps the source reachable with zero saved places and reports opening failure', async () => {
+        mockSource = { type: 'web', url: 'https://www.instagram.com/p/example/' };
+        mockEmptyItems = true;
+        mockOpenUrl.mockRejectedValueOnce(new Error('cannot open'));
+        const renderer = renderScreen();
+        const link = renderer.root.findByProps({ accessibilityRole: 'link' });
+        expect(link.props.accessibilityLabel).toBe('open Instagram, opens the original clip');
+        await act(async () => link.props.onPress());
+        expect(mockToast).toHaveBeenCalledWith("couldn't open this link. try again");
+        expect(renderer.root.findByProps({ accessibilityLabel: 'add a missing place' })).toBeTruthy();
+        act(() => renderer.unmount());
+    });
+
+    it.each([null, { type: 'video' }, { type: 'tiktok', url: 'file:///clip.mp4' }])(
+        'does not offer a source action for absent, uploaded, or invalid sources: %p',
+        (source) => {
+            mockSource = source;
+            const renderer = renderScreen();
+            expect(renderer.root.findAllByProps({ accessibilityRole: 'link' })).toHaveLength(0);
+            expect(mockOpenUrl).not.toHaveBeenCalled();
+            act(() => renderer.unmount());
+        },
+    );
 
     it('shows refresh progress only for an explicit refresh and waits for both queries', async () => {
         mockBackgroundRefetching = true;

@@ -33,6 +33,7 @@ import {
     keepTypeRejectedAsGhost,
 } from './_helpers.ts';
 import { mapsItemsToStaged } from './mapsList.ts';
+import { classifyInteractiveSearchResults } from '../_shared/candidateDedupe.ts';
 
 Deno.test('import Places request keeps name bare and forwards structured locality', () => {
     const body = buildPlacesSearchBody('Parisik', {
@@ -339,6 +340,30 @@ Deno.test('resolveImportPlaceSearch: every food/drink allowlist type accepts the
         assertEquals(calls, 1, `${category}: injected search runs once`);
         assertEquals(result, { candidates: [top], typeRejected: false }, `${category}: accepted`);
     }
+});
+
+Deno.test('import Places pipeline: source-list typo keeps the correctly located cocktail bar as a match', async () => {
+    const extracted = { name: 'Bar Temini', city: 'London', area: 'Soho' };
+    const top = {
+        id: 'termini-london', name: 'Bar Termini', city: 'London',
+        formattedAddress: '7 Old Compton St, London W1D 5JE, UK',
+        categories: ['cocktail_bar', 'bar', 'food', 'establishment'],
+    };
+    assertEquals(buildPlacesSearchBody(buildCandidatePlacesQuery(extracted), extracted), {
+        query: 'Bar Temini', limit: 3, city: 'London', area: 'Soho',
+    });
+    const search = await resolveImportPlaceSearch(() => [top]);
+    assertEquals(search.typeRejected, false);
+    const decision = classifyInteractiveSearchResults(extracted, search.candidates);
+    assertEquals(decision, 'matched');
+    assertEquals(resolutionDecisionForCandidate({
+        resolution_decision: decision, restaurant: { external_id: top.id },
+    }), { decision: 'matched', matchedExternalId: top.id });
+
+    // Typo recovery cannot bypass the preceding food/drink type gate.
+    const nonVenue = await resolveImportPlaceSearch(() => [{ ...top, categories: ['clothing_store'] }]);
+    assertEquals(nonVenue.typeRejected, true);
+    assertEquals(classifyInteractiveSearchResults(extracted, nonVenue.candidates), 'no_result');
 });
 
 Deno.test('resolveImportPlaceSearch: non-venue top result is rejected and lower result is not promoted', async () => {

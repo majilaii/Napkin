@@ -70,7 +70,7 @@ import {
 // _shared so the stage implicated in the "7 spots → 1" regressions is
 // unit-tested in pre-commit (candidateDedupe.test.ts).
 import {
-  classifyInteractiveCandidate,
+  classifyInteractiveSearchResults,
   dedupeAndRank,
   normalizeName,
   type StagedCandidate,
@@ -1017,9 +1017,7 @@ async function resolveCandidateToPlace(
     // real spot silently leaves the funnel (post-Places dedupe can then
     // collapse two distinct spots onto the same wrong place). No plausible
     // name overlap → ghost instead; the review UI already handles ghosts.
-    const decision = top?.id
-      ? classifyInteractiveCandidate(candidate, top)
-      : "no_result";
+    const decision = classifyInteractiveSearchResults(candidate, results);
     return {
       place: decision === "matched" ? top : null,
       typeRejected: false,
