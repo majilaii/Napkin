@@ -37,6 +37,7 @@ import {
     ActivityIndicator,
     Alert,
     Platform,
+    Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -62,6 +63,7 @@ import { useToast } from '@/providers/ToastProvider';
 import { queryKeys } from '@/lib/queryKeys';
 import { safeRandomUUID } from '@/lib/uuid';
 import { useVisitReviewDraft } from '@/hooks/restaurants/useVisitReviewDraft';
+import { useAvailableVisitCheckIns } from '@/hooks/restaurants/useAvailableVisitCheckIns';
 import { useRestaurantVisitSelection } from '@/hooks/restaurants/useRestaurantVisitSelection';
 import { useRestaurantVisitMutations, patchRestaurantVisit, type SavedVisit } from '@/hooks/restaurants/useRestaurantVisitMutations';
 import { compressAndUpload, PhotoUploadError } from '@/lib/imageUpload';
@@ -108,6 +110,16 @@ function ratingDisplay(value: number): string {
     if (value <= 0) return '—';
     const snapped = Math.round(value * 2) / 2;
     return snapped % 1 === 0 ? `${snapped}.0` : `${snapped}`;
+}
+
+function checkInDateLabel(visitedAt: string | null | undefined, createdAt?: string): string {
+    const value = visitedAt ?? createdAt;
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return 'Date not set';
+    const label = date.toLocaleString('en-GB', {
+        day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+    return visitedAt ? label : `Date not set · checked in ${label}`;
 }
 
 // ── Half-star rating ──────────────────────────────────────────────────────────
@@ -259,7 +271,7 @@ export default function LogMealScreen() {
     }, [toast, signOut, router]);
 
     // ── Parse route params ─────────────────────────────────────────────
-    const { restaurant: restaurantParam, initialTableId, pageId, supperTakeId, entryId } = useLocalSearchParams<{
+    const { restaurant: restaurantParam, initialTableId, pageId, supperTakeId, entryId: routeEntryId } = useLocalSearchParams<{
         restaurant: string;
         initialTableId?: string;
         pageId?: string;
@@ -268,6 +280,12 @@ export default function LogMealScreen() {
         /** TICKET-082: present → "add your take" mode for an existing Supper. */
         supperTakeId?: string;
     }>();
+    // Generic Log a meal always opens a new occasion. Only this explicit local
+    // choice (or a direct Add review entryId) may target an existing check-in.
+    const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>();
+    const entryId = routeEntryId ?? selectedEntryId;
+    const [visitChooserVisible, setVisitChooserVisible] = useState(false);
+    const targetTransition = useRef(false);
     // Supper-take mode: this log is the caller's own take on an existing Supper.
     // Reuses the whole logger (rating/note/photos/details) but routes the submit
     // through useAddSupperTake and hides share-to / companions / supper-opt-in
@@ -290,6 +308,8 @@ export default function LogMealScreen() {
 
     const createEntry = useCreateEntry(user?.id, null);
     const visitDraft = useVisitReviewDraft(user?.id, entryId);
+    const availableCheckIns = useAvailableVisitCheckIns(user?.id, pageId ?? restaurant.id, !routeEntryId && !isSupperTake);
+    const checkIns = availableCheckIns.data ?? [];
     const visitMutations = useRestaurantVisitMutations(user?.id, pageId ?? restaurant.id ?? '');
     const visitSelection = useRestaurantVisitSelection(user?.id ?? '', pageId ?? restaurant.id ?? '');
     const hydratedEntry = useRef<string | null>(null);
@@ -313,7 +333,7 @@ export default function LogMealScreen() {
     const [rating, setRating] = useState(0);
     // TICKET-075: Letterboxd-style like — independent of the rating value.
     const [liked, setLiked] = useState(false);
-    const [visitedAt, setVisitedAt] = useState(new Date());
+    const [visitedAt, setVisitedAt] = useState(() => new Date());
     // TICKET-078: calendar lives in a bottom-sheet Modal overlay (no layout shift).
     const [calendarVisible, setCalendarVisible] = useState(false);
     const [notes, setNotes] = useState('');
@@ -334,21 +354,43 @@ export default function LogMealScreen() {
     const [breakdown, setBreakdown] = useState<ComposerBreakdown>(EMPTY_BREAKDOWN);
     const [showDetails, setShowDetails] = useState(false);
 
+    const draftFingerprint = JSON.stringify({ rating, liked, visitedAt: visitedAt.toISOString(), hasVisitDate, notes,
+        breakdown, companions: companions.map((c) => c.user_id), selectedTableIds,
+        photos: photos.map((p) => ({ id: p.id, url: p.publicUrl, localUri: p.localUri })),
+    });
+    const pristineFingerprint = useRef(draftFingerprint);
+    const dirty = draftFingerprint !== pristineFingerprint.current;
+    const awaitingFreshCheckIn = !routeEntryId && !!entryId && !hydrated && !!visitDraft.isFetching;
+    // A stale suggestion must not quietly become an edit of a completed review.
+    const selectedCheckInUnavailable = !routeEntryId && !!entryId && !!visitDraft.data && !awaitingFreshCheckIn
+        && (visitDraft.data.id !== entryId || visitDraft.data.rating != null
+            || !!visitDraft.data.content?.trim() || visitDraft.data.photos.length > 0);
+
     useEffect(() => {
         const draft = visitDraft.data;
-        if (!entryId || !draft || hydratedEntry.current === entryId) return;
+        if (!entryId || !draft || draft.id !== entryId || selectedCheckInUnavailable || awaitingFreshCheckIn
+            || (!routeEntryId && visitDraft.isError) || hydratedEntry.current === entryId) return;
         hydratedEntry.current = entryId;
+        targetTransition.current = false;
+        const date = draft.visited_at ? new Date(draft.visited_at) : new Date();
+        const nextBreakdown = { vibe: draft.vibe_rating ?? 0, flavor: draft.flavor_rating ?? 0, service: draft.service_rating ?? 0, value: draft.value_rating ?? 0 };
+        const nextPhotos = draft.photos.map((p) => ({ id: p.id, localUri: p.url, publicUrl: p.url, uploading: false, error: null, uploadGen: 0 }));
+        pristineFingerprint.current = JSON.stringify({ rating: draft.rating ?? 0, liked: draft.liked, visitedAt: date.toISOString(),
+            hasVisitDate: !!draft.visited_at, notes: draft.content ?? '', breakdown: nextBreakdown,
+            companions: draft.companions.map((c) => c.user_id), selectedTableIds: draft.table_ids,
+            photos: nextPhotos.map((p) => ({ id: p.id, url: p.publicUrl, localUri: p.localUri })),
+        });
         setRating(draft.rating ?? 0);
         setLiked(draft.liked);
-        setVisitedAt(draft.visited_at ? new Date(draft.visited_at) : new Date());
+        setVisitedAt(date);
         setHasVisitDate(!!draft.visited_at);
         setNotes(draft.content ?? '');
-        setBreakdown({ vibe: draft.vibe_rating ?? 0, flavor: draft.flavor_rating ?? 0, service: draft.service_rating ?? 0, value: draft.value_rating ?? 0 });
+        setBreakdown(nextBreakdown);
         setCompanions(draft.companions);
         setSelectedTableIds(draft.table_ids);
-        setPhotos(draft.photos.map((p) => ({ id: p.id, localUri: p.url, publicUrl: p.url, uploading: false, error: null, uploadGen: 0 })));
+        setPhotos(nextPhotos);
         setHydrated(true);
-    }, [entryId, visitDraft.data]);
+    }, [entryId, visitDraft.data, visitDraft.isError, routeEntryId, selectedCheckInUnavailable, awaitingFreshCheckIn]);
 
     // TICKET-075: calendar day selection — preserves the time component, blocks future.
     const handleCalendarChange = useCallback(
@@ -376,6 +418,47 @@ export default function LogMealScreen() {
 
     // ── Upload generation counter ─────────────────────────────────────
     const uploadGenRefs = useRef(new Map<string, number>());
+
+    const targetLocked = saving || retrySave || !!stitch || hasUncertainAttempt.current;
+    const switchTarget = useCallback((nextEntryId?: string) => {
+        if (routeEntryId || isSupperTake || savingRef.current || hasUncertainAttempt.current) return;
+        // Fence pending photo work before discarding its slots. Late upload
+        // results may finish, but can never enter the newly selected draft.
+        for (const [id, generation] of uploadGenRefs.current) uploadGenRefs.current.set(id, generation + 1);
+        hydratedEntry.current = null;
+        setHydrated(false);
+        setVisitChooserVisible(false);
+        setCalendarVisible(false);
+        setNoteEditorVisible(false);
+        setCompanionPickerVisible(false);
+        setViewerVisible(false);
+        setSelectedEntryId(nextEntryId);
+        // Fence the old rendered Save handler synchronously in both directions.
+        // The new target's committed render/hydration releases this guard.
+        targetTransition.current = true;
+        const date = new Date();
+        const tableIds = initialTableId ? [initialTableId] : [];
+        setRating(0); setLiked(false); setVisitedAt(date); setHasVisitDate(true);
+        setNotes(''); setBreakdown(EMPTY_BREAKDOWN); setCompanions([]);
+        setSelectedTableIds(tableIds); setPhotos([]); setShowDetails(false);
+        pristineFingerprint.current = JSON.stringify({ rating: 0, liked: false, visitedAt: date.toISOString(),
+            hasVisitDate: true, notes: '', breakdown: EMPTY_BREAKDOWN, companions: [], selectedTableIds: tableIds, photos: [],
+        });
+    }, [routeEntryId, isSupperTake, initialTableId]);
+
+    const chooseTarget = useCallback((nextEntryId?: string) => {
+        if (targetLocked || savingRef.current || (targetTransition.current && nextEntryId) || routeEntryId || nextEntryId === entryId) return;
+        if (dirty) {
+            Alert.alert('Discard this draft?', 'Changing the visit will discard the changes you’ve made here.', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Discard draft', style: 'destructive', onPress: () => switchTarget(nextEntryId) },
+            ]);
+        } else switchTarget(nextEntryId);
+    }, [targetLocked, routeEntryId, entryId, dirty, switchTarget]);
+
+    useEffect(() => {
+        if (!entryId || visitDraft.isError || selectedCheckInUnavailable) targetTransition.current = false;
+    }, [entryId, visitDraft.isError, selectedCheckInUnavailable]);
 
     // ── Photo machinery ────────────────────────────────────────────────
 
@@ -496,14 +579,14 @@ export default function LogMealScreen() {
 
     // ── Submit ─────────────────────────────────────────────────────────
     const canSubmit =
-        !!user?.id && (isVisitReview ? hydrated && visitDraft.data?.id === entryId : rating > 0) &&
+        !!user?.id && (isVisitReview ? hydrated && visitDraft.data?.id === entryId && !selectedCheckInUnavailable : rating > 0) &&
         !saving && !stitch &&
         !createEntry.isPending && !visitMutations.save.isPending &&
         !addSupperTake.isPending &&
         !photos.some((p) => p.uploading || p.error || !p.publicUrl);
 
     const handleSave = useCallback(async () => {
-        if (!canSubmit || !user?.id || savingRef.current) return;
+        if (!canSubmit || !user?.id || savingRef.current || targetTransition.current) return;
         savingRef.current = true;
         setSaving(true);
         const releaseSave = () => { savingRef.current = false; setSaving(false); };
@@ -738,14 +821,15 @@ export default function LogMealScreen() {
     ]);
 
     // ── Render ─────────────────────────────────────────────────────────
-    if (isVisitReview && !hydrated) return (
+    if (isVisitReview && (!hydrated || selectedCheckInUnavailable)) return (
         <View style={[styles.root, { backgroundColor: palette.background, padding: 24, paddingTop: insets.top + 24, gap: 20 }]}>
             <Stack.Screen options={{ headerShown: false }} />
             <Text style={[styles.restaurantName, { color: palette.text }]}>Add your review</Text>
-            {visitDraft.isError ? <>
-                <Text style={[Type.body, { color: palette.text }]}>Couldn’t load this visit.</Text>
-                <Pressable onPress={() => void visitDraft.refetch()} accessibilityRole="button"><Text style={[Type.body, { color: palette.primary }]}>Try again</Text></Pressable>
+            {visitDraft.isError || selectedCheckInUnavailable ? <>
+                <Text style={[Type.body, { color: palette.text }]}>{selectedCheckInUnavailable ? 'This check-in already has a review.' : 'Couldn’t load this visit.'}</Text>
+                {!selectedCheckInUnavailable && <Pressable onPress={() => void visitDraft.refetch()} accessibilityRole="button"><Text style={[Type.body, { color: palette.primary }]}>Try again</Text></Pressable>}
             </> : <ActivityIndicator color={palette.primary} />}
+            {!routeEntryId && <Pressable onPress={() => chooseTarget()} accessibilityRole="button"><Text style={[Type.body, { color: palette.primary }]}>Start a new visit</Text></Pressable>}
             <Pressable onPress={() => router.back()} accessibilityRole="button"><Text style={[Type.body, { color: palette.primary }]}>Close</Text></Pressable>
         </View>
     );
@@ -794,6 +878,42 @@ export default function LogMealScreen() {
                     showsVerticalScrollIndicator={false}
                     automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
                 >
+                    {!isSupperTake && (
+                        <View style={styles.visitTarget}>
+                            <View style={styles.visitTargetHeading}>
+                                <View style={styles.visitTargetCopy}>
+                                    <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>VISIT</Text>
+                                    <Text style={[styles.visitTargetLabel, { color: palette.text }]}>
+                                        {entryId ? `Check-in · ${checkInDateLabel(visitDraft.data?.visited_at, visitDraft.data?.created_at)}` : 'New visit'}
+                                    </Text>
+                                </View>
+                                {!routeEntryId && !!entryId && (
+                                    <Pressable onPress={() => setVisitChooserVisible(true)} disabled={targetLocked}
+                                        accessibilityRole="button" accessibilityLabel="Change visit" accessibilityState={{ disabled: targetLocked }}
+                                        style={styles.targetControl}>
+                                        <Text style={[styles.targetLink, { color: palette.primary, opacity: targetLocked ? 0.4 : 1 }]}>Change</Text>
+                                    </Pressable>
+                                )}
+                            </View>
+                            {!routeEntryId && !entryId && checkIns.length > 0 && (
+                                <Pressable onPress={() => checkIns.length === 1 ? chooseTarget(checkIns[0].entry_id!) : setVisitChooserVisible(true)}
+                                    disabled={targetLocked} accessibilityRole="button"
+                                    accessibilityLabel={checkIns.length === 1 ? `Use check-in from ${checkInDateLabel(checkIns[0].visited_at, checkIns[0].created_at)}` : 'Choose check-in'}
+                                    accessibilityState={{ disabled: targetLocked }} style={styles.targetSuggestion}>
+                                    <Text style={[styles.targetLink, { color: palette.primary, opacity: targetLocked ? 0.4 : 1 }]}>
+                                        {checkIns.length === 1 ? `Use check-in · ${checkInDateLabel(checkIns[0].visited_at, checkIns[0].created_at)}` : `Choose check-in · ${checkIns.length} available`}
+                                    </Text>
+                                    <Ionicons name="chevron-forward" size={14} color={palette.primary} />
+                                </Pressable>
+                            )}
+                            {!routeEntryId && !entryId && availableCheckIns.isError && checkIns.length === 0 && (
+                                <Pressable onPress={() => void availableCheckIns.refetch()} disabled={targetLocked}
+                                    accessibilityRole="button" accessibilityLabel="Retry loading check-ins" style={styles.targetControl}>
+                                    <Text style={[styles.targetLink, { color: palette.textMuted }]}>Check-ins unavailable · Try again</Text>
+                                </Pressable>
+                            )}
+                        </View>
+                    )}
                     {/* 1 ── YOUR APPRAISAL + rate the details — one vellum card ── */}
                     <View style={[styles.card, { backgroundColor: palette.surfaceNote }]}>
                         <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
@@ -1145,6 +1265,39 @@ export default function LogMealScreen() {
                 />
             )}
 
+            <Modal visible={visitChooserVisible} transparent animationType="slide" onRequestClose={() => setVisitChooserVisible(false)}>
+                <View style={[styles.chooserBackdrop, { backgroundColor: palette.overlay }]}>
+                    <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel="Close visit choices"
+                        onPress={() => setVisitChooserVisible(false)} />
+                    <View style={[styles.chooserSheet, { backgroundColor: palette.background, paddingBottom: Math.max(insets.bottom, 20) }]} accessibilityViewIsModal>
+                        <View style={styles.visitTargetHeading}>
+                            <Text style={[styles.restaurantName, { color: palette.text }]}>Choose a visit</Text>
+                            <Pressable onPress={() => setVisitChooserVisible(false)} style={styles.targetControl} accessibilityRole="button" accessibilityLabel="Done choosing visit">
+                                <Text style={[styles.targetLink, { color: palette.primary }]}>Done</Text>
+                            </Pressable>
+                        </View>
+                        <ScrollView keyboardShouldPersistTaps="handled">
+                            <Pressable onPress={() => chooseTarget()} disabled={targetLocked} accessibilityRole="button" accessibilityLabel="New visit"
+                                accessibilityState={{ selected: !entryId, disabled: targetLocked }} style={styles.chooserOption}>
+                                <Text style={[styles.visitTargetLabel, { color: palette.text }]}>New visit</Text>
+                                {!entryId && <Ionicons name="checkmark" size={20} color={palette.primary} />}
+                            </Pressable>
+                            {checkIns.map((checkIn) => (
+                                <Pressable key={checkIn.entry_id} onPress={() => chooseTarget(checkIn.entry_id!)} disabled={targetLocked}
+                                    accessibilityRole="button" accessibilityLabel={`Use check-in from ${checkInDateLabel(checkIn.visited_at, checkIn.created_at)}`}
+                                    accessibilityState={{ selected: checkIn.entry_id === entryId, disabled: targetLocked }} style={styles.chooserOption}>
+                                    <View style={styles.visitTargetCopy}>
+                                        <Text style={[styles.visitTargetLabel, { color: palette.text }]}>{checkInDateLabel(checkIn.visited_at, checkIn.created_at)}</Text>
+                                        <Text style={[styles.targetLink, { color: palette.textMuted }]}>Checked in</Text>
+                                    </View>
+                                    {checkIn.entry_id === entryId && <Ionicons name="checkmark" size={20} color={palette.primary} />}
+                                </Pressable>
+                            ))}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+
             {/* TICKET-159 stray-log stitch — "add this to the table?" */}
             <StitchConfirmSheet
                 visible={!!stitch}
@@ -1226,6 +1379,16 @@ const styles = StyleSheet.create({
         gap: 12,
         paddingTop: 8,
     },
+    visitTarget: { paddingHorizontal: 8, paddingBottom: 2, gap: 2 },
+    visitTargetHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    visitTargetCopy: { flex: 1, gap: 5 },
+    visitTargetLabel: { ...Type.bodySmall, flexShrink: 1 },
+    targetLink: { ...Type.caption, flexShrink: 1 },
+    targetControl: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 },
+    targetSuggestion: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start' },
+    chooserBackdrop: { flex: 1, justifyContent: 'flex-end' },
+    chooserSheet: { maxHeight: '70%', padding: 24, borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, gap: 12 },
+    chooserOption: { minHeight: 56, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
     // Vellum cards — each section floats as a warm-white note on the cream page.
     // Background shift + ambient shadow IS the brand's sanctioned sectioning
     // (never 1px borders). Cream root → white note cards = the stacked-vellum
