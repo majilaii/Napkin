@@ -175,6 +175,7 @@ export const queryKeys = {
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
         visitSelection: (userId: string, pageId: string) => ['restaurantVisitSelection', userId, pageId] as const,
+        availableCheckIns: (userId: string, pageId: string) => ['restaurantVisitCheckIns', userId, pageId] as const,
         pageAll: () => ['restaurantPage'] as const,
         tableHistory: (
             restaurantId: string,

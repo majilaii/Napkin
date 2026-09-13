@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +8,7 @@ import type { SelfLogRow } from '@/hooks/restaurants/useRestaurantPage';
 import type { RestaurantPayload } from '@/hooks/wishlist/useWishlistAdd';
 import { useRestaurantVisitMutations } from '@/hooks/restaurants/useRestaurantVisitMutations';
 import { safeRandomUUID } from '@/lib/uuid';
+import { InlineStars } from '@/components/feed/InlineStars';
 
 type Props = {
     userId?: string; pageId: string; restaurantId?: string | null; restaurantPayload?: RestaurantPayload | null;
@@ -44,7 +45,7 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
     const rows = useMemo(() => orderVisits(visits), [visits]);
     const [selectedId, setSelectedId] = useState<string | null>(selectedVisitId ?? null);
     const [undoId, setUndoId] = useState<string | null>(null);
-    const [sheet, setSheet] = useState<'history' | 'date' | 'new' | null>(null);
+    const [sheet, setSheet] = useState<'history' | 'date' | null>(null);
     const [calendar, setCalendar] = useState(false);
     const [chosenDate, setChosenDate] = useState(new Date());
     const [error, setError] = useState<string | null>(null);
@@ -137,105 +138,84 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
     const openVisit = () => {
         if (operation.current || locked || recordRetry || !current) return;
         setError(null);
-        if (editable && !reviewed) onReview(current);
-        else onOpenVisit(current);
+        onOpenVisit(current);
     };
-    const showNewVisit = () => {
-        if (operation.current || locked) return;
-        setSheet('new');
+    const review = () => {
+        if (operation.current || locked || recordRetry || !current || !editable || reviewed) return;
+        setError(null);
+        onReview(current);
     };
     return (
         <View style={styles.wrapper}>
-            {current ? (
-                <View style={[styles.plate, { backgroundColor: palette.surfaceJournal }]}>
-                    <View style={styles.plateHead}>
-                        <View style={styles.status} accessibilityLiveRegion="polite">
-                            <Ionicons name={reviewed ? 'checkmark-circle-outline' : 'footsteps-outline'} size={20} color={palette.secondary} />
-                            <Text style={[styles.statusLabel, { color: palette.text }]}>{reviewed ? 'Reviewed' : 'Checked in'}</Text>
-                        </View>
-                        <Pressable disabled={locked || recordRetry} onPress={() => setSheet('history')} accessibilityRole="button" accessibilityLabel={`Visit history, ${rows.length} ${rows.length === 1 ? 'visit' : 'visits'}`} style={styles.count}>
-                            <Text style={[styles.meta, { color: palette.textMuted }]}>{rows.length} {rows.length === 1 ? 'visit' : 'visits'}</Text>
-                            <Ionicons name="chevron-forward" size={14} color={palette.textMuted} />
-                        </Pressable>
-                    </View>
-                    <View style={styles.subline}>
-                        <Text style={[styles.meta, { color: palette.textMuted }]}>Visit {number}</Text>
-                        <Pressable disabled={locked || recordRetry || !editable} onPress={() => { setError(null); setSheet('date'); }} style={styles.dateButton} accessibilityRole={editable ? 'button' : undefined} accessibilityLabel={editable ? `Change date for visit ${number}` : undefined}>
-                            <Text style={[styles.meta, { color: editable ? palette.primary : palette.textMuted }]}>{current.visited_at ? visitDateLabel(current.visited_at) : editable ? 'Add a date' : 'No date'}</Text>
-                        </Pressable>
-                        {current.rating != null ? <Text style={[Type.ratingCompact, { color: palette.secondary }]} accessibilityLabel={`Your rating ${current.rating.toFixed(1)} out of 5`}>★ {current.rating.toFixed(1)}</Text> : null}
-                        {current.is_bare && current.entry_id === undoId ? (
-                            <Pressable disabled={locked || recordRetry} onPress={() => void undo()} accessibilityRole="button" accessibilityLabel="Undo check-in" style={styles.textButton}>
-                                <Text style={[styles.meta, { color: palette.textMuted }]}>Undo</Text>
-                            </Pressable>
-                        ) : null}
-                    </View>
+            <View style={styles.buttons}>
+                <Pressable onPress={() => void record()} disabled={locked || recordRetry || !canRecord} accessibilityRole="button" accessibilityLabel="Check in" accessibilityState={{ disabled: locked || recordRetry || !canRecord }}
+                    style={({ pressed }) => [styles.button, { backgroundColor: palette.surfaceJournal, opacity: locked || recordRetry || !canRecord ? 0.5 : 1 }, pressed && styles.pressed]}>
+                    {mutations.record.isPending ? <ActivityIndicator color={palette.primary} /> : <Ionicons name="footsteps-outline" size={20} color={palette.primary} />}
+                    <Text style={[styles.label, { color: palette.primary }]}>Check in</Text>
+                </Pressable>
+                <Pressable disabled={locked || recordRetry} onPress={log} accessibilityRole="button" accessibilityLabel="Log a meal" accessibilityState={{ disabled: locked || recordRetry }}
+                    style={({ pressed }) => [styles.button, { backgroundColor: palette.primary, opacity: locked || recordRetry ? 0.5 : 1 }, pressed && styles.pressed]}>
+                    <Ionicons name="create-outline" size={20} color={palette.textInverse} />
+                    <Text style={[styles.label, { color: palette.textInverse }]}>Log a meal</Text>
+                </Pressable>
+            </View>
+            {error && !sheet ? <View style={styles.error}>
+                <Text accessibilityRole="alert" style={[Type.bodySmall, { color: palette.error }]}>{error}</Text>
+                {recordRetry ? <Pressable disabled={locked} onPress={() => void record()} accessibilityRole="button" accessibilityLabel="Retry check-in" style={styles.textButton}>
+                    <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>Retry check-in</Text>
+                </Pressable> : null}
+            </View> : null}
+            {current || awaitingSelection ? <View style={[styles.visits, { borderColor: palette.ghostRule }]}>
+                <View style={styles.visitsHead}>
+                    <Text style={[Type.restaurantHistoryDateline, { color: palette.textMuted }]}>YOUR VISITS</Text>
+                    <Pressable disabled={locked || recordRetry} onPress={() => setSheet('history')} accessibilityRole="button" accessibilityLabel={`Visit history, ${rows.length} ${rows.length === 1 ? 'visit' : 'visits'}`} style={styles.count}>
+                        <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>{rows.length} {rows.length === 1 ? 'visit' : 'visits'}</Text>
+                        <Ionicons name="chevron-forward" size={14} color={palette.primary} />
+                    </Pressable>
                 </View>
-            ) : null}
-            {awaitingSelection ? (
-                <View style={styles.loading} accessibilityLiveRegion="polite">
+                {awaitingSelection ? <View style={styles.loading} accessibilityLiveRegion="polite">
                     <ActivityIndicator color={palette.primary} />
                     <Text style={[styles.meta, { color: palette.textMuted }]}>Loading your visit…</Text>
-                </View>
-            ) : (
-                <View style={styles.buttons}>
-                    {current ? <>
-                        <Pressable disabled={locked || recordRetry} onPress={openVisit} accessibilityRole="button" accessibilityState={{ disabled: locked || recordRetry }}
-                            style={({ pressed }) => [styles.button, styles.primaryButton, { backgroundColor: palette.primary, opacity: locked || recordRetry ? 0.5 : 1 }, pressed && styles.pressed]}>
-                            <Ionicons name={editable && !reviewed ? 'create-outline' : 'book-outline'} size={20} color={palette.textInverse} />
-                            <Text style={[styles.label, { color: palette.textInverse }]}>{editable && !reviewed ? 'Add review' : reviewed ? 'View your review' : 'View visit'}</Text>
+                </View> : current ? <View style={styles.receipt} accessibilityLiveRegion="polite">
+                    <View style={styles.dateline}>
+                        <Pressable disabled={locked || recordRetry || !editable} onPress={() => { setError(null); setSheet('date'); }} style={styles.dateButton} accessibilityRole={editable ? 'button' : undefined} accessibilityLabel={editable ? `Change date for visit ${number}` : undefined}>
+                            <Text style={[styles.meta, { color: palette.textMuted }]}>{current.visited_at ? visitDateLabel(current.visited_at) : editable ? 'Add a date' : 'No date'}</Text>
                         </Pressable>
-                        <Pressable disabled={locked} onPress={recordRetry ? () => void record() : showNewVisit} accessibilityRole="button" accessibilityState={{ disabled: locked }}
-                            style={({ pressed }) => [styles.button, { backgroundColor: palette.surfaceJournal, opacity: locked ? 0.5 : 1 }, pressed && styles.pressed]}>
-                            {mutations.record.isPending ? <ActivityIndicator color={palette.primary} /> : <Ionicons name={recordRetry ? 'refresh-outline' : 'add'} size={20} color={palette.primary} />}
-                            <Text style={[styles.label, { color: palette.primary }]}>{recordRetry ? 'Retry check-in' : 'New visit'}</Text>
+                        {current.is_bare && current.entry_id === undoId ? <Pressable disabled={locked || recordRetry} onPress={() => void undo()} accessibilityRole="button" accessibilityLabel="Undo check-in" style={styles.textButton}>
+                            <Text style={[styles.meta, { color: palette.textMuted }]}>Undo</Text>
+                        </Pressable> : null}
+                    </View>
+                    {editable && !reviewed ? <View style={styles.checkInRow}>
+                        <View style={styles.status}><Ionicons name="checkmark" size={16} color={palette.secondary} /><Text style={[Type.bodySmall, { color: palette.secondary }]}>Checked in</Text></View>
+                        <Pressable disabled={locked || recordRetry} onPress={review} accessibilityRole="button" accessibilityLabel="Add review" style={styles.textButton}>
+                            <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>Add review</Text>
                         </Pressable>
-                    </> : <>
-                        <Pressable onPress={() => void record()} disabled={locked || !canRecord} accessibilityRole="button" accessibilityState={{ disabled: locked || !canRecord }}
-                            style={({ pressed }) => [styles.button, { backgroundColor: palette.surfaceJournal, opacity: locked || !canRecord ? 0.5 : 1 }, pressed && styles.pressed]}>
-                            {mutations.record.isPending ? <ActivityIndicator color={palette.primary} /> : <Ionicons name="footsteps-outline" size={20} color={palette.primary} />}
-                            <Text style={[styles.label, { color: palette.primary }]}>{recordRetry ? 'Retry check-in' : 'Check in'}</Text>
-                        </Pressable>
-                        <Pressable disabled={locked || recordRetry} onPress={log} accessibilityRole="button" accessibilityState={{ disabled: locked || recordRetry }}
-                            style={({ pressed }) => [styles.button, { backgroundColor: palette.primary, opacity: locked || recordRetry ? 0.5 : 1 }, pressed && styles.pressed]}>
-                            <Ionicons name="create-outline" size={20} color={palette.textInverse} />
-                            <Text style={[styles.label, { color: palette.textInverse }]}>Log a meal</Text>
-                        </Pressable>
-                    </>}
-                </View>
-            )}
-            {error && !sheet ? <Text accessibilityRole="alert" style={[Type.bodySmall, { color: palette.error }]}>{error}</Text> : null}
-            {sheet && (current || sheet === 'new') ? <Modal transparent animationType="fade" onRequestClose={close}>
+                    </View> : <Pressable disabled={locked || recordRetry} onPress={openVisit} accessibilityRole="button" accessibilityLabel={`Open visit ${number}`} accessibilityHint={[visitDateLabel(current.visited_at), current.rating != null ? `${current.rating.toFixed(1)} out of 5` : '', current.note?.trim(), current.photos.length ? `${current.photos.length} photos` : ''].filter(Boolean).join('. ')} style={({ pressed }) => [styles.review, pressed && styles.pressed]}>
+                        <View style={styles.reviewCopy}>
+                            {current.rating != null ? <View accessible accessibilityLabel={`Your rating ${current.rating.toFixed(1)} out of 5`} style={styles.rating}>
+                                <InlineStars value={current.rating} size={Type.body.fontSize} color={palette.amberBright} />
+                            </View> : !current.note?.trim() ? <Text style={[Type.bodySmall, { color: palette.textMuted }]}>{current.photos.length ? `${current.photos.length} ${current.photos.length === 1 ? 'photo' : 'photos'}` : 'Checked in'}</Text> : null}
+                            {current.note?.trim() ? <Text style={[Type.restaurantHistoryNote, { color: palette.text }]} numberOfLines={2}>{current.note.trim()}</Text> : null}
+                        </View>
+                        {current.photos[0] ? <Image source={{ uri: current.photos[0].url }} accessibilityLabel="Your meal photo" style={[styles.photo, { borderColor: palette.imageOutline }]} /> : null}
+                        <Ionicons name="chevron-forward" size={16} color={palette.textMuted} />
+                    </Pressable>}
+                </View> : null}
+            </View> : null}
+            {sheet && current ? <Modal transparent animationType="fade" onRequestClose={close}>
                 <View style={[styles.scrim, { backgroundColor: palette.overlay }]}>
                     <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close visit sheet" />
                     <View accessibilityViewIsModal style={[styles.sheet, { backgroundColor: palette.background, paddingBottom: insets.bottom + Spacing.lg }]}>
                         <View style={styles.sheetHead}>
-                            <Text style={[Type.screenTitle, styles.sheetTitle, { color: palette.text }]}>{sheet === 'history' ? 'Your visits' : sheet === 'new' ? 'New visit' : 'Visit date'}</Text>
+                            <Text style={[Type.screenTitle, styles.sheetTitle, { color: palette.text }]}>{sheet === 'history' ? 'Your visits' : 'Visit date'}</Text>
                             <Pressable disabled={pending} onPress={close} style={styles.close} accessibilityRole="button" accessibilityLabel="Close"><Ionicons name="close" size={24} color={palette.textMuted} /></Pressable>
                         </View>
                         <Text style={[styles.meta, styles.sheetSubtitle, { color: palette.textMuted }]}>{restaurantName}{sheet === 'date' ? ` · visit ${number}` : ''}</Text>
                         <ScrollView>
-                            {sheet === 'new' ? <>
-                                <Pressable disabled={locked || !canRecord} onPress={() => void record()} accessibilityRole="button" style={({ pressed }) => [styles.newOption, pressed && styles.pressed]}>
-                                    <Ionicons name="footsteps-outline" size={24} color={palette.primary} />
-                                    <View style={styles.optionCopy}>
-                                        <Text style={[styles.statusLabel, { color: palette.text }]}>{recordRetry ? 'Retry check-in' : 'Check in'}</Text>
-                                        <Text style={[styles.meta, { color: palette.textMuted }]}>Add a review later</Text>
-                                    </View>
-                                    <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
-                                </Pressable>
-                                <Pressable disabled={locked || recordRetry} onPress={log} accessibilityRole="button" style={({ pressed }) => [styles.newOption, { opacity: locked || recordRetry ? 0.5 : 1 }, pressed && styles.pressed]}>
-                                    <Ionicons name="create-outline" size={24} color={palette.primary} />
-                                    <View style={styles.optionCopy}>
-                                        <Text style={[styles.statusLabel, { color: palette.text }]}>Log a meal</Text>
-                                        <Text style={[styles.meta, { color: palette.textMuted }]}>Record your visit and review</Text>
-                                    </View>
-                                    <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />
-                                </Pressable>
-                            </> : sheet === 'history' ? rows.map((row, index) => (
+                            {sheet === 'history' ? rows.map((row, index) => (
                                 <Pressable key={row.id} disabled={locked || recordRetry} onPress={() => { setSelectedId(row.entry_id ?? row.id); close(); }} style={[styles.historyRow, { borderBottomColor: palette.ghostRule }]} accessibilityRole="button" accessibilityLabel={`Visit ${rows.length - index}, ${hasReview(row) ? 'reviewed' : 'no review'}, ${visitDateLabel(row.visited_at)}`} accessibilityState={{ selected: row.id === current?.id }}>
-                                    <View style={styles.optionCopy}>
-                                        <Text style={[styles.label, { color: palette.text }]}>Visit {rows.length - index} · {hasReview(row) ? 'Reviewed' : 'Checked in'}</Text>
+                                    <View style={styles.historyCopy}>
+                                        <Text style={[Type.bodySmall, { color: palette.text }]}>Visit {rows.length - index} · {hasReview(row) ? 'Reviewed' : 'Checked in'}</Text>
                                         <Text style={[styles.meta, { color: palette.textMuted }]}>{visitDateLabel(row.visited_at)}{row.rating != null ? ` · ${row.rating.toFixed(1)}★` : !hasReview(row) ? ' · No review yet' : ''}</Text>
                                     </View>
                                     {row.id === current?.id ? <Ionicons name="checkmark" size={20} color={palette.primary} /> : <Ionicons name="chevron-forward" size={18} color={palette.textMuted} />}
@@ -264,21 +244,26 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
 
 const styles = StyleSheet.create({
     wrapper: { gap: Spacing.sm },
-    plate: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: Radius.lg },
-    plateHead: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: Spacing.sm },
-    status: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flexShrink: 1, minHeight: Spacing.hitTarget },
-    statusLabel: { ...Type.body, fontFamily: 'Manrope_600SemiBold', fontWeight: '600', flexShrink: 1 },
-    count: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: Spacing.xs, minHeight: Spacing.hitTarget },
-    label: { ...Type.bodySmall, fontFamily: 'Manrope_600SemiBold', fontWeight: '600', flexShrink: 1, textAlign: 'center' },
-    meta: { ...Type.caption, fontVariant: ['tabular-nums'] },
-    textButton: { minHeight: Spacing.hitTarget, minWidth: Spacing.hitTarget, justifyContent: 'center', alignItems: 'center' },
-    dateButton: { minHeight: Spacing.hitTarget, justifyContent: 'center', flexShrink: 1 },
-    subline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: Spacing.sm },
     buttons: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-    button: { minHeight: 52, borderRadius: Radius.md, flexGrow: 1, flexBasis: 132, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.sm, paddingVertical: Spacing.md },
-    primaryButton: { flexGrow: 1.4, flexBasis: 156 },
+    button: { minHeight: Spacing.restaurant.primaryActionHeight, borderRadius: Radius.md, flexGrow: 1, flexBasis: 132, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.sm, paddingVertical: Spacing.md },
+    label: { ...Type.bodySmall, fontFamily: 'Manrope_600SemiBold', fontWeight: '600', flexShrink: 1, textAlign: 'center' },
     pressed: { transform: [{ scale: 0.96 }] },
-    loading: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: Spacing.sm, minHeight: 52 },
+    visits: { marginTop: Spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, paddingBottom: Spacing.sm },
+    visitsHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm, paddingTop: Spacing.sm },
+    count: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, minHeight: Spacing.hitTarget },
+    receipt: { gap: Spacing.xs },
+    dateline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm },
+    dateButton: { minHeight: Spacing.hitTarget, justifyContent: 'center', flexShrink: 1 },
+    meta: { ...Type.caption, fontVariant: ['tabular-nums'] },
+    textButton: { minHeight: Spacing.hitTarget, minWidth: Spacing.hitTarget, justifyContent: 'center', alignItems: 'flex-end' },
+    checkInRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm },
+    status: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, minHeight: Spacing.hitTarget },
+    review: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, minHeight: Spacing.hitTarget, paddingVertical: Spacing.xs },
+    reviewCopy: { flex: 1, gap: Spacing.xs },
+    rating: { minHeight: Spacing.lg, justifyContent: 'center' },
+    photo: { width: 48, height: 48, borderRadius: Radius.sm, borderWidth: 1 },
+    error: { gap: Spacing.xs },
+    loading: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, minHeight: 52 },
     scrim: { flex: 1, justifyContent: 'flex-end' },
     sheet: { maxHeight: '85%', borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, padding: Spacing.lg },
     sheetHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm },
@@ -286,8 +271,7 @@ const styles = StyleSheet.create({
     sheetSubtitle: { marginBottom: Spacing.sm },
     close: { width: Spacing.hitTarget, height: Spacing.hitTarget, justifyContent: 'center', alignItems: 'flex-end' },
     historyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.md, borderBottomWidth: StyleSheet.hairlineWidth },
-    newOption: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.md, minHeight: 80 },
-    optionCopy: { flex: 1, gap: Spacing.xs, alignItems: 'flex-start' },
+    historyCopy: { flex: 1, gap: Spacing.xs },
     dateOption: { minHeight: 48, justifyContent: 'center' },
     dateSave: { minHeight: 52, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', padding: Spacing.md },
 });
