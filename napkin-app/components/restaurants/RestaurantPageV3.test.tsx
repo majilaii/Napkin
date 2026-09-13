@@ -81,7 +81,7 @@ describe('RestaurantPageV3 note rings', () => {
             />,
         );
 
-        expect(screen.getByText('FROM FRIENDS')).toBeTruthy();
+        expect(screen.getByText('Friends’ reviews')).toBeTruthy();
         expect(screen.getByText('— order the whole turbot')).toBeTruthy();
         fireEvent.press(screen.getByLabelText('all 4 reviews'));
         expect(onSeeAll).toHaveBeenCalledTimes(1);
@@ -100,7 +100,7 @@ describe('RestaurantPageV3 note rings', () => {
             />,
         );
 
-        expect(screen.getByText('REVIEWS')).toBeTruthy();
+        expect(screen.getByText('Reviews')).toBeTruthy();
         expect(screen.queryByText('— order the whole turbot')).toBeNull();
         fireEvent.press(screen.getByLabelText('all 4 reviews'));
         expect(onSeeAll).toHaveBeenCalledTimes(1);
@@ -132,7 +132,7 @@ describe('RestaurantPageV3 note rings', () => {
             />,
         );
 
-        expect(screen.getByText('REVIEWS')).toBeTruthy();
+        expect(screen.getByText('Reviews')).toBeTruthy();
         expect(screen.getByText('— stranger note 1')).toBeTruthy();
         expect(screen.getByText('— stranger note 3')).toBeTruthy();
         expect(screen.queryByText('— stranger note 4')).toBeNull();
@@ -191,7 +191,7 @@ describe('RestaurantPageV3 note rings', () => {
             />,
         );
 
-        expect(screen.getByText('FROM THURSDAY TABLE')).toBeTruthy();
+        expect(screen.getByText('From Thursday table')).toBeTruthy();
         expect(screen.getByText('— we split the whole grill')).toBeTruthy();
         expect(screen.getByText('— counter seats')).toBeTruthy();
         expect(screen.queryByText('— go early')).toBeNull();

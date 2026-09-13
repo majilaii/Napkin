@@ -72,7 +72,7 @@ export function SimilarPlacesSection({
     return (
         <View style={styles.section}>
             <View style={styles.heading}>
-                <SectionHeading label="SIMILAR PLACES" palette={palette} />
+                <SectionHeading label="Similar places" palette={palette} />
             </View>
             <ScrollView
                 horizontal

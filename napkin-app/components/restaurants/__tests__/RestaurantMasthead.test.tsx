@@ -144,7 +144,8 @@ describe('RestaurantTop photo mode', () => {
         expect(StyleSheet.flatten(
             screen.getByTestId('restaurant-photo-masthead').props.style,
         ).height).toBe(firstHeight);
-        expect(firstHeight).toBeCloseTo(
+        expect(firstHeight).toBe(Spacing.restaurant.photoMastheadHeight);
+        expect(firstHeight).toBeLessThanOrEqual(
             844 * Spacing.restaurant.photoMastheadMaxWindowRatio,
         );
         expect(mockScrollTo).toHaveBeenCalledWith({ x: 0, animated: false });
@@ -155,6 +156,28 @@ describe('RestaurantTop photo mode', () => {
         expect(screen.queryByTestId('restaurant-photo-masthead')).toBeNull();
         expect(screen.getByText('The Ritz Restaurant')).toBeTruthy();
         expect(screen.getByText('fine dining · london · ££££')).toBeTruthy();
+    });
+
+    it('reserves measured room between a multiline title and its photo credit', () => {
+        const onMastheadHeightChange = jest.fn();
+        const screen = render(<RestaurantTop {...baseProps}
+            photos={resolveMastheadPhotos({ restaurant }, { clippings: [], settled: true })}
+            onMastheadHeightChange={onMastheadHeightChange} />);
+        fireEvent(screen.getByTestId('masthead-photo-credit'), 'layout', {
+            nativeEvent: { layout: { height: 46 } },
+        });
+        fireEvent(screen.getByTestId('masthead-photo-title'), 'layout', {
+            nativeEvent: { layout: { height: 137 } },
+        });
+        const height = StyleSheet.flatten(screen.getByTestId('restaurant-photo-masthead').props.style).height;
+        const creditBottom = baseProps.topInset + Spacing.sm + Spacing.restaurant.photoControlSize + Spacing.sm + 46;
+        const titleTop = height - Spacing.restaurant.photoTitleBottom - 137;
+        expect(titleTop - creditBottom).toBeGreaterThanOrEqual(Spacing.sm);
+        expect(height).toBeGreaterThan(Spacing.restaurant.photoMastheadHeight);
+        fireEvent(screen.getByTestId('restaurant-photo-masthead'), 'layout', {
+            nativeEvent: { layout: { height } },
+        });
+        expect(onMastheadHeightChange).toHaveBeenCalledWith(height);
     });
 
     it('pages entry photos and updates the provenance count', () => {

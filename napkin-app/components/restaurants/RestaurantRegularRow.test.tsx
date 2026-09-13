@@ -49,7 +49,7 @@ describe('RestaurantRegularRow', () => {
             />,
         );
 
-        expect(screen.getByText('THE REGULAR')).toBeTruthy();
+        expect(screen.getByText(/The regular$/)).toBeTruthy();
         expect(screen.getByText('Clara')).toBeTruthy();
         expect(screen.getByText('4 visits · Thomas is 1 behind')).toBeTruthy();
         fireEvent.press(screen.getByLabelText('Clara is the regular here · Thomas is 1 behind'));

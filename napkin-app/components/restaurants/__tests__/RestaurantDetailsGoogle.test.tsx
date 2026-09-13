@@ -70,7 +70,7 @@ describe('RestaurantDetails Google fact', () => {
                 palette={Colors.light}
             />,
         );
-        expect(screen.getByText('DETAILS')).toBeTruthy();
+        expect(screen.getByText('Details')).toBeTruthy();
         expect(screen.getByText('Open in Maps')).toBeTruthy();
         expect(screen.getByTestId('restaurant-location-map', { includeHiddenElements: true }).props.initialRegion)
             .toEqual(expect.objectContaining({ latitude: 51.505, longitude: -0.09 }));

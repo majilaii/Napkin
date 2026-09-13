@@ -32,7 +32,7 @@ export function OnSocialsRail({ clippings }: Props) {
         <View style={styles.band}>
             <View style={styles.heading}>
                 <SectionHeading
-                    label="ON SOCIALS"
+                    label="On socials"
                     action={clippings.length > 3 ? expanded ? 'show less' : `all ${clippings.length} clips ›` : undefined}
                     onAction={() => setExpanded((value) => !value)}
                     palette={palette}
