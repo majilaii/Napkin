@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import { invalidateEntryTasteCaches } from '@/hooks/entries/invalidateEntryTaste';
@@ -10,6 +10,13 @@ export type VisitPatch = {
     content?: string | null;
     visited_at?: string | null;
     photo_urls?: string[];
+    liked?: boolean;
+    vibe_rating?: number | null;
+    flavor_rating?: number | null;
+    service_rating?: number | null;
+    value_rating?: number | null;
+    companion_ids?: string[];
+    table_ids?: string[];
 };
 export type SavedVisit = {
     id: string;
@@ -22,13 +29,13 @@ export type SavedVisit = {
     photos: { id: string; url: string }[];
     is_bare: boolean;
     supper_id?: string | null;
+    companion_ids?: string[];
+    table_ids?: string[];
 };
 type VisitResult = { entry: SavedVisit; was_dedup?: boolean };
 type RecordInput = { client_nonce: string; restaurant_id?: string; restaurant?: RestaurantPayload };
 
-export function useRestaurantVisitMutations(userId: string | undefined, pageId: string) {
-    const qc = useQueryClient();
-    const patchPage = (entry: SavedVisit | null, entryId: string, restaurantId: string) => {
+export function patchRestaurantVisit(qc: QueryClient, pageId: string, entry: SavedVisit | null, entryId: string, restaurantId: string) {
         for (const [key, page] of qc.getQueriesData<RestaurantPageData>({ queryKey: queryKeys.restaurants.pageAll() })) {
             // A Places route has restaurant:null until its first write. The
             // exact route key still identifies the page that needs this visit.
@@ -46,14 +53,19 @@ export function useRestaurantVisitMutations(userId: string | undefined, pageId: 
             } as SelfLogRow);
             qc.setQueryData(key, { ...page, self_log: rows, personal: { ...page.personal, visit_count: rows.length } });
         }
-    };
+}
+
+export function useRestaurantVisitMutations(userId: string | undefined, pageId: string) {
+    const qc = useQueryClient();
+    const patchPage = (entry: SavedVisit | null, entryId: string, restaurantId: string) =>
+        patchRestaurantVisit(qc, pageId, entry, entryId, restaurantId);
     const reconcile = (entryId: string, restaurantId: string) => {
         if (!userId) return;
         invalidateEntryTasteCaches(qc, userId, { restaurantId });
         // The open route may still be the Places ID that was just persisted.
         qc.invalidateQueries({ queryKey: queryKeys.restaurants.page(pageId) });
         const keys = [
-            queryKeys.entries.detail(entryId), queryKeys.entryDetail.photos(entryId),
+            queryKeys.entries.detail(entryId), queryKeys.entries.visitDraft(userId, entryId), queryKeys.entryDetail.photos(entryId),
             queryKeys.entryDetail.publicEligibility(entryId), queryKeys.entries.mySolo(userId),
             queryKeys.entries.list(userId), queryKeys.entries.forDayAll(userId),
             queryKeys.feed.rootAll(), queryKeys.tables.activityAll(),

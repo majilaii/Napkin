@@ -18,6 +18,10 @@ CREATE TABLE public.places (id uuid PRIMARY KEY);
 CREATE TABLE public.tables (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id uuid, name text);
 CREATE TABLE public.table_members (table_id uuid REFERENCES public.tables(id), member_id uuid REFERENCES auth.users(id),
     role text, PRIMARY KEY (table_id, member_id));
+CREATE TABLE public.follows (follower_id uuid REFERENCES auth.users(id), following_id uuid REFERENCES auth.users(id),
+    PRIMARY KEY (follower_id, following_id));
+CREATE TABLE public.blocked_users (blocker_id uuid REFERENCES auth.users(id), blocked_id uuid REFERENCES auth.users(id),
+    PRIMARY KEY (blocker_id, blocked_id));
 CREATE TABLE public.table_nights (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), table_id uuid,
     restaurant_id uuid, host_user_id uuid, kind text, status text, is_async boolean);
 CREATE TABLE public.suppers (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), restaurant_id uuid, host_user_id uuid);

@@ -123,7 +123,7 @@ BEGIN
     ASSERT EXISTS (SELECT 1 FROM public.image_gc_queue WHERE sink_id=original_photo_id::text), 'removed photo uses lifecycle GC';
     RAISE NOTICE 'PASS visits: rejected-photo transaction rollback, ref rollback, remove-all hero/GC lifecycle';
 
-    FOREACH k IN ARRAY ARRAY['{"rating":0}','{"rating":4.7}','{"liked":true}',
+    FOREACH k IN ARRAY ARRAY['{"rating":0}','{"rating":4.7}','{"liked":null}',
         '{"visited_at":"tomorrow"}','{"visited_at":"2026-02-30T00:00:00Z"}',
         '{"visited_at":"2099-01-01T00:00:00Z"}','{"photo_urls":null}',
         '{"photo_urls":["https://a.test/x","https://a.test/x"]}'] LOOP
@@ -229,6 +229,111 @@ BEGIN
     RAISE NOTICE 'PASS visits: legacy hero retention, moderated addition, forged URL rollback and explicit removal';
 END;
 $legacy$;
+
+-- Full-composer saves are one transaction on the selected solo visit.
+DO $full_review$
+DECLARE
+    u uuid := '95100000-0000-4000-8000-000000000001';
+    companion uuid := '95100000-0000-4000-8000-000000000002';
+    r uuid := '95200000-0000-4000-8000-000000000001';
+    t uuid := '95300000-0000-4000-8000-000000000001';
+    unavailable_t uuid := '95300000-0000-4000-8000-000000000002';
+    visit_id uuid;
+    result jsonb;
+    before_row jsonb;
+    created timestamptz;
+    shared_at timestamptz;
+    visits integer;
+    k text;
+BEGIN
+    INSERT INTO public.tables(id,owner_id,name) VALUES(unavailable_t,companion,'Unavailable Table');
+    INSERT INTO public.table_members(table_id,member_id,role) VALUES(unavailable_t,companion,'admin');
+    INSERT INTO public.follows(follower_id,following_id) VALUES(u,companion),(companion,u);
+    result := public.fn_record_visit(u,r,gen_random_uuid());
+    visit_id := (result->>'id')::uuid;
+    created := (result->>'created_at')::timestamptz;
+    SELECT count(*) INTO visits FROM public.entries WHERE user_id=u AND restaurant_id=r;
+
+    result := public.fn_save_visit(u,visit_id,jsonb_build_object(
+        'rating',4.5,'content',' Same visit, full review ','liked',true,
+        'vibe_rating',3.5,'flavor_rating',5,'service_rating',4,'value_rating',2.5,
+        'companion_ids',jsonb_build_array(companion),'table_ids',jsonb_build_array(t)));
+    ASSERT result->>'id'=visit_id::text AND (result->>'created_at')::timestamptz=created
+        AND (SELECT count(*)=visits FROM public.entries WHERE user_id=u AND restaurant_id=r),
+        'full composer enriches exact visit without creating or renumbering another';
+    ASSERT result->>'content'='Same visit, full review' AND (result->>'liked')::boolean
+        AND (result->>'vibe_rating')::numeric=3.5 AND (result->>'flavor_rating')::numeric=5
+        AND (result->>'service_rating')::numeric=4 AND (result->>'value_rating')::numeric=2.5,
+        'all full-composer scalars persist together';
+    ASSERT result->'companion_ids'=jsonb_build_array(companion) AND result->'table_ids'=jsonb_build_array(t)
+        AND result->>'table_id'=t::text AND result->>'visibility'='friends',
+        'response returns authoritative audience while preserving visibility';
+    ASSERT (SELECT count(*)=1 AND bool_and(user_id=u) FROM public.entry_participants WHERE entry_id=visit_id),
+        'companions never become gathering participants';
+    SELECT posted_at INTO shared_at FROM public.entry_tables WHERE entry_id=visit_id AND table_id=t;
+    result := public.fn_save_visit(u,visit_id,jsonb_build_object('table_ids',jsonb_build_array(t)));
+    ASSERT (SELECT posted_at=shared_at FROM public.entry_tables WHERE entry_id=visit_id AND table_id=t),
+        'retrying a retained share does not move the feed cursor';
+    result := public.fn_save_visit(u,visit_id,'{"visited_at":null}');
+    ASSERT result->>'visited_at' IS NULL AND result->>'rating'='4.5' AND (result->>'liked')::boolean
+        AND result->'table_ids'=jsonb_build_array(t) AND result->'companion_ids'=jsonb_build_array(companion)
+        AND (result->>'flavor_rating')::numeric=5, 'omissions preserve the full existing review';
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_undo_visit(%L,%L)',u,visit_id),'VISIT_UNDO_REFUSED');
+    RAISE NOTICE 'PASS full review: exact identity/count/chronology, all fields, desired sets, author-only participant, cursor and omission preservation';
+
+    before_row := public.fn_visit_entry_result(visit_id);
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        jsonb_build_object('rating',1,'content','Must not persist','table_ids',jsonb_build_array(unavailable_t))), 'TABLE_NOT_AUTHORIZED');
+    ASSERT public.fn_visit_entry_result(visit_id)=before_row, 'unauthorized Table refuses every field';
+    DELETE FROM public.follows WHERE follower_id=companion AND following_id=u;
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        jsonb_build_object('rating',1,'companion_ids',jsonb_build_array(companion))), 'COMPANION_NOT_AUTHORIZED');
+    ASSERT public.fn_visit_entry_result(visit_id)=before_row, 'one-way follow refuses every field';
+    INSERT INTO public.follows(follower_id,following_id) VALUES(companion,u);
+    INSERT INTO public.blocked_users(blocker_id,blocked_id) VALUES(companion,u);
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        jsonb_build_object('companion_ids',jsonb_build_array(companion))), 'COMPANION_NOT_AUTHORIZED');
+    DELETE FROM public.blocked_users WHERE blocker_id=companion AND blocked_id=u;
+    INSERT INTO public.blocked_users(blocker_id,blocked_id) VALUES(u,companion);
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        jsonb_build_object('companion_ids',jsonb_build_array(companion))), 'COMPANION_NOT_AUTHORIZED');
+    DELETE FROM public.blocked_users WHERE blocker_id=u AND blocked_id=companion;
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        jsonb_build_object('companion_ids',jsonb_build_array(u))), 'COMPANION_NOT_AUTHORIZED');
+    ASSERT public.fn_visit_entry_result(visit_id)=before_row, 'both block directions and self-tag refuse every field';
+    -- The audience writes happen before image binding. A rejection must roll all
+    -- of them back as well as the words, stars, date and author participant.
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        '{"rating":1,"liked":false,"vibe_rating":null,"table_ids":[],"companion_ids":[],"photo_urls":["https://visit.test/rejected-full-review.jpg"]}'), 'approved_image_required');
+    ASSERT public.fn_visit_entry_result(visit_id)=before_row
+        AND EXISTS(SELECT 1 FROM public.entry_tables WHERE entry_id=visit_id AND table_id=t)
+        AND EXISTS(SELECT 1 FROM public.entry_companions WHERE entry_id=visit_id AND user_id=companion)
+        AND (SELECT rating=4.5 FROM public.entry_participants WHERE entry_id=visit_id AND user_id=u),
+        'image rejection rolls back audience changes, all scalars and author participant';
+    RAISE NOTICE 'PASS full review: unavailable Table, one-way follows, blocks in both directions, self-tag and image rejection all fail atomically';
+
+    FOREACH k IN ARRAY ARRAY['{"visibility":"friends"}','{"liked":1}',
+        '{"vibe_rating":4.7}','{"flavor_rating":0}','{"service_rating":6}','{"value_rating":"4"}',
+        '{"companion_ids":null}','{"table_ids":"all"}','{"companion_ids":["invalid"]}'] LOOP
+        PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,k), 'invalid');
+    END LOOP;
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        jsonb_build_object('table_ids',jsonb_build_array(t,t))), 'invalid');
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        jsonb_build_object('companion_ids',jsonb_build_array(companion,companion))), 'invalid');
+    PERFORM pg_temp.expect_visit_error(format('SELECT public.fn_save_visit(%L,%L,%L)',u,visit_id,
+        jsonb_build_object('table_ids',(SELECT jsonb_agg(gen_random_uuid()) FROM generate_series(1,11)))), 'invalid');
+    UPDATE public.entries SET visibility='private' WHERE id=visit_id;
+    result := public.fn_save_visit(u,visit_id,'{"liked":false,"rating":null,"content":null,"vibe_rating":null,"flavor_rating":null,"service_rating":null,"value_rating":null,"table_ids":[],"companion_ids":[]}');
+    ASSERT result->>'rating' IS NULL AND result->>'content' IS NULL AND NOT (result->>'liked')::boolean
+        AND result->>'vibe_rating' IS NULL AND result->>'flavor_rating' IS NULL
+        AND result->>'service_rating' IS NULL AND result->>'value_rating' IS NULL
+        AND result->'table_ids'='[]'::jsonb AND result->'companion_ids'='[]'::jsonb
+        AND result->>'table_id' IS NULL AND result->>'visibility'='private',
+        'explicit clearing removes only selected fields and never changes private visibility';
+    RAISE NOTICE 'PASS full review: direct RPC validation, table limit, explicit scalar/audience clear and private visibility preservation';
+END;
+$full_review$;
 
 DO $permissions$
 DECLARE signature text;

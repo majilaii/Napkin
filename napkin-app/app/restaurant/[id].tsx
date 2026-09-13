@@ -27,6 +27,7 @@ import { ErrorState, InlineErrorState } from '@/components/ErrorState';
 import { FRIEND_TEST } from '@/constants/flags';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { useRestaurantVisitSelection } from '@/hooks/restaurants/useRestaurantVisitSelection';
 import { useTables } from '@/hooks/tables/useTables';
 import { useMyWishlist } from '@/hooks/wishlist/useMyWishlist';
 import { useIsWishlisted } from '@/hooks/wishlist/useIsWishlisted';
@@ -159,6 +160,7 @@ export default function RestaurantScreen() {
         }
     }, [placePayload]);
     const restaurantId = id ?? placeId ?? null;
+    const visitSelection = useRestaurantVisitSelection(user?.id ?? '', restaurantId ?? '');
     const isGhost = !!placeId;
     const page = useRestaurantPage(restaurantId, tableId ?? undefined);
     const isPageLoading = page.isLoading && page.fetchStatus === 'fetching';
@@ -326,15 +328,16 @@ export default function RestaurantScreen() {
         };
     }, [page.data?.restaurant, ghostRestaurant, parsedPlacePayload]);
     const handleLogPress = useCallback(() => {
+        visitSelection.selectVisit(null);
         router.push({
             pathname: '/log-meal',
             params: {
                 restaurant: JSON.stringify(logSheetRestaurant),
-                ...(id ? { pageId: id } : {}),
+                ...(restaurantId ? { pageId: restaurantId } : {}),
                 ...(tableId ? { initialTableId: tableId } : {}),
             },
         });
-    }, [router, logSheetRestaurant, id, tableId]);
+    }, [router, logSheetRestaurant, restaurantId, tableId, visitSelection]);
 
     const numberTiers = useMemo(
         () => restaurant ? deriveNumberTiers(page.data, user?.id) : null,
@@ -482,11 +485,24 @@ export default function RestaurantScreen() {
                             <RestaurantActions
                                 onLog={handleLogPress}
                                 primaryActions={<RestaurantVisitActions
-                                    key={`${user?.id ?? 'signed-out'}:${id}`}
-                                    userId={user?.id} pageId={id ?? ''} restaurantId={persistedRestaurantId}
+                                    key={`${user?.id ?? 'signed-out'}:${restaurantId}`}
+                                    userId={user?.id} pageId={restaurantId ?? ''} restaurantId={persistedRestaurantId}
                                     restaurantPayload={savePayload} restaurantName={restaurant.name}
                                     visits={page.data?.self_log ?? []} disabled={page.isLoading}
                                     palette={palette} onLog={handleLogPress}
+                                    selectedVisitId={visitSelection.selectedVisitId}
+                                    visitsUpdatedAt={page.dataUpdatedAt}
+                                    visitsRefreshing={page.isFetching}
+                                    onMissingVisit={() => visitSelection.selectVisit(null)}
+                                    onReview={(visit) => {
+                                        if (!visit.entry_id) return;
+                                        visitSelection.selectVisit(null);
+                                        router.push({ pathname: '/log-meal', params: {
+                                            restaurant: JSON.stringify(logSheetRestaurant),
+                                            entryId: visit.entry_id,
+                                            pageId: restaurantId ?? '',
+                                        } });
+                                    }}
                                     onOpenVisit={(visit) => {
                                         if (visit.entry_id) router.push({ pathname: '/entry-detail', params: { entryId: visit.entry_id } });
                                         else if (persistedRestaurantId) router.push({ pathname: '/restaurant-history', params: { id: persistedRestaurantId, name: restaurant.name } });

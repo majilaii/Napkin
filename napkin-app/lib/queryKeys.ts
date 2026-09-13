@@ -33,6 +33,7 @@ export const queryKeys = {
 
     // Entries (individual meal logs)
     entries: {
+        visitDraft: (userId: string, entryId: string) => ['visitDraft', userId, entryId] as const,
         list: (userId: string) => ['entries', userId] as const,
         detail: (entryId: string) => ['entry', entryId] as const,
         participants: (entryId: string) => ['entry', entryId, 'participants'] as const,
@@ -173,6 +174,7 @@ export const queryKeys = {
 
     // Restaurants (accumulated Table + user memory per venue)
     restaurants: {
+        visitSelection: (userId: string, pageId: string) => ['restaurantVisitSelection', userId, pageId] as const,
         pageAll: () => ['restaurantPage'] as const,
         tableHistory: (
             restaurantId: string,

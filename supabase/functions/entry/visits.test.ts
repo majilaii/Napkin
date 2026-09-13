@@ -14,6 +14,7 @@ Deno.test('visit actions validate IDs and refuse client fields outside the patch
         { action: 'record_visit', restaurant_id: restaurant, restaurant: {}, client_nonce: nonce },
         { action: 'save_visit', entry_id: entry, patch: { user_id: user } },
         { action: 'save_visit', entry_id: entry, patch: { table_id: restaurant } },
+        { action: 'save_visit', entry_id: entry, patch: { visibility: 'friends' } },
         { action: 'save_visit', entry_id: entry, patch: { rating: 4.7 } },
         { action: 'save_visit', entry_id: entry, patch: { rating: 0 } },
         { action: 'save_visit', entry_id: entry, patch: { content: 'x'.repeat(10001) } },
@@ -22,10 +23,36 @@ Deno.test('visit actions validate IDs and refuse client fields outside the patch
         { action: 'save_visit', entry_id: entry, patch: { photo_urls: ['file:///private/photo.jpg'] } },
         { action: 'save_visit', entry_id: entry, patch: { photo_urls: Array(11).fill('https://image.test/a') } },
         { action: 'save_visit', entry_id: entry, patch: { photo_urls: ['https://image.test/a', 'https://image.test/a'] } },
+        { action: 'save_visit', entry_id: entry, patch: { liked: null } },
+        { action: 'save_visit', entry_id: entry, patch: { liked: 'true' } },
+        { action: 'save_visit', entry_id: entry, patch: { vibe_rating: 4.7 } },
+        { action: 'save_visit', entry_id: entry, patch: { flavor_rating: 0 } },
+        { action: 'save_visit', entry_id: entry, patch: { service_rating: 6 } },
+        { action: 'save_visit', entry_id: entry, patch: { value_rating: '4' } },
+        { action: 'save_visit', entry_id: entry, patch: { companion_ids: null } },
+        { action: 'save_visit', entry_id: entry, patch: { companion_ids: ['not-a-user'] } },
+        { action: 'save_visit', entry_id: entry, patch: { companion_ids: [user, user] } },
+        { action: 'save_visit', entry_id: entry, patch: { table_ids: Array.from({ length: 11 }, (_, i) => `${String(i).padStart(8, '0')}-0000-4000-8000-000000000001`) } },
         { action: 'undo_visit', entry_id: 'invalid' },
     ]) {
         assertEquals((await handleVisitAction(failDb, user, body))?.status, 400, JSON.stringify(body));
     }
+});
+
+Deno.test('full review forwards all supported fields atomically, preserving nulls and empty desired sets', async () => {
+    const calls: unknown[] = [];
+    const patch = { rating: 4.5, content: '  A memorable lunch  ', visited_at: null,
+        liked: true, vibe_rating: 3.5, flavor_rating: 5, service_rating: null, value_rating: 4,
+        table_ids: [restaurant], companion_ids: [nonce], photo_urls: [] };
+    const saved = { id: entry, created_at: '2026-09-05T00:00:00Z',
+        ...patch, content: 'A memorable lunch' };
+    const db = { rpc(name: string, args: unknown) { calls.push([name, args]); return { data: saved, error: null }; } };
+    const response = await handleVisitAction(db, user, { action: 'save_visit', entry_id: entry, patch });
+    assertEquals(await response!.json(), { data: { entry: saved } });
+    assertEquals(calls, [['fn_save_visit', { p_user_id: user, p_entry_id: entry,
+        p_patch: { ...patch, content: 'A memorable lunch' } }]]);
+    assertEquals(validateVisitPatch({ liked: false, companion_ids: [], table_ids: [], vibe_rating: null }),
+        { liked: false, companion_ids: [], table_ids: [], vibe_rating: null });
 });
 
 Deno.test('date-only and null patches preserve omissions and east-UTC today', () => {
@@ -93,7 +120,7 @@ Deno.test('existing ghost resolves before any upsert and uses the canonical ID',
 });
 
 Deno.test('ownership, stale undo and moderation refusals have recoverable typed responses', async () => {
-    for (const [message, status] of [['NOT_OWNER', 403], ['VISIT_UNDO_REFUSED', 409],
+    for (const [message, status] of [['NOT_OWNER', 403], ['TABLE_NOT_AUTHORIZED', 403], ['COMPANION_NOT_AUTHORIZED', 403], ['VISIT_UNDO_REFUSED', 409],
         ['VISIT_NONCE_MISMATCH', 409], ['approved_image_required', 409], ['image_object_not_bindable', 409]] as const) {
         const db = { rpc() { return { data: null, error: { message, code: 'P0001' } }; } };
         const response = await handleVisitAction(db, user, { action: 'undo_visit', entry_id: entry });

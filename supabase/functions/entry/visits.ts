@@ -7,7 +7,8 @@ import { upsertRestaurant, type RestaurantInput } from '../_shared/restaurant.ts
 export const VISIT_MAX_PHOTOS = 10;
 export const VISIT_MAX_CONTENT = 10000;
 const actions = new Set(['record_visit', 'save_visit', 'undo_visit']);
-const patchKeys = new Set(['rating', 'content', 'visited_at', 'photo_urls']);
+const ratingKeys = ['rating', 'vibe_rating', 'flavor_rating', 'service_rating', 'value_rating'];
+const patchKeys = new Set([...ratingKeys, 'content', 'visited_at', 'photo_urls', 'liked', 'table_ids', 'companion_ids']);
 const object = (v: unknown): v is Record<string, unknown> =>
     v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -49,13 +50,28 @@ export function visitRestaurantInput(value: unknown): RestaurantInput {
 
 export function validateVisitPatch(value: unknown, now = new Date()): Record<string, unknown> {
     if (!object(value) || Object.keys(value).some((key) => !patchKeys.has(key))) {
-        throw new VisitInputError('patch may only contain rating, content, visited_at and photo_urls');
+        throw new VisitInputError('patch contains an unsupported visit field');
     }
     const patch = { ...value };
-    if ('rating' in patch && patch.rating !== null &&
-        (typeof patch.rating !== 'number' || !Number.isFinite(patch.rating) ||
-            patch.rating < 0.5 || patch.rating > 5 || !Number.isInteger(patch.rating * 2))) {
-        throw new VisitInputError('rating must be a half-star value from 0.5 to 5, or null');
+    for (const key of ratingKeys) {
+        const rating = patch[key];
+        if (key in patch && rating !== null &&
+            (typeof rating !== 'number' || !Number.isFinite(rating) ||
+                rating < 0.5 || rating > 5 || !Number.isInteger(rating * 2))) {
+            throw new VisitInputError(`${key} must be a half-star value from 0.5 to 5, or null`);
+        }
+    }
+    if ('liked' in patch && typeof patch.liked !== 'boolean') {
+        throw new VisitInputError('liked must be a boolean');
+    }
+    for (const key of ['table_ids', 'companion_ids']) {
+        if (!(key in patch)) continue;
+        const ids = patch[key];
+        if (!Array.isArray(ids) || ids.some((id) => !isUuid(id)) ||
+            new Set(ids.map((id: string) => id.toLowerCase())).size !== ids.length ||
+            (key === 'table_ids' && ids.length > 10)) {
+            throw new VisitInputError(`${key} must contain distinct UUIDs${key === 'table_ids' ? ' (at most 10)' : ''}`);
+        }
     }
     if ('content' in patch) {
         if (patch.content !== null && (typeof patch.content !== 'string' || patch.content.length > VISIT_MAX_CONTENT)) {
@@ -128,6 +144,8 @@ export async function handleVisitAction(
         if (error) {
             const code = String(error.message ?? '').split(':')[0].trim().toUpperCase();
             if (code === 'NOT_OWNER') return errorResponse(code, 'This visit is no longer available to edit.', 403);
+            if (code === 'TABLE_NOT_AUTHORIZED') return errorResponse(code, 'A selected Table is no longer available. Update your selection and try again.', 403);
+            if (code === 'COMPANION_NOT_AUTHORIZED') return errorResponse(code, 'A selected companion is no longer available. Update your selection and try again.', 403);
             if (code === 'VISIT_UNDO_REFUSED') return errorResponse(code, 'Only the latest check-in without a review or sharing can be undone. Refresh and try again.', 409);
             if (code === 'VISIT_NOT_SOLO') return errorResponse(code, 'Open the meal to edit this shared gathering.', 409);
             if (code === 'VISIT_NONCE_MISMATCH') return errorResponse(code, 'This save attempt belongs to a different restaurant. Please retry.', 409);
@@ -136,7 +154,7 @@ export async function handleVisitAction(
                 return errorResponse(code, 'A photo could not be saved. Remove it or try uploading it again.', 409);
             }
             if (error.code === '22023' || error.code === '22007' || error.code === '22008') {
-                return errorResponse('INVALID_INPUT', 'Check the rating, date, note and photos, then try again.', 400);
+                return errorResponse('INVALID_INPUT', 'Check your review and selections, then try again.', 400);
             }
             throw error;
         }

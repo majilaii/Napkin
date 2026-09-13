@@ -102,3 +102,25 @@ grep -q 'visited_at outside 18h window' "$VISIT_RACE_TMP/merge.out"
 [[ "$(query "SELECT count(*) FROM public.entries WHERE user_id='$VISIT_ACTOR'")" == 0 ]]
 [[ "$(query "SELECT count(*) FROM public.round_entries WHERE entry_id='$VISIT_ENTRY'")" == 0 ]]
 echo 'PASS visits concurrency: meal linking waits for a candidate date edit and refuses an undated meal'
+
+# A composer save cannot authorize a new Table share from a membership being
+# removed in a concurrent transaction. The whole review remains untouched.
+VISIT_ENTRY="$(query "SELECT public.fn_record_visit('$VISIT_USER','$VISIT_RESTAURANT',gen_random_uuid())->>'id'")"
+start_barrier
+"${PSQL[@]}" -q -c "SET application_name='visit-race-leave'; BEGIN;
+DELETE FROM public.table_members WHERE table_id='$VISIT_TABLE' AND member_id='$VISIT_USER';
+SELECT pg_advisory_xact_lock(95110001); COMMIT" >"$VISIT_RACE_TMP/leave.out" 2>&1 &
+VISIT_FIRST_PID=$!
+wait_query "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='visit-race-leave' AND wait_event_type='Lock')"
+"${PSQL[@]}" -q -c "SET application_name='visit-race-review-share';
+SELECT public.fn_save_visit('$VISIT_USER','$VISIT_ENTRY',jsonb_build_object(
+'rating',4.5,'content','A full review','liked',true,'table_ids',jsonb_build_array('$VISIT_TABLE')))" >"$VISIT_RACE_TMP/review-share.out" 2>&1 &
+VISIT_SECOND_PID=$!
+wait_query "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='visit-race-review-share' AND wait_event_type='Lock')"
+release_barrier
+wait "$VISIT_FIRST_PID"
+if wait "$VISIT_SECOND_PID"; then echo 'Review shared after membership was removed' >&2; exit 1; fi
+grep -q 'TABLE_NOT_AUTHORIZED' "$VISIT_RACE_TMP/review-share.out"
+[[ "$(query "SELECT (public.fn_visit_entry_result('$VISIT_ENTRY')->>'is_bare')::boolean")" == t ]]
+[[ "$(query "SELECT count(*) FROM public.entry_tables WHERE entry_id='$VISIT_ENTRY'")" == 0 ]]
+echo 'PASS visits concurrency: full review waits for concurrent Table leave and atomically refuses the stale share'
