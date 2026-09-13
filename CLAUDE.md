@@ -407,7 +407,7 @@ The minute any of these is true, pay $25/mo for Supabase Pro and switch on Branc
 
 ## Migration blast-radius checklist (planner output, mandatory)
 
-PGRST201 — and every other "function passes, screen 500s" bug — comes from a migration changing the schema in a way that invalidates code nobody touched. The planner agent must produce this checklist for any ticket that includes a migration. Reviewers verify the checklist is complete; missing entries fail the review.
+PGRST201 — and every other "function passes, screen 500s" bug — comes from a migration changing the schema in a way that invalidates code nobody touched. The task owner must produce this checklist for any ticket that includes a migration. Reviewers verify the checklist is complete; missing entries fail the review.
 
 For each schema change in the migration, the plan must list:
 
@@ -438,44 +438,25 @@ Example (TICKET-043 retrospective): adding `entry_tables` made every `entries �
 
 When a migration adds a join table, the blast-radius checklist (item 1 above) MUST list every existing `from('<existing_table>').select('... <other_existing_table>(...)')` site touching either side of the new join.
 
-### Dual-review protocol
+### Adversarial review
 
-**This is a stricter project gate and the September 10, 2026 shared workflow explicitly preserves it** (`~/.codex/orchestrator-playbook.md` names Napkin as still requiring review at gated spec, architecture and build phases). Where the global default would allow a single reviewer, this section wins for this repo.
+Follow `~/.codex/adversarial-review.md`. The task owner chooses implementation, delegation and reviewer arrangements natively. A reviewer must not have authored or fixed the change. There is no fixed Claude/Codex pairing or mandatory spec/architecture/build agent chain.
 
-For high-stakes work, every gated phase (spec, architecture, build) gets BOTH a Claude review and a Codex review. Two model architectures, independent failure modes — catches what a single reviewer misses. Single-reviewer is fine for routine adds; a trivial reversible copy or cosmetic edit may use owner review.
+Give high-stakes changes additional independent scrutiny. Review the relevant requirements and technical decisions as well as the final implementation; choose when that review is useful to catch an expensive mistake. Preserve all substantive checks below and the migration blast-radius checklist.
 
-Reviewer independence is about context, not model identity: the reviewer must not have built or fixed the change. A separate architect or product-designer agent is optional under the shared workflow — the task owner may write the spec or design directly — but the gated *reviews* below remain required for triggered work.
+**Risk areas requiring particular scrutiny:**
 
-**Triggers** (any one is enough — applies at spec, architecture, AND build phases):
-
-- PR / change deletes >500 LOC or removes major modules
-- Touches DB schema, migrations, or RLS policies
-- Touches edge function contracts in `supabase/functions/_shared/` or `lib/edgeInvoke.ts`
+- Changes deleting >500 LOC or removing major modules
+- DB schema, migrations, or RLS policies
+- Edge function contracts in `supabase/functions/_shared/` or `lib/edgeInvoke.ts`
 - Refactors crossing module boundaries
-- Auth, permissions, or data integrity (Supabase RLS, `table_members`, follow graph)
-- External APIs with real cost or rate limits (Google Places, Maps)
-- Builder uses `--no-verify` or any hook bypass
-- Builder reports "pre-existing failures" to justify failing tests
-- Builder deviates from the spec's file list (additions or omissions)
+- Auth, permissions, or data integrity (including `table_members` and the follow graph)
+- External APIs with real cost or rate limits
+- Hook bypasses or attempts to excuse failing required checks
+- Deviations from the agreed scope or acceptance criteria
 - Cherry-picks, rebases, or merge-conflict resolutions
 
-**Where Codex plugs in:**
-
-| Phase | Claude reviewer | Codex pass | What Codex looks for |
-|-------|------------------|--------------|------------------------|
-| Spec (`/spec`) | (n/a, the spec's author is not its reviewer) | Sanity-check spec | Missing acceptance criteria, ambiguous scope statements, security/data-integrity gaps |
-| Architecture (design stage of `/start`) | (n/a, the design's author is not its reviewer) | Adversarial design review | Hidden coupling, lazy-import landmines, scope creep, lock-in choices |
-| Build (review stage of `/start`) | code-reviewer subagent | Codex adversarial review | Runtime landmines, swallowed errors, broken callers, test bypass |
-
-**Reconciliation:** if either reviewer returns FAIL, the phase fails. PASS from one + PASS-WITH-NITS from the other = pass with nits documented. Conflicting findings on the same code path → the task owner investigates and resolves them. Reuse the same reviewer for delta rounds and dispose of each prior finding explicitly; review the final changed revision rather than adding a summary-only round. A missing or failed reviewer is never approval.
-
-**Invocation:** use the installed codex-loop skill, or the app-bundled binary directly:
-
-```
-/Applications/ChatGPT.app/Contents/Resources/codex exec -s read-only -m gpt-6-astra -c model_reasoning_effort="xhigh" --skip-git-repo-check "$PROMPT"
-```
-
-Always pass an explicit sandbox (`-s read-only` for reviews) — the global Codex config default is `danger-full-access`. The old `codex-companion.mjs` path is **stale**: the standalone CLI and the plugin cannot run GPT-6 Astra at any version (see the `codex-runtime-broken` project memory). See `~/.claude/commands/spec.md`, `~/.claude/commands/start.md`, `~/.claude/commands/review.md` for the current per-phase flow.
+Supply the actual requirements, exact diff/revision and observed checks. Resolve or explicitly rebut blocking findings with evidence and reconcile conflicting findings. Review relevant fixes on the final changed revision. A failed or missing review is not approval. Preserve CI, read-only native UI verification, release controls and cleanup requirements.
 
 ## Feature map and UI verification
 

@@ -346,8 +346,10 @@ function BubblePin({
               : palette.primary;
     const rating = isNetwork ? item.rating : item.myRating;
     const loved = rating != null && rating >= LOVED_MIN && (isNetwork || !!item.been);
-    const size = selected ? 38 : 32;
-    const ring = selected ? 3 : 2.5;
+    // Keep the annotation and its glyph layout fixed while MapKit selects it.
+    // Resizing the native annotation/text here briefly clears the icon on iOS.
+    const size = 38;
+    const ring = 3;
     const fill = isDark ? palette.surfaceContainerHigh : CREAM;
 
     const avatar = item.author?.avatar ?? null;
@@ -356,7 +358,7 @@ function BubblePin({
     const CHIP = 18;
 
     return (
-        <View style={pinStyles.wrap}>
+        <View testID={`map-pin-${item.id}`} collapsable={false} style={pinStyles.wrap}>
             <View
                 style={[
                     pinStyles.bubble,
@@ -368,6 +370,10 @@ function BubblePin({
                         borderColor: ringColor,
                         backgroundColor: fill,
                         shadowOpacity: selected ? 0.3 : 0.22,
+                        transform: [
+                            { translateY: selected ? 0 : 3 },
+                            { scale: selected ? 1 : 32 / 38 },
+                        ],
                     },
                 ]}
             >
@@ -376,7 +382,7 @@ function BubblePin({
                     <Text
                         style={{
                             ...Type.ledgerValue,
-                            fontSize: selected ? 18 : 15,
+                            fontSize: 18,
                             color: palette.tertiary,
                             includeFontPadding: false,
                         }}
@@ -384,13 +390,13 @@ function BubblePin({
                         {overlapCount}
                     </Text>
                 ) : item.emoji ? (
-                    <Text style={{ fontSize: selected ? 17 : 15, includeFontPadding: false }}>
+                    <Text style={{ fontSize: 18, includeFontPadding: false }}>
                         {item.emoji}
                     </Text>
                 ) : (
                     <Ionicons
                         name={cuisineGlyph(item.cuisine)}
-                        size={selected ? 18 : 15}
+                        size={18}
                         color={palette.primary}
                         style={pinStyles.glyph}
                     />
@@ -459,7 +465,7 @@ const pinStyles = StyleSheet.create({
     // the wrap — react-native-maps snapshots the marker view; content outside
     // its bounds risks getting clipped. Marker anchors {0.5, 1} = tail tip on
     // the coordinate.
-    wrap: { width: 56, alignItems: 'center', paddingTop: 6 },
+    wrap: { width: 56, height: 56, alignItems: 'center', justifyContent: 'flex-end' },
     bubble: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -544,13 +550,14 @@ function WishlistMarker({ item, selected, palette, onPress }: WishlistMarkerProp
     const hasAvatarImage = isNetwork && !!item.author?.avatar;
     // No avatar bitmap to wait for → "loaded" from the start.
     const [avatarLoaded, setAvatarLoaded] = useState(!hasAvatarImage);
-    const [tracking, setTracking] = useState(true);
+    const snapshotVersion = `${selected}:${avatarLoaded}:${isNetwork}`;
+    const [settledSnapshot, setSettledSnapshot] = useState<string | null>(null);
+    const tracking = settledSnapshot !== snapshotVersion;
     useEffect(() => {
-        setTracking(true);
         if (!avatarLoaded) return; // hold true until the avatar image decodes
-        const t = setTimeout(() => setTracking(false), isNetwork ? 300 : 500);
+        const t = setTimeout(() => setSettledSnapshot(snapshotVersion), isNetwork ? 300 : 500);
         return () => clearTimeout(t);
-    }, [selected, avatarLoaded, isNetwork]);
+    }, [snapshotVersion, avatarLoaded, isNetwork]);
 
     return (
         <Marker
