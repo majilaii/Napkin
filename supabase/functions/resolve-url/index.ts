@@ -680,6 +680,7 @@ function callImportPlacesSearch(
 // Implementations live in _helpers.ts (no serve() call) so test files can
 // import them without triggering the HTTP server.
 import {
+  allowsCaptionPlacesFallback,
   attemptedExternalIdFromResolutionEvidence,
   buildCandidatePlacesQuery,
   buildGhostExternalId,
@@ -700,6 +701,7 @@ import {
   evaluateLegacySaveSunset,
   exhaustedInlineRoute,
   extractionFailureDecision,
+  extractOptionalVision,
   expectedImportOwnerDecision,
   filterUnauthorizedTableIds,
   type ImportPlaceSearchResult,
@@ -3153,19 +3155,13 @@ async function handleUrlResolve(
       deadline.stageSignal(2000),
     );
     if (resized && !deadline.aborted) {
-      try {
-        const vExtracted = await extractFromVisionMulti(
+      visionCandidates = await extractOptionalVision(textCandidates, () => extractFromVisionMulti(
           resized.base64,
           resized.mimeType,
           oEmbedCaption ?? undefined,
           deadline.stageSignal(2500),
-        );
-        visionCandidates = vExtracted;
-        contentEvaluated = true;
-      } catch (e) {
-        if (textCandidates.length === 0) throw e;
-        // Usable text-tier results stand if optional image enrichment fails.
-      }
+        ));
+      contentEvaluated = true;
     }
     // If resized is null (ARCH-REVIEW-2 #11): vision skipped entirely
   }
@@ -3301,7 +3297,7 @@ async function handleUrlResolve(
   if (staged.length === 0) {
     // An authoritative empty extraction must remain empty. Direct query search
     // is only a recovery path when no model evaluated the supplied content.
-    if (!query || contentEvaluated) {
+    if (!allowsCaptionPlacesFallback(query, contentEvaluated)) {
       return jsonResponse({
         data: {
           source_type: sourceType,

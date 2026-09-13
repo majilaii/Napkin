@@ -50,7 +50,7 @@ Deno.test('Luna default sends bounded structured text with no Anthropic credenti
         assertEquals(getExtractionModel(), 'gpt-5.6-luna');
         assertEquals(body.model, 'gpt-5.6-luna');
         assertEquals(body.store, false);
-        assertEquals(body.reasoning, { effort: 'low' });
+        assertEquals(body.reasoning, { effort: 'medium' });
         assertEquals(body.max_output_tokens, 4608);
         assertEquals('temperature' in body, false);
         assertEquals('max_tokens' in body, false);
@@ -149,5 +149,6 @@ Deno.test('cache validity requires exact model and extraction contract for every
     assertEquals(isCurrentExtractionCache({ ...row, model: 'claude-haiku-4-5-20251001' }, model), false);
     assertEquals(isCurrentExtractionCache({ model, extracted: { candidates: [venue] } }, model), false);
     assertEquals(isCurrentExtractionCache({ model, extracted: { ...row.extracted, contract: 'old' } }, model), false);
+    assertEquals(isCurrentExtractionCache({ model, extracted: { ...row.extracted, contract: 'featured-destinations-v2:low' } }, model), false);
     assertEquals(isCurrentExtractionCache(null, model), false);
 });

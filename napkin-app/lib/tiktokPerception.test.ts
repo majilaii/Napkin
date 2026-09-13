@@ -4,7 +4,45 @@
  * imports once (they died as "couldn't find spots" with zero prod trace), so
  * the pure mapping gets pinned here.
  */
-import { extractSlideUrls, extractTikTokHandle, isTikTokPhotoUrl, isTikTokUrl } from './tiktokPerception';
+import { extractSlideUrls, extractTikTokHandle, fetchTikTokPerception, isTikTokPhotoUrl, isTikTokUrl } from './tiktokPerception';
+
+describe('photo title from the actual mobile response shape', () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => { globalThis.fetch = originalFetch; });
+
+    async function perceive(title: unknown) {
+        // Sanitized structure of the supplied Keiko Uchida post; no signed URLs.
+        const blob = { __DEFAULT_SCOPE__: { 'webapp.reflow.video.detail': {
+            shareMeta: { title: 'TikTok · Alli Sims Peter' },
+            itemInfo: { itemStruct: {
+                desc: 'A little corner of Japan in London ',
+                imagePost: { title, images: Array.from({ length: 11 }, (_, i) => ({
+                    imageURL: { urlList: [`https://cdn.example/${i}.jpg`] },
+                })) },
+            } },
+        } } };
+        globalThis.fetch = jest.fn().mockResolvedValue({
+            ok: true, url: 'https://www.tiktok.com/@allisims/photo/7665641239299083542',
+            text: async () => `<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__">${JSON.stringify(blob)}</script>`,
+        });
+        return fetchTikTokPerception('https://vm.tiktok.com/ZN8jyna5p/');
+    }
+
+    it('preserves the venue heading independently of caption, slides and creator', async () => {
+        const page = await perceive(' Keiko Uchida ');
+        expect(page).toMatchObject({
+            title: 'Keiko Uchida', desc: 'A little corner of Japan in London',
+            isPhotoPost: true, playAddr: null, transcript: '',
+        });
+        expect(page?.slideUrls).toHaveLength(11);
+    });
+
+    it('bounds titles and does not substitute the creator when the field is missing', async () => {
+        expect((await perceive('x'.repeat(1500)))?.title).toHaveLength(1000);
+        expect((await perceive(undefined))?.title).toBeUndefined();
+        expect((await perceive({ name: 'unexpected' }))?.title).toBeUndefined();
+    });
+});
 
 describe('isTikTokPhotoUrl', () => {
     it('true for resolved photo-mode permalinks', () => {

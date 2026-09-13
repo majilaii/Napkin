@@ -1157,8 +1157,9 @@ export function useProcessImportQueue() {
                                 // Preserve the source carousel shape even when a
                                 // slide download/OCR yields no lines. The caption is
                                 // fused exactly once in its own labelled section.
-                                ocrText = photoSlideCount > 0
-                                    ? fusePhotoSlideText(slideLines, desc)
+                                const title = (perception as { title?: string }).title;
+                                ocrText = photoSlideCount > 0 || title?.trim() || desc.trim()
+                                    ? fusePhotoSlideText(slideLines, desc, title)
                                     : null;
                                 for (const file of slideFiles) {
                                     if (file) void deleteCachedSlide(file);
@@ -1398,7 +1399,7 @@ export function useProcessImportQueue() {
                             candidates.length === 0 &&
                             sentVideoTextResolve &&
                             provider !== 'instagram' &&
-                            allowsGenericUrlFallback(photoImportContext) &&
+                            allowsGenericUrlFallback(photoImportContext, photoPost && !!extractedText) &&
                             !(cheapTierRan && downloadOk)
                         ) {
                             const fallback = await callImportResolveUrl<ResolveUrlData>(

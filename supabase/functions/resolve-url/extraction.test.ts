@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { ExtractionError } from '../_shared/importModel.ts';
-import { extractionFailureDecision, runAsyncImportExtraction } from './_helpers.ts';
+import { allowsCaptionPlacesFallback, extractOptionalVision, extractionFailureDecision, runAsyncImportExtraction } from './_helpers.ts';
 
 Deno.test('background extraction settles placeholders before exposing a typed provider error', async () => {
   const failure = new ExtractionError('EXTRACTION_UNAVAILABLE', 'Provider unavailable');
@@ -47,4 +47,19 @@ Deno.test('configuration, explicit abort and default deadline map to service-err
     });
   }
   assertEquals(extractionFailureDecision(null), null);
+});
+
+Deno.test('a successful empty model answer blocks raw-caption Places search', () => {
+  assertEquals(allowsCaptionPlacesFallback('A little corner of Japan in London', true), false);
+  assertEquals(allowsCaptionPlacesFallback('Known direct query without model evidence', false), true);
+  assertEquals(allowsCaptionPlacesFallback(null, false), false);
+});
+
+Deno.test('optional image failure preserves real text candidates but never creates a successful empty import', async () => {
+  const failure = new ExtractionError('EXTRACTION_UNAVAILABLE', 'Image request failed');
+  const extracted = [{ name: 'Keiko Uchida' }];
+  assertEquals(await extractOptionalVision(extracted, () => Promise.reject(failure)), []);
+  assertEquals(extracted, [{ name: 'Keiko Uchida' }]);
+  assertEquals(await assertRejects(() => extractOptionalVision([], () => Promise.reject(failure))), failure);
+  assertEquals(await extractOptionalVision([], () => Promise.resolve(extracted)), extracted);
 });

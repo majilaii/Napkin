@@ -295,6 +295,8 @@ Source: `app/settings/privacy.tsx`, `hooks/users/useUserProfile.ts`, `lib/screen
 
 Source: `app/import.tsx`, `app/import-review.tsx`, `app/import-kickoff.tsx`, `app/import-progress.tsx`, `app/import-digest.tsx`, `app/imports/[jobId].tsx`, `hooks/wishlist/useProcessImportQueue.ts`, `lib/importFastPath.ts`, `lib/largeImportJob.ts`.
 
+- TikTok photo posts preserve the actual `imagePost.title` separately from the caption (`lib/tiktokPerception.ts`, `lib/photoImportFusion.ts`). Queued shares fuse it before slide OCR, including failed downloads/empty OCR; pasted links resolve title/caption directly without slide downloads (`lib/resolveTikTokVideo.ts`). Unknown slide counts are omitted. Successful empty photo evidence does not retry generic oEmbed; cancellation/provider failure retains existing failure behavior. No import or save is performed against production during verification; transport and write paths use fixtures.
+
 - Queue/manifest phases include reading, saving, review, kickoff, completed/digest, and failed/poisoned. The hub may retain history after active work ends.
 - `/import-progress` with active manifests shows per-import progress; with recent history shows completed/failed cards; with neither shows education/empty hub.
 - `/import-review` with candidates shows approve/exclude/destination controls. Missing manifest or zero spots produces “nothing to review”; inspect local manifest presence to distinguish expired/broken handoff from an intentional zero-candidate extraction.

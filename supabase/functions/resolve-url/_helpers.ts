@@ -29,6 +29,21 @@ export async function runAsyncImportExtraction<T>(extract: () => Promise<T>, fai
   }
 }
 
+/** A semantic empty answer cannot be replaced by a search on the original caption. */
+export function allowsCaptionPlacesFallback(query: string | null, contentEvaluated: boolean): boolean {
+  return !!query && !contentEvaluated;
+}
+
+/** Optional image enrichment may fail only when usable text candidates already exist. */
+export async function extractOptionalVision<T>(textCandidates: readonly T[], extract: () => Promise<T[]>): Promise<T[]> {
+  try {
+    return await extract();
+  } catch (error) {
+    if (textCandidates.length === 0) throw error;
+    return [];
+  }
+}
+
 // ── Source detection (TICKET-079) ─────────────────────────────────────────────
 
 /**

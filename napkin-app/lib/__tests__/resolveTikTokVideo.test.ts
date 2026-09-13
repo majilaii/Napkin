@@ -109,11 +109,55 @@ test('caption-free ASR guesses still escalate and platform speech suppresses red
     expect(deps.resolve.mock.calls[1][0].extracted_text).toContain('[spoken words]\nWe love Abatilles');
 });
 
-test.each([null, page({ isPhotoPost: true })])('unavailable or photo-mode perception retains the fallback route (%p)', async perception => {
+test.each([null, page({ isPhotoPost: true, desc: '', text: '' })])('unavailable perception or photo without metadata retains the fallback route (%p)', async perception => {
     const { deps, run } = setup(perception);
     await expect(run()).resolves.toBeNull();
     expect(deps.resolve).not.toHaveBeenCalled();
     expect(deps.download).not.toHaveBeenCalled();
+});
+
+test('pasted photo sends title/caption and real count without video work or duplicate caption', async () => {
+    const { deps, run } = setup(page({
+        isPhotoPost: true, title: 'Keiko Uchida', desc: 'A little corner of Japan in London',
+        slideUrls: Array.from({ length: 11 }, (_, i) => `https://cdn.example/${i}.jpg`),
+    }));
+    deps.resolve.mockResolvedValue(resolved('Keiko Uchida'));
+    expect((await run())?.candidates[0].restaurant.name).toBe('Keiko Uchida');
+    expect(deps.resolve.mock.calls[0][0]).toEqual({
+        extracted_text: '[title]\nKeiko Uchida\n[caption]\nA little corner of Japan in London',
+        source_kind: 'photo', slide_count: 11,
+    });
+    expect(deps.download).not.toHaveBeenCalled();
+    expect(deps.extract).not.toHaveBeenCalled();
+});
+
+test('title-only photo preserves an empty answer and omits unknown slide count', async () => {
+    const { deps, run } = setup(page({ isPhotoPost: true, title: 'Keiko Uchida', desc: '' }));
+    const empty = { ...resolved(), candidates: [] };
+    deps.resolve.mockResolvedValue(empty);
+    await expect(run()).resolves.toBe(empty);
+    expect(deps.resolve).toHaveBeenCalledTimes(1);
+    expect(deps.resolve.mock.calls[0][0]).toEqual({ extracted_text: '[title]\nKeiko Uchida\n[caption]' });
+});
+
+test('photo caption alone remains usable evidence', async () => {
+    const { deps, run } = setup(page({ isPhotoPost: true, desc: 'Keiko Uchida, London' }));
+    await run();
+    expect(deps.resolve.mock.calls[0][0]).toEqual({ extracted_text: '[caption]\nKeiko Uchida, London' });
+});
+
+test('photo provider errors propagate without weaker fallback', async () => {
+    const { deps, run } = setup(page({ isPhotoPost: true, title: 'Keiko Uchida' }));
+    const failure = new Error('Provider unavailable');
+    deps.resolve.mockRejectedValue(failure);
+    await expect(run()).rejects.toBe(failure);
+    expect(deps.resolve).toHaveBeenCalledTimes(1);
+});
+
+test('photo result completing after dismissal stays cancelled', async () => {
+    const { deps, controller, run } = setup(page({ isPhotoPost: true, title: 'Keiko Uchida' }));
+    deps.resolve.mockImplementation(async () => { controller.abort(); return resolved(); });
+    await expect(run()).rejects.toMatchObject({ name: 'AbortError' });
 });
 
 test('unavailable native extraction preserves the cheap result without downloading', async () => {

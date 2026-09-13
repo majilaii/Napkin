@@ -75,12 +75,23 @@ let failed = false;
 
 for (const f of fixtures) {
     const started = Date.now();
-    const candidates = await extractFromTextMulti(
-        f.fused_text,
-        undefined,
-        f.cap,
-        toExtractionContext(f.context),
-    );
+    let candidates;
+    try {
+        candidates = await extractFromTextMulti(
+            f.fused_text,
+            undefined,
+            f.cap,
+            toExtractionContext(f.context),
+        );
+    } catch (error) {
+        failed = true;
+        const failure = { name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : 'Extraction failed' };
+        records.push({ fixture: f, error: failure, elapsed_ms: Date.now() - started });
+        console.error(`FAIL  ${f.name}\n      ${failure.name}: ${failure.message}\n`);
+        // Preserve completed results even when a later request fails or times out.
+        if (outputFile) await Deno.writeTextFile(outputFile, JSON.stringify({ model, contract: extractionCacheContract(), records }, null, 2) + '\n');
+        continue;
+    }
     records.push({ fixture: f, candidates, elapsed_ms: Date.now() - started });
     const { pass, hits, misses, extras, violations } = scoreFixture(f, candidates);
     if (!pass) failed = true;

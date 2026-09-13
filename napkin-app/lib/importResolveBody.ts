@@ -18,7 +18,7 @@ export interface VideoTextResolveInput {
     extractedText: string | null;
     /** Caption/description, merged across the initial fetch and any refresh. */
     mergedDesc: string;
-    /** Non-null only for a photo carousel with at least one downloaded slide. */
+    /** Non-null only when a photo carousel's real slide count is known. */
     photoImportContext: PhotoImportContext | null;
     /** True for TikTok photo-mode posts (no playAddr, spots live on slides). */
     photoPost: boolean;
@@ -47,14 +47,13 @@ export interface VideoTextResolveBody {
  *  1. Any fused perception text → `{extracted_text, caption?}`. The caption is
  *     NO LONGER concatenated into extracted_text. A photo carousel is the one
  *     exception: fusePhotoSlideText already embeds a labeled `[caption]`
- *     section, so adding the field would double-fuse it (photo path stays
- *     byte-identical, TICKET-195/209 A.5).
+ *     section, so adding the field would double-fuse it, even without a known
+ *     slide count.
  *  2. No perception text at all but a caption → caption-only body. This is what
  *     makes the caption authority rule reachable for Instagram (never any
  *     transcript) and for a TikTok whose download flaked. Never `{url}` here:
- *     Instagram's url tier is a login-walled no-op. Photo posts are excluded —
- *     their zero-slide degenerate case has always resolved through the url tier
- *     (oEmbed + thumbnail vision), which is strictly richer than their caption.
+ *     Instagram's url tier is a login-walled no-op. Photo metadata is fused by
+ *     the caller even when slide downloads/OCR fail.
  *  3. Nothing at all → today's `{url}` fallback, unchanged.
  */
 export function buildVideoTextResolveBody(
@@ -64,7 +63,7 @@ export function buildVideoTextResolveBody(
 
     if (extractedText) {
         return {
-            body: photoImportContext
+            body: photoPost || photoImportContext
                 ? { extracted_text: extractedText, ...photoImportContext }
                 : {
                       extracted_text: extractedText,

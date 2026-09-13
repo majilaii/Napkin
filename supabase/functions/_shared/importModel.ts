@@ -1,7 +1,7 @@
 /** Server-only model transport and cache identity for restaurant imports. */
 export const EXTRACTION_MODEL_DEFAULT = 'gpt-5.6-luna';
 export const EXTRACTION_CONTRACT_VERSION = 'featured-destinations-v2';
-export const EXTRACTION_REASONING_EFFORT = 'low';
+export const EXTRACTION_REASONING_EFFORT = 'medium';
 
 export interface ExtractionMessage {
     role: 'user';

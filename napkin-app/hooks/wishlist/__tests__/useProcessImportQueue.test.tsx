@@ -6,6 +6,9 @@ import TestRenderer, { act } from 'react-test-renderer';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mockStore = new Map<string, string>();
 const mockExtract = jest.fn();
+const mockPerceive = jest.fn();
+const mockSlideDownload = jest.fn();
+const mockSlideExtract = jest.fn();
 const mockEdge = jest.fn();
 const mockToast = jest.fn();
 const mockLocalNotification = jest.fn();
@@ -25,6 +28,12 @@ jest.mock('@/providers/AuthProvider', () => ({ useAuth: () => ({ session: mockSe
 jest.mock('@/providers/ToastProvider', () => ({ useToast: () => mockToastValue }));
 jest.mock('@/lib/track', () => ({ track: jest.fn() }));
 jest.mock('@/lib/clientBuild', () => ({ clientBuildMetadata: () => ({}) }));
+jest.mock('@/lib/tiktokPerception', () => ({
+    ...jest.requireActual('@/lib/tiktokPerception'),
+    fetchTikTokPerception: (...args: unknown[]) => mockPerceive(...args),
+    downloadSlideImage: (...args: unknown[]) => mockSlideDownload(...args),
+    deleteCachedSlide: jest.fn(),
+}));
 jest.mock('@/lib/edgeInvoke', () => ({
     callEdgeFn: (...args: unknown[]) => mockEdge(...args),
     isAuthFailure: () => false,
@@ -37,7 +46,7 @@ jest.mock('@/lib/localNotify', () => ({
 jest.mock('@/modules/media-extract', () => ({
     isVideoImportAvailable: () => true,
     extractFromVideo: (...args: unknown[]) => mockExtract(...args),
-    extractFromImages: jest.fn(),
+    extractFromImages: (...args: unknown[]) => mockSlideExtract(...args),
     appGroupFileInfo: () => ({ exists: mockSourceExists, size: mockSourceExists ? 500 : 0 }),
     deleteAppGroupFile: (...args: unknown[]) => mockDelete(...args),
     beginBackgroundTask: () => 1,
@@ -85,6 +94,9 @@ describe('root import queue gallery integration', () => {
         mockAppState.currentState = 'active';
         mockSourceExists = true;
         mockExtract.mockReset().mockResolvedValue(evidence);
+        mockPerceive.mockReset().mockResolvedValue(null);
+        mockSlideDownload.mockReset().mockResolvedValue(null);
+        mockSlideExtract.mockReset().mockResolvedValue({ ocr: [] });
         mockEdge.mockReset().mockImplementation(async (fn: string, options: any) => {
             if (fn === 'notifications') return { ok: true };
             if (fn === 'resolve-url' && !options.action) return { source_type: 'video', candidates: [candidate] };
@@ -108,6 +120,34 @@ describe('root import queue gallery integration', () => {
         await act(async () => { tree = TestRenderer.create(<Root showSheet={showSheet} />); });
         await flush();
     }
+
+    it.each(['no slide URLs', 'failed downloads', 'failed OCR'] as const)(
+        'preserves photo title when %s and never retries generic URL after abstention', async failure => {
+            seed({ kind: 'url', url: 'https://vm.tiktok.com/ZN8jyna5p/', videoPath: undefined });
+            mockPerceive.mockResolvedValue({
+                text: '', title: 'Keiko Uchida', desc: 'A little corner of Japan in London',
+                transcript: '', hasTranscript: false, isPhotoPost: true,
+                playAddr: null, thumbnailUrl: null, authorHandle: 'allisims',
+                slideUrls: failure === 'no slide URLs' ? [] : ['https://cdn.example/1.jpg'],
+            });
+            if (failure === 'failed OCR') {
+                mockSlideDownload.mockResolvedValue('file://cache/slide.jpg');
+                mockSlideExtract.mockRejectedValue(new Error('OCR unavailable'));
+            }
+            mockEdge.mockImplementation(async (fn: string) => fn === 'notifications'
+                ? { ok: true } : { source_type: 'video', candidates: [] });
+            await mount();
+            const calls = mockEdge.mock.calls.filter(([fn]) => fn === 'resolve-url');
+            expect(calls).toHaveLength(1);
+            const body = calls[0][1].body;
+            expect(body.extracted_text).toContain('[title]\nKeiko Uchida');
+            expect(body.extracted_text.match(/A little corner of Japan in London/g)).toHaveLength(1);
+            expect(body.caption).toBeUndefined();
+            expect(body.url).toBeUndefined();
+            expect(body.slide_count).toBe(failure === 'no slide URLs' ? undefined : 1);
+            expect(mockExtract).not.toHaveBeenCalled();
+        },
+    );
 
     it('waits for native preparation and drains from its event after the import sheet unmounts', async () => {
         seed({ sourcePreparation: 'pending' });
