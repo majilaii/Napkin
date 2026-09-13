@@ -217,6 +217,46 @@ export function streetAddressConsistent(
     return !wanted.suffix || !found.suffix || wanted.suffix === found.suffix;
 }
 
+/** A missing/repeated internal letter, not substitutions or suffix differences. */
+function hasSingleInternalLetterOmission(a: string, b: string): boolean {
+    const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+    if (!/^[a-z]{6,}$/.test(short) || !/^[a-z]+$/.test(long) || long.length !== short.length + 1) return false;
+    if (short[0] !== long[0] || short.at(-1) !== long.at(-1)) return false;
+    for (let i = 1; i < short.length; i += 1) {
+        if (short[i] !== long[i]) return short.slice(i) === long.slice(i + 1);
+    }
+    return false;
+}
+
+/**
+ * A source can contain a typo even when OCR copied it perfectly: the Bar
+ * Temini (Soho) slide meant Bar Termini. Recover only one omitted/repeated
+ * internal letter in a long distinctive word, with every other distinctive
+ * word unchanged and an exact structured city match. An address mentioning
+ * "London Road" or an area-only match cannot corroborate this weaker name.
+ * Used only for interactive text-search recovery, with ambiguity checked
+ * against the other returned Places identities below.
+ */
+function hasCorroboratedNameTypo(
+    extracted: { name?: string | null; city?: string | null },
+    place: { name?: string | null; city?: string | null },
+): boolean {
+    const wantedCity = normalizeName(extracted.city);
+    const providerCity = normalizeName(place.city);
+    if (!wantedCity || wantedCity !== providerCity) return false;
+    const distinctiveTokens = (name: string | null | undefined) =>
+        normalizeName(name).split(' ').filter((token) => token && !GENERIC_TOKENS.has(token));
+    const wanted = distinctiveTokens(extracted.name);
+    const found = distinctiveTokens(place.name);
+    if (wanted.length === 0 || wanted.length !== found.length) return false;
+    let omissions = 0;
+    for (let i = 0; i < wanted.length; i += 1) {
+        if (wanted[i] === found[i]) continue;
+        if (++omissions > 1 || !hasSingleInternalLetterOmission(wanted[i], found[i])) return false;
+    }
+    return omissions === 1;
+}
+
 /**
  * Preserve the exact interactive Places gates as an explicit provenance
  * decision. Callers used to collapse all three non-match branches to `null`,
@@ -232,6 +272,30 @@ export function classifyInteractiveCandidate(
     if (!localityConsistent(extracted, place)) return 'locality_reject';
     if (!streetAddressConsistent(extracted, place)) return 'locality_reject';
     return 'matched';
+}
+
+/**
+ * Apply the normal top-result gate, then recover a narrowly corroborated
+ * source typo only when no other returned identity plausibly fits. Never
+ * promote a lower result or change exact-name, verified-reuse, or unattended
+ * resolution behavior. This consumes the search's existing bounded results.
+ */
+export function classifyInteractiveSearchResults(
+    extracted: { name?: string | null; city?: string | null; area?: string | null; address?: string | null },
+    places: { id?: string | null; name?: string | null; city?: string | null; formattedAddress?: string | null }[],
+): InteractiveCandidateDecision {
+    const top = places[0];
+    if (!top?.id) return 'no_result';
+    const decision = classifyInteractiveCandidate(extracted, top);
+    if (decision !== 'name_reject' || !hasCorroboratedNameTypo(extracted, top)) return decision;
+    if (!streetAddressConsistent(extracted, top)) return 'locality_reject';
+    const ambiguous = places.slice(1).some((other) =>
+        other.id && other.id !== top.id &&
+        normalizeName(other.city) === normalizeName(extracted.city) &&
+        streetAddressConsistent(extracted, other) &&
+        (namesOverlap(extracted.name, other.name) || hasCorroboratedNameTypo(extracted, other))
+    );
+    return ambiguous ? 'name_reject' : 'matched';
 }
 
 // ── TICKET-195: unattended deferred-resolution scorer ───────────────────────

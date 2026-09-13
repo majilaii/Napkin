@@ -6,7 +6,7 @@
  * instead of them vanishing into hundreds of saves.
  */
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +26,7 @@ import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/
 import { queryKeys } from '@/lib/queryKeys';
 import { useExhaustedCompletenessItems } from '@/hooks/imports/useCompletenessRetries';
 import { ImportChecks } from '@/components/wishlist/ImportChecks';
+import { importSourceLink } from '@/components/wishlist/importSourceLink';
 import {
     importSourceLabel,
     spotCountLabel,
@@ -102,6 +103,15 @@ export default function ImportBatchScreen() {
     );
 
     const job = data?.job ?? null;
+    const sourceLink = importSourceLink(job?.source);
+    const openSource = async () => {
+        if (!sourceLink) return;
+        try {
+            await Linking.openURL(sourceLink.url);
+        } catch {
+            toast.show("couldn't open this link. try again");
+        }
+    };
     const allItems = data?.items ?? [];
     const items = allItems.filter(
         (it) => it.restaurant != null && !removed.has(it.restaurant.id),
@@ -179,6 +189,17 @@ export default function ImportBatchScreen() {
                         <View style={styles.header}>
                             <Text style={[styles.title, { color: palette.text }]}>Review clip</Text>
                             <Text style={[styles.subtitle, { color: palette.textMuted }]}>{subtitle}</Text>
+                            {sourceLink ? (
+                                <Pressable
+                                    onPress={() => void openSource()}
+                                    accessibilityRole="link"
+                                    accessibilityLabel={`${sourceLink.label}, opens the original clip`}
+                                    style={({ pressed }) => [styles.sourceLink, { opacity: pressed ? 0.75 : 1 }]}
+                                >
+                                    <Ionicons name="open-outline" size={24} color={palette.primary} />
+                                    <Text style={[Type.body, { color: palette.primary }]}>{sourceLink.label}</Text>
+                                </Pressable>
+                            ) : null}
                             {user ? <ImportChecks key={`${user.id}:${jobId}`} userId={user.id}
                                 items={batchChecks} savedRestaurantIds={new Set(items.map((item) => item.restaurant!.id))}
                                 palette={palette} loading={checks.isLoading} error={checks.isError}
@@ -313,6 +334,7 @@ const styles = StyleSheet.create({
     header: { paddingTop: Spacing.sm, paddingBottom: Spacing.md },
     title: { ...Type.screenTitle },
     subtitle: { ...Type.metadata, marginTop: Spacing.xs },
+    sourceLink: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', minHeight: 44, gap: Spacing.sm, marginTop: Spacing.xs },
     addRow: { flexDirection: 'row', alignItems: 'center', minHeight: 48, gap: Spacing.xs },
     addLabel: { ...Type.body },
     listContent: { paddingHorizontal: Spacing.lg },
