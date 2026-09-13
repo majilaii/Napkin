@@ -290,6 +290,8 @@ export const Spacing = {
     regularAvatar: 40,
     similarCardWidth: 148,
     similarPhotoHeight: 104,
+    locationMapHeight: 176,
+    clippingArtworkSize: 56,
   },
   /** Shared sheet chrome; detent geometry remains component-owned. */
   sheet: {

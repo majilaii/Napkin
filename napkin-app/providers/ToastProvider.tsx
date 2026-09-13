@@ -2,38 +2,40 @@
  * Global toast provider. Surfaces transient messages from anywhere in the app
  * via `useToast().show(message)`. Backed by ActivityToast for the visuals.
  */
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { ActivityToast, type Toast, type ToastAction } from '@/components/table-night/ActivityToast';
+import { useAuth } from '@/providers/AuthProvider';
+import { ActivityToast, type Toast, type ToastAction, type ToastOptions } from '@/components/table-night/ActivityToast';
 
 interface ToastContextValue {
-    show: (message: string, action?: ToastAction) => void;
+    show: (message: string, action?: ToastAction, options?: ToastOptions) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
-const TOAST_TTL_MS = 3000;
-
 export function ToastProvider({ children }: { children: React.ReactNode }) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const [toasts, setToasts] = useState<Toast[]>([]);
+    const { session } = useAuth();
+    const ownerId = session?.user.id;
+    const [toasts, setToasts] = useState<(Toast & { ownerId?: string })[]>([]);
+    useEffect(() => setToasts([]), [ownerId]);
 
     const dismiss = useCallback((id: string) => {
         setToasts((prev) => prev.filter((t) => t.id !== id));
     }, []);
 
-    const show = useCallback((message: string, action?: ToastAction) => {
+    const show = useCallback((message: string, action?: ToastAction, options?: ToastOptions) => {
         const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        setToasts((prev) => [...prev, { id, message, timestamp: Date.now(), action }]);
-        setTimeout(() => dismiss(id), TOAST_TTL_MS);
-    }, [dismiss]);
+        setToasts((prev) => [...prev.slice(0, 2), { id, message, timestamp: Date.now(), action, ownerId, ...options }]);
+    }, [ownerId]);
+    const value = useMemo(() => ({ show }), [show]);
 
     return (
-        <ToastContext.Provider value={{ show }}>
+        <ToastContext.Provider value={value}>
             {children}
-            <ActivityToast toasts={toasts} onDismiss={dismiss} palette={palette} />
+            <ActivityToast toasts={toasts.filter((toast) => toast.ownerId === ownerId)} onDismiss={dismiss} palette={palette} />
         </ToastContext.Provider>
     );
 }

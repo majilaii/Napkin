@@ -29,6 +29,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { makeTestClient, renderHookWithClient } from '@/__tests__/utils/queryWrapper';
 import {
     fetchRestaurantPage,
+    restaurantFromPlace,
     useRestaurantPage,
     type RestaurantPageData,
 } from './useRestaurantPage';
@@ -123,5 +124,19 @@ describe('useRestaurantPage cache + transport', () => {
         expect(result.current.isLoading).toBe(true);
         resolvePage?.(pageData());
         await waitFor(() => expect(result.current.data).toBeDefined());
+    });
+});
+
+describe('ghost restaurant location', () => {
+    it('preserves the search result coordinates before a restaurant has been saved', () => {
+        const restaurant = restaurantFromPlace({
+            name: 'Padella', external_id: 'place-id', latitude: 51.505, longitude: -0.09,
+        });
+        expect(restaurant).toEqual(expect.objectContaining({ id: '', lat: 51.505, lng: -0.09 }));
+    });
+
+    it('does not synthesize coordinates for a search result without a pin', () => {
+        expect(restaurantFromPlace({ name: 'Padella', external_id: 'place-id' }))
+            .toEqual(expect.objectContaining({ lat: null, lng: null }));
     });
 });

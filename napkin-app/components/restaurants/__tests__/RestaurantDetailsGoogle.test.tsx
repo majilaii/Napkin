@@ -26,6 +26,7 @@ jest.mock('react-native', () => {
 });
 jest.mock('expo-image', () => ({ Image: 'ExpoImage' }));
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
+jest.mock('react-native-maps', () => ({ __esModule: true, default: 'MapView', Marker: 'Marker', UrlTile: 'UrlTile' }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 import React from 'react';
@@ -61,6 +62,32 @@ const restaurant: RestaurantPageRestaurant = {
 };
 
 describe('RestaurantDetails Google fact', () => {
+    it('shows a coordinate-only venue map even when no other details are available', () => {
+        const screen = render(
+            <RestaurantDetails
+                restaurant={{ ...restaurant, google_rating: null, lat: 51.505, lng: -0.09 }}
+                directionsUrl="https://maps.test"
+                palette={Colors.light}
+            />,
+        );
+        expect(screen.getByText('DETAILS')).toBeTruthy();
+        expect(screen.getByText('Open in Maps')).toBeTruthy();
+        expect(screen.getByTestId('restaurant-location-map', { includeHiddenElements: true }).props.initialRegion)
+            .toEqual(expect.objectContaining({ latitude: 51.505, longitude: -0.09 }));
+    });
+
+    it('keeps address directions available without a valid map pin', () => {
+        const screen = render(
+            <RestaurantDetails
+                restaurant={{ ...restaurant, address: '6 Southwark Street', lat: NaN, lng: -0.09 }}
+                directionsUrl="https://maps.test"
+                palette={Colors.light}
+            />,
+        );
+        expect(screen.queryByTestId('restaurant-location-map', { includeHiddenElements: true })).toBeNull();
+        expect(screen.getByLabelText('6 Southwark Street, directions')).toBeTruthy();
+    });
+
     it('renders as the only detail in the faint treatment and hides without a rating', () => {
         const visible = render(
             <RestaurantDetails

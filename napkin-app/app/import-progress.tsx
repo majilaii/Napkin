@@ -12,7 +12,7 @@
 import React from 'react';
 import { Alert, View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -39,10 +39,11 @@ import {
 import { WatchAgainLink } from '@/components/wishlist/ImportSourceCard';
 import { ClipThumb } from '@/components/wishlist/ClipThumb';
 import { PlacePickerModal, type PlacePickerResult } from '@/components/wishlist/PlacePickerModal';
-import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue, getImportForUser } from '@/lib/importQueue';
+import { retryImport, removeImport, setImportMode, setImportSpots, pokeImportQueue, getImportForUser, listActiveManifests } from '@/lib/importQueue';
 import { mintImportMatchCorrection } from '@/lib/importResolution';
 import { deleteAppGroupFile, isBackgroundVideoCaptureAvailable, pickVideoForImport } from '@/modules/media-extract';
 import { maybeOfferNotifPrompt } from '@/lib/localNotify';
+import { importNoticeDetail } from '@/lib/importNotificationNavigation';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -62,6 +63,19 @@ export default function ImportProgressScreen() {
     const router = useRouter();
     const { user } = useAuth();
     const active = useActiveImports();
+    const notice = useLocalSearchParams<{ openJob?: string; outcome?: string; owner?: string }>();
+    const handledNotice = React.useRef<string | null>(null);
+    React.useEffect(() => {
+        if (!user?.id || !notice.openJob) return;
+        const key = `${user.id}:${notice.openJob}:${notice.outcome}`;
+        if (handledNotice.current === key) return;
+        handledNotice.current = key;
+        const detail = importNoticeDetail({
+            jobId: notice.openJob, outcome: notice.outcome, ownerId: notice.owner,
+            currentUserId: user.id, manifests: listActiveManifests(user.id),
+        });
+        if (detail) router.push(detail as any);
+    }, [active, notice.openJob, notice.outcome, notice.owner, router, user?.id]);
     // Completed batches — every import stays reachable here for fix/prune.
     // Canonical fetch (TICKET-191) is RECENT_IMPORTS_FETCH_LIMIT = 10 rows —
     // exactly what this hub shows, so no local slice.

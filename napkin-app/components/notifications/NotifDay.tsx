@@ -4,7 +4,7 @@
 import React from 'react';
 import { Text, StyleSheet } from 'react-native';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface Props {
@@ -23,12 +23,9 @@ export function NotifDay({ children }: Props) {
 
 const styles = StyleSheet.create({
     label: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 10,
-        letterSpacing: 1.8,
-        textTransform: 'uppercase',
-        paddingHorizontal: 22,
-        paddingTop: 18,
-        paddingBottom: 8,
+        ...Type.sectionKicker,
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.lg,
+        paddingBottom: Spacing.sm,
     },
 });

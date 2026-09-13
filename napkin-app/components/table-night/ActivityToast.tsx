@@ -1,160 +1,95 @@
-/**
- * ActivityToast — TICKET-069 canvas restyle (P · TOAST).
- *
- * Canvas spec:
- *   position: bottom 96px
- *   background: var(--ink-primary)  (#1c1c19)
- *   text: #fffdf8 italic serif 16
- *   border-radius: 9999px (full pill)
- *   padding: 10px 22px
- *
- * Shows max 1 toast at a time (bottom placement, pills stack upward if needed).
- * Auto-dismiss after 3s with a slide-up / fade-out animation.
- */
+/** A paper notice above the navigation. The visible notice owns its lifetime. */
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { AccessibilityInfo, View, Text, Pressable, StyleSheet, Animated } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Spacing } from '@/constants/theme';
+import { Colors, IconSize, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 
-export interface ToastAction {
-    label: string;
-    onPress: () => void;
+export interface ToastAction { label: string; onPress: () => void; }
+export interface ToastOptions {
+    title?: string;
+    icon?: React.ComponentProps<typeof Ionicons>['name'];
 }
-
-export interface Toast {
+export interface Toast extends ToastOptions {
     id: string;
     message: string;
     timestamp: number;
     action?: ToastAction;
 }
+type Palette = { text: string; [key: string]: string | number };
+interface ActivityToastProps { toasts: Toast[]; onDismiss: (id: string) => void; palette: Palette; }
+export const TOAST_DURATION_MS = 4000;
+export const ACTION_TOAST_DURATION_MS = 8000;
 
-type Palette = {
-    text: string;
-    [key: string]: string | number;
-};
-
-interface ActivityToastProps {
-    toasts: Toast[];
-    onDismiss: (id: string) => void;
-    palette: Palette;
-}
-
-function ToastItem({
-    toast,
-    onDismiss,
-    index,
-}: {
-    toast: Toast;
-    onDismiss: (id: string) => void;
-    index: number;
-}) {
-    const translateY = useRef(new Animated.Value(40)).current;
+function ToastItem({ toast, onDismiss, palette }: { toast: Toast; onDismiss: (id: string) => void; palette: Palette }) {
     const opacity = useRef(new Animated.Value(0)).current;
+    const dismissed = useRef(false);
     const onDismissRef = useRef(onDismiss);
     onDismissRef.current = onDismiss;
-
+    const colors = { ...Colors.light, ...palette } as typeof Colors.light;
     useEffect(() => {
-        // Slide up from below
-        Animated.parallel([
-            Animated.spring(translateY, {
-                toValue: 0,
-                useNativeDriver: true,
-                tension: 80,
-                friction: 12,
-            }),
-            Animated.timing(opacity, {
-                toValue: 1,
-                duration: 180,
-                useNativeDriver: true,
-            }),
-        ]).start();
-
-        // Auto-dismiss
-        const timer = setTimeout(() => {
-            Animated.parallel([
-                Animated.timing(translateY, {
-                    toValue: 40,
-                    duration: 200,
-                    useNativeDriver: true,
-                }),
-                Animated.timing(opacity, {
-                    toValue: 0,
-                    duration: 200,
-                    useNativeDriver: true,
-                }),
-            ]).start(() => {
-                onDismissRef.current(toast.id);
-            });
-        }, 3000);
-
-        return () => clearTimeout(timer);
-    }, [toast.id, translateY, opacity]);
-
-    // Stack pills upward: each subsequent toast is offset above the previous
-    const bottomOffset = index * 48;
-
-    return (
-        <Animated.View
-            style={[
-                styles.pill,
-                {
-                    transform: [{ translateY }],
-                    opacity,
-                    marginBottom: bottomOffset,
-                },
-            ]}
-            pointerEvents="none"
-        >
-            <Text style={styles.pillText}>{toast.message}</Text>
-        </Animated.View>
-    );
-}
-
-export function ActivityToast({ toasts, onDismiss }: ActivityToastProps) {
-    const insets = useSafeAreaInsets();
-
-    if (toasts.length === 0) return null;
-
-    // Canvas: bottom 96px. Respect safe-area so it doesn't overlap home indicator.
-    const bottomPos = Math.max(96, insets.bottom + 80);
-
-    return (
-        <View
-            style={[styles.container, { bottom: bottomPos }]}
-            pointerEvents="box-none"
-        >
-            {toasts.slice(0, 2).map((toast, index) => (
-                <ToastItem
-                    key={toast.id}
-                    toast={toast}
-                    onDismiss={onDismiss}
-                    index={index}
-                />
-            ))}
+        let active = true;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+        const duration = toast.action ? ACTION_TOAST_DURATION_MS : TOAST_DURATION_MS;
+        const schedule = (screenReader: boolean) => {
+            if (!active || (screenReader && toast.action)) return;
+            timer = setTimeout(() => {
+                Animated.timing(opacity, { toValue: 0, duration: 160, useNativeDriver: true }).start(() => {
+                    if (active && !dismissed.current) {
+                        dismissed.current = true;
+                        onDismissRef.current(toast.id);
+                    }
+                });
+            }, duration);
+        };
+        AccessibilityInfo.isScreenReaderEnabled().then(schedule, () => schedule(false));
+        return () => { active = false; clearTimeout(timer); opacity.stopAnimation(); };
+    }, [toast.id, toast.action, opacity]);
+    const dismiss = () => {
+        if (dismissed.current) return false;
+        dismissed.current = true;
+        onDismissRef.current(toast.id);
+        return true;
+    };
+    const content = <>
+        {toast.icon ? <View style={[styles.icon, { backgroundColor: colors.primaryMuted }]}>
+            <Ionicons name={toast.icon} size={IconSize.lg} color={colors.primary} />
+        </View> : null}
+        <View style={styles.copy}>
+            {toast.title ? <Text style={[Type.sectionKicker, { color: colors.textMuted }]}>{toast.title}</Text> : null}
+            <Text style={[Type.body, { color: colors.text }]}>{toast.message}</Text>
+            {toast.action ? <View style={styles.actionLine}>
+                <Text style={[Type.metadata, { color: colors.primary }]}>{toast.action.label}</Text>
+                <Ionicons name="arrow-forward-outline" size={IconSize.sm} color={colors.primary} />
+            </View> : null}
         </View>
-    );
+    </>;
+    return <Animated.View style={[styles.notice, { backgroundColor: colors.card, opacity }]} accessibilityLiveRegion="polite">
+        {toast.action ? <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${toast.title ? `${toast.title}. ` : ''}${toast.message}. ${toast.action.label}`}
+            onPress={() => { if (dismiss()) toast.action?.onPress(); }}
+            style={({ pressed }) => [styles.main, { opacity: pressed ? 0.8 : 1 }]}
+        >{content}</Pressable> : <View style={styles.main}>{content}</View>}
+        <Pressable onPress={dismiss} accessibilityRole="button" accessibilityLabel="Dismiss notification" style={styles.close}>
+            <Ionicons name="close-outline" size={IconSize.md} color={colors.textMuted} />
+        </Pressable>
+    </Animated.View>;
 }
-
+export function ActivityToast({ toasts, onDismiss, palette }: ActivityToastProps) {
+    const insets = useSafeAreaInsets();
+    if (!toasts.length) return null;
+    return <View style={[styles.container, { bottom: Math.max(96, insets.bottom + 80) }]} pointerEvents="box-none">
+        <ToastItem key={toasts[0].id} toast={toasts[0]} onDismiss={onDismiss} palette={palette} />
+    </View>;
+}
 const styles = StyleSheet.create({
-    container: {
-        position: 'absolute',
-        left: Spacing.lg,
-        right: Spacing.lg,
-        zIndex: 100,
-        alignItems: 'center',
-    },
-    pill: {
-        // Canvas: ink-primary (#1c1c19) background, white-warm text, radius-full
-        backgroundColor: '#1c1c19',
-        borderRadius: 9999,
-        paddingHorizontal: 22,
-        paddingVertical: 10,
-        alignSelf: 'center',
-    },
-    pillText: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 16,
-        lineHeight: 22,
-        color: '#fffdf8',
-    },
+    container: { position: 'absolute', left: Spacing.md, right: Spacing.md, zIndex: 100 },
+    notice: { ...Shadow.ambient, borderRadius: Radius.lg, flexDirection: 'row', alignItems: 'flex-start' },
+    main: { flex: 1, minHeight: Spacing.hitTarget, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, paddingRight: 0 },
+    icon: { width: Spacing.hitTarget, height: Spacing.hitTarget, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+    copy: { flex: 1, minWidth: 0, gap: Spacing.xs },
+    actionLine: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+    close: { minWidth: Spacing.hitTarget, minHeight: Spacing.hitTarget, alignItems: 'center', justifyContent: 'center' },
 });
