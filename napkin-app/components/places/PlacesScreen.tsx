@@ -807,11 +807,12 @@ export function PlacesScreen({
         ? decorateAndSortRows([selectedRow], distanceOrigin)[0]?.distanceLabel ?? null
         : null;
     const selectedCaptionVisible = mapMode && activeSegment === 'places' && !!selectedRow && !!selectedItem;
-    const selectedCaptionViewportStyle = useAnimatedStyle(() => ({
-        // Measure the controls because their height grows with Dynamic Type.
-        maxHeight: Math.max(0, previewContainerHeight.value - liveBottomInset.value
-            - mapControlsBottom.value - 2 * (Spacing.sm + Spacing.xs)),
-    }));
+    const selectedCaptionViewportStyle = useAnimatedStyle(() => {
+        // Keep most of the map visible, including when Dynamic Type grows.
+        const availableHeight = Math.max(0, previewContainerHeight.value - liveBottomInset.value
+            - mapControlsBottom.value - 2 * (Spacing.sm + Spacing.xs));
+        return { maxHeight: availableHeight * 0.4 };
+    });
 
     useEffect(() => {
         const trimmed = debouncedQuery.trim();

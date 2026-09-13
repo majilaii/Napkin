@@ -9,7 +9,6 @@ import { PEEK_MAX_FONT_SCALE } from '@/components/wishlist/peekLayout';
 import type { WishlistMapItem } from '@/components/wishlist/mapShared';
 import { peekCardContextForItem, usePeekCard } from '@/hooks/restaurants/usePeekCard';
 import { priceTierLabel } from '@/lib/priceLevel';
-import { todaysHoursLine } from '@/lib/restaurantHours';
 import { PlacesRatingLabel } from './PlacesRow';
 import { composeFriendCaptionMeta, type PlacesDisplayRow } from './placesPresentation';
 
@@ -53,7 +52,6 @@ export function PlacesSelectedCard({ row, item, viewerId, distance, palette, onO
     const cuisine = mapPeekCuisine(row.cuisine)?.toLowerCase();
     const price = priceTierLabel(preview.data?.price_level ?? row.priceLevel);
     const location = [preview.data?.address_short || row.city, distance].filter(Boolean).join(' · ');
-    const hours = todaysHoursLine(preview.data?.hours);
     const relationship = row.network ? composeFriendCaptionMeta(row) : null;
     const photoLoading = !photo && preview.isLoading;
 
@@ -63,7 +61,7 @@ export function PlacesSelectedCard({ row, item, viewerId, distance, palette, onO
             accessibilityRole="button"
             accessibilityLabel={[
                 `open ${row.name}`, cuisine, price && `price ${price}`, location,
-                hours && `hours ${hours}`, relationship,
+                relationship, !photo && !photoLoading && 'no photo',
             ].filter(Boolean).join(', ')}
             onPress={onOpen}
             style={({ pressed }) => [
@@ -88,11 +86,8 @@ export function PlacesSelectedCard({ row, item, viewerId, distance, palette, onO
                     ) : photoLoading ? (
                         <ActivityIndicator testID="places-selected-photo-loading" color={palette.textMuted} />
                     ) : (
-                        <View testID="places-selected-no-photo" style={styles.photoFallback}>
+                        <View testID="places-selected-no-photo">
                             <Ionicons name="restaurant-outline" size={IconSize.lg} color={palette.primary} />
-                            <Text style={[Type.metadata, { color: palette.textMuted }]} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
-                                no photo
-                            </Text>
                         </View>
                     )}
                 </View>
@@ -100,69 +95,57 @@ export function PlacesSelectedCard({ row, item, viewerId, distance, palette, onO
                     <View style={styles.nameRow}>
                         <Text
                             style={[Type.mapPeekName, styles.name, { color: palette.text }]}
-                            numberOfLines={2}
+                            numberOfLines={1}
                             maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}
                         >
                             {row.name}
                         </Text>
                         <Ionicons name="chevron-forward-outline" size={IconSize.sm} color={palette.textMuted} />
                     </View>
-                    {cuisine || price ? (
-                        <View testID="places-selected-facts" style={styles.facts}>
-                            {cuisine ? (
-                                <Text style={[Type.metadata, { color: palette.textSecondary }]} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
-                                    {cuisine}
-                                </Text>
-                            ) : null}
-                            {price ? (
-                                <Text style={[Type.mapPeekMeta, { color: palette.textSecondary }]} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
-                                    {price}
-                                </Text>
-                            ) : null}
-                        </View>
-                    ) : null}
-                    {location ? (
-                        <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={2} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
-                            {location}
+                    <View testID="places-selected-facts" style={styles.facts}>
+                        {cuisine ? (
+                            <Text style={[Type.metadata, styles.cuisine, { color: palette.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
+                                {cuisine}
+                            </Text>
+                        ) : null}
+                        {price ? (
+                            <Text style={[Type.mapPeekMeta, { color: palette.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
+                                {price}
+                            </Text>
+                        ) : null}
+                        <PlacesRatingLabel row={row} />
+                    </View>
+                    {relationship || location ? (
+                        <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={1} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
+                            {relationship || location}
                         </Text>
                     ) : null}
-                    <PlacesRatingLabel row={row} />
+                    {credit ? (
+                        <Text testID="places-selected-photo-credit" style={[Type.caption, { color: palette.textMuted }]} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
+                            photo by {credit.label}
+                        </Text>
+                    ) : null}
                 </View>
             </View>
-            {hours ? (
-                <Text style={[Type.metadata, { color: palette.textSecondary }]} numberOfLines={2} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
-                    hours · {hours}
-                </Text>
-            ) : null}
-            {relationship ? (
-                <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={2} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
-                    {relationship}
-                </Text>
-            ) : null}
-            {credit ? (
-                <Text testID="places-selected-photo-credit" style={[Type.metadata, { color: palette.textMuted }]} maxFontSizeMultiplier={PEEK_MAX_FONT_SCALE}>
-                    photo by {credit.label}
-                </Text>
-            ) : null}
         </Pressable>
     );
 }
 
 const styles = StyleSheet.create({
-    card: { borderRadius: Radius.lg, padding: Spacing.sm + Spacing.xs, gap: Spacing.sm },
+    card: { borderRadius: Radius.lg, padding: Spacing.sm },
     summary: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm + Spacing.xs },
     photoFrame: {
-        width: Spacing.xxl * 2 + Spacing.md,
-        height: Spacing.xxl * 2 + Spacing.lg,
+        width: Spacing.xxl + Spacing.xl,
+        height: Spacing.xxl + Spacing.xl,
         borderRadius: Radius.sm,
         borderWidth: StyleSheet.hairlineWidth,
         overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
     },
-    photoFallback: { alignItems: 'center', gap: Spacing.sm },
-    copy: { flex: 1, gap: Spacing.xs },
+    copy: { flex: 1, gap: Spacing.xs / 2 },
     nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
     name: { flex: 1 },
-    facts: { flexDirection: 'row', flexWrap: 'wrap', columnGap: Spacing.sm, rowGap: Spacing.xs },
+    facts: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.sm },
+    cuisine: { flexShrink: 1 },
 });
