@@ -1516,7 +1516,7 @@ export function PlacesScreen({
                     showsHorizontalScrollIndicator={false}
                     style={styles.chipScroller}
                     contentContainerStyle={styles.chipLine}
-                    onLayout={mapMode ? handleMapControlsLayout : undefined}
+                    onLayout={handleMapControlsLayout}
                 >
                     <SearchLocalityBar
                         compact
