@@ -102,7 +102,7 @@ describe('selected Places card', () => {
             photoUrl: 'https://example.org/uncredited.jpg', photoSource: 'places',
         })} distance={null} />);
         expect(screen.queryByTestId('places-selected-photo')).toBeNull();
-        expect(screen.getByText('no photo')).toBeTruthy();
+        expect(screen.getByTestId('places-selected-caption').props.accessibilityLabel).toContain('no photo');
         expect(screen.queryByText(/\$/)).toBeNull();
         expect(screen.queryByText('establishment')).toBeNull();
         expect(screen.getByText('The Ritz London')).toBeTruthy();
