@@ -230,15 +230,20 @@ it('changes the date only on the selected older visit', async () => {
 it('undoes only the check-in just recorded, preserving the older visit', async () => {
     const older = row('older', '2026-09-01');
     const newer = row('newer', '2026-09-02');
-    record.mockResolvedValue({ entry: { id: 'newer', is_bare: true } });
+    let finishCheckIn!: (result: unknown) => void;
+    record.mockImplementationOnce(() => new Promise((resolve) => { finishCheckIn = resolve; }));
     undo.mockResolvedValue({});
     const screen = render(<RestaurantVisitActions {...props} visits={[older]} />);
     fireEvent.press(screen.getByText('New visit'));
     fireEvent.press(screen.getByText('Check in'));
-    await waitFor(() => expect(screen.queryByText('Check in')).toBeNull());
+    expect(record).toHaveBeenCalledTimes(1);
+    await act(async () => { finishCheckIn({ entry: { id: 'newer', is_bare: true } }); });
+    expect(screen.queryByText('Check in')).toBeNull();
+    expect(screen.getByText('Loading your visit…')).toBeTruthy();
     screen.rerender(<RestaurantVisitActions {...props} visits={[older, newer]} />);
-    fireEvent.press(screen.getByLabelText('Undo check-in'));
-    await waitFor(() => expect(undo).toHaveBeenCalledWith('newer'));
+    await act(async () => { fireEvent.press(screen.getByLabelText('Undo check-in')); });
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(undo).toHaveBeenCalledWith('newer');
     screen.rerender(<RestaurantVisitActions {...props} visits={[older]} />);
     expect(screen.getByText('1 visit')).toBeTruthy();
     expect(screen.queryByText('Undo')).toBeNull();
