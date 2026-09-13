@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -33,6 +34,7 @@ export default function RestaurantReviewsScreen() {
     return (
         <View style={[styles.container, { backgroundColor: palette.background, paddingTop: insets.top }]}>
             <Stack.Screen options={{ headerShown: false }} />
+            <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
 
             <View style={styles.header}>
                 <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back} accessibilityLabel="back">
