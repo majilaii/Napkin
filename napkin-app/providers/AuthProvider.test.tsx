@@ -40,6 +40,13 @@ jest.mock('@/lib/supabase', () => ({
 jest.mock('@/lib/queryClient', () => ({
     queryClient: { removeQueries: jest.fn() },
 }));
+jest.mock('@/lib/importPush', () => ({
+    setImportPushOwner: jest.fn(), unlinkImportPushDevice: jest.fn(),
+    watchImportPushRegistration: () => jest.fn(),
+}));
+jest.mock('@/lib/backgroundImportIntake', () => ({
+    setBackgroundImportOwner: jest.fn(), unlinkBackgroundImportIntake: jest.fn(),
+}));
 
 import { AuthProvider, useAuth } from './AuthProvider';
 

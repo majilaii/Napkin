@@ -25,13 +25,46 @@ public class MediaExtractModule: Module {
     // TICKET-245: v4 adds optional timestamped `frames` to the result, retaining
     // the v2 seven-argument signature and legacy `ocr` field.
     Constants([
-      "apiVersion": 5
+      "apiVersion": 6
     ])
-    Events("onVideoImportPrepared")
+    Events("onVideoImportPrepared", "onBackgroundImportTransfer")
     OnCreate {
       VideoImportCapture.shared.onPrepared = { [weak self] jobId in
         self?.sendEvent("onVideoImportPrepared", ["jobId": jobId])
       }
+      BackgroundImportTransfer.onCompletion = { [weak self] jobId in
+        self?.sendEvent("onBackgroundImportTransfer", ["jobId": jobId])
+      }
+    }
+
+    // v6 shares only a scoped intake credential. The extension never receives
+    // the user's Supabase access or refresh token.
+    Function("getBackgroundImportInstallationId") { BackgroundImportCredentialStore.installationId() }
+    Function("getBackgroundImportCredential") { () -> String? in
+      guard let value = BackgroundImportCredentialStore.read(),
+            let data = try? JSONEncoder().encode(value) else { return nil }
+      return String(data: data, encoding: .utf8)
+    }
+    Function("setBackgroundImportOwner") { (userId: String?) in BackgroundImportCredentialStore.setOwner(userId) }
+    Function("writeBackgroundImportCredential") { (json: String) -> Bool in
+      guard let data = json.data(using: .utf8),
+            let value = try? JSONDecoder().decode(BackgroundImportCredential.self, from: data) else { return false }
+      return BackgroundImportCredentialStore.write(value)
+    }
+    Function("clearBackgroundImportCredential") { BackgroundImportCredentialStore.clear() }
+    Function("getPendingBackgroundImportRevocations") { () -> String in
+      guard let data = try? JSONEncoder().encode(BackgroundImportCredentialStore.pendingRevocations()) else { return "[]" }
+      return String(data: data, encoding: .utf8) ?? "[]"
+    }
+    AsyncFunction("revokeBackgroundImportCredential") { (json: String) async -> Bool in
+      guard let data = json.data(using: .utf8),
+            let value = try? JSONDecoder().decode(BackgroundImportCredential.self, from: data) else { return false }
+      return await BackgroundImportCredentialStore.revoke(value)
+    }
+    Function("getBackgroundImportTransfer") { (jobId: String) -> String? in
+      guard let record = BackgroundImportTransfer.readRecord(jobId: jobId),
+            let data = try? JSONEncoder().encode(record) else { return nil }
+      return String(data: data, encoding: .utf8)
     }
 
     // v5 adds native-owned gallery acquisition; v4 extraction signatures stay intact.

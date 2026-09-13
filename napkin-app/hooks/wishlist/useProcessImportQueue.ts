@@ -41,6 +41,7 @@ import {
     beginBackgroundTask,
     endBackgroundTask,
     onVideoImportPrepared,
+    isBackgroundImportIntakeAvailable,
 } from '@/modules/media-extract';
 import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
 import { markImportCompleted } from '@/lib/importActivation';
@@ -68,10 +69,16 @@ import {
     claimImportOwner,
     onImportEnqueued,
     pokeImportQueue,
+    checkpointRemoteImport,
+    setRemoteImportState,
+    getImportForUser,
+    listActiveManifests,
+    listRetiredRemoteImports,
     type ImportManifest,
     type PersistedImportSpot,
     type LargeImportJob,
 } from '@/lib/importQueue';
+import { readBackgroundImport, syncBackgroundImports, validRemoteResult, BackgroundImportRejectedError } from '@/lib/backgroundImports';
 import {
     buildCompletenessDestinationIntent,
     importDestinationTargets,
@@ -863,6 +870,70 @@ export function useProcessImportQueue() {
             }
             let spots: PersistedImportSpot[] | undefined = m.spots;
             let freshlyResolved = false;
+            if (m.remoteJobId && !spots?.length && m.remoteState !== 'needs_device') {
+                try {
+                    const remote = await readBackgroundImport(m, () => activeUserIdRef.current);
+                    requireActiveImportOwner(m.userId, activeUserIdRef.current);
+                    if (!getImportForUser(m.jobId, m.userId)) return;
+                    if (!remote || remote.status === 'pending' || remote.status === 'processing') {
+                        setImportStage(m.jobId, 'processing in background');
+                        return;
+                    }
+                    if (remote.status === 'dismissed' || remote.status === 'acknowledged') {
+                        removeImport(m.jobId);
+                        return;
+                    }
+                    if (remote.status === 'failed') {
+                        setRemoteImportState(m.jobId, m.userId!, 'failed');
+                        await failAndAnnounceImport(m, "couldn't finish that import");
+                        return;
+                    }
+                    if (remote.status === 'needs_device') {
+                        setRemoteImportState(m.jobId, m.userId!, 'needs_device');
+                        m.remoteState = 'needs_device';
+                    } else if (remote.status === 'ready') {
+                        if (!validRemoteResult(remote.result)) throw new Error('Invalid server import result');
+                        const tableIds = m.destinations.tableIds;
+                        const remoteSpots: PersistedImportSpot[] = remote.result.candidates.map(c => {
+                            const tableShares = Object.fromEntries(tableIds.map(id => [id, safeRandomUUID()]));
+                            return { candidate_id: c.candidate_id ?? safeRandomUUID(), client_nonce: safeRandomUUID(),
+                                resolution_id: c.resolution_id, restaurant_id: c.restaurant_id ?? null,
+                                external_id: c.restaurant_id ? null : c.restaurant.external_id ?? null,
+                                restaurant_name: c.restaurant.name, restaurant_city: c.restaurant.city, area: c.area,
+                                table_id: tableIds[0] ?? null, table_client_nonce: tableIds[0] ? tableShares[tableIds[0]] : null,
+                                table_shares: tableShares, place: buildPlace(c), stance: c.stance ?? null };
+                        });
+                        const ready = checkpointRemoteImport(m.jobId, m.userId!, remoteSpots, {
+                            listCount: remote.result.list_count,
+                            thumbUrl: remote.result.partial_source?.thumbnail_url,
+                            handle: remote.result.partial_source?.author_handle,
+                        });
+                        if (!ready) return;
+                        spots = ready.spots;
+                        m = ready;
+                        if (AppState.currentState === 'active') {
+                            toast.show(`${spots!.length} ${spots!.length === 1 ? 'spot' : 'spots'} ready to review`, {
+                                label: 'Review spots',
+                                onPress: () => { if (m.userId === activeUserIdRef.current) router.push(importNoticeUrl(m.jobId, 'review', m.userId) as any); },
+                            }, { title: 'Imports', icon: 'bookmarks-outline' });
+                        }
+                        queryClient.invalidateQueries({ queryKey: queryKeys.importJobs.all(m.userId!) });
+                        pokeImportQueue();
+                    }
+                } catch (error) {
+                    // Submission/status failure is ambiguous. Keep its identity and
+                    // retry; never launch a second extraction while the server owns it.
+                    if (m.userId === activeUserIdRef.current && getImportForUser(m.jobId, m.userId)) {
+                        if (error instanceof BackgroundImportRejectedError) {
+                            setRemoteImportState(m.jobId, m.userId!, 'failed');
+                            await failAndAnnounceImport(m, error.message);
+                            return;
+                        }
+                        setImportStage(m.jobId, 'waiting for connection');
+                    }
+                    return;
+                }
+            }
             // TICKET-151: the resolver's true Maps-list size (candidates are capped
             // at MAPS_LIST_CAP). Seed from the manifest so a re-drain — which skips
             // resolve entirely — inherits the persisted value; a fresh resolve
@@ -1891,6 +1962,11 @@ export function useProcessImportQueue() {
 
         try {
             if (activeUserIdRef.current !== userId) return;
+            if (isBackgroundImportIntakeAvailable?.()) {
+                try { await syncBackgroundImports(userId, () => activeUserIdRef.current); }
+                catch { /* existing local jobs remain usable when server metadata is unavailable */ }
+                if (activeUserIdRef.current !== userId) return;
+            }
             const pending = listPendingImports().flatMap((manifest) => {
                 // Review-mode manifests ARE drained — they get resolved (OCR/caption)
                 // and persisted, then HELD (processOne returns before save) until the
@@ -1966,10 +2042,19 @@ export function useProcessImportQueue() {
         });
         const unsub = onImportEnqueued(() => drain());
         const unsubPrepared = onVideoImportPrepared(() => pokeImportQueue());
+        // Poll only while a remote job needs attention, and only while foreground.
+        // Server work and pushes continue independently after this timer suspends.
+        const remoteTimer = setInterval(() => {
+            if (!userId || AppState.currentState !== 'active') return;
+            const waiting = listActiveManifests(userId).some(m => m.remoteJobId && !m.spots?.length
+                && m.status === 'pending' && m.remoteState !== 'needs_device');
+            if (waiting || listRetiredRemoteImports(userId).length > 0) drain();
+        }, 5000);
         return () => {
             sub.remove();
             unsub();
             unsubPrepared();
+            clearInterval(remoteTimer);
         };
     }, [drain]);
 }

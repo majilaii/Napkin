@@ -21,6 +21,10 @@ verify_jwt = false
 # This also permits modern opaque sb_secret_* keys, which are not JWTs.
 verify_jwt = false
 
+[functions.background-imports]
+# Full user JWTs, intake-only credentials, and cron calls are verified in the handler.
+verify_jwt = false
+
 [auth]
 # TICKET-090: password-recovery emails 302 to these deep links. Without the
 # allowlist entry Supabase falls back to site_url and the link dead-ends.

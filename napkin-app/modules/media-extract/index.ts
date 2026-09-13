@@ -68,7 +68,15 @@ type NativeMediaExtract = {
     beginBackgroundTask(): number;
     endBackgroundTask(taskId: number): boolean;
     pickVideoForImport(userId: string): Promise<{ canceled: boolean; jobId?: string }>;
-    addListener(event: 'onVideoImportPrepared', listener: (event: { jobId: string }) => void): { remove(): void };
+    getBackgroundImportInstallationId(): string;
+    getBackgroundImportCredential(): string | null;
+    setBackgroundImportOwner(userId: string | null): void;
+    writeBackgroundImportCredential(json: string): boolean;
+    clearBackgroundImportCredential(): void;
+    getPendingBackgroundImportRevocations(): string;
+    revokeBackgroundImportCredential(json: string): Promise<boolean>;
+    getBackgroundImportTransfer(jobId: string): string | null;
+    addListener(event: 'onVideoImportPrepared' | 'onBackgroundImportTransfer', listener: (event: { jobId: string }) => void): { remove(): void };
 };
 
 let cached: NativeMediaExtract | null = null;
@@ -123,6 +131,85 @@ export function pickVideoForImport(userId: string): Promise<{ canceled: boolean;
 export function onVideoImportPrepared(listener: (event: { jobId: string }) => void): () => void {
     if (!isBackgroundVideoCaptureAvailable()) return () => {};
     const subscription = getNative().addListener('onVideoImportPrepared', listener);
+    return () => subscription.remove();
+}
+
+export interface BackgroundImportCredential {
+    credentialId: string;
+    token: string;
+    userId: string;
+    installationId: string;
+    expiresAt: number;
+    endpoint: string;
+    anonKey: string;
+}
+
+export interface BackgroundImportTransferRecord {
+    jobId: string;
+    userId: string;
+    sessionIdentifier: string;
+    status: 'uploading' | 'accepted' | 'uncertain' | 'rejected';
+    httpStatus?: number;
+    updatedAt: number;
+}
+
+/** Native v6 handles background intake; older installed builds remain local. */
+export function isBackgroundImportIntakeAvailable(): boolean {
+    if (Platform.OS !== 'ios') return false;
+    try { return (getNative().apiVersion ?? 0) >= 6 && typeof getNative().writeBackgroundImportCredential === 'function'; }
+    catch { return false; }
+}
+
+export function getBackgroundImportInstallationId(): string | null {
+    if (!isBackgroundImportIntakeAvailable()) return null;
+    return getNative().getBackgroundImportInstallationId();
+}
+
+export function getBackgroundImportCredential(): BackgroundImportCredential | null {
+    if (!isBackgroundImportIntakeAvailable()) return null;
+    try {
+        const raw = getNative().getBackgroundImportCredential();
+        return raw ? JSON.parse(raw) as BackgroundImportCredential : null;
+    } catch { return null; }
+}
+
+export function setNativeBackgroundImportOwner(userId: string | null): void {
+    if (isBackgroundImportIntakeAvailable()) getNative().setBackgroundImportOwner(userId);
+}
+
+export function writeBackgroundImportCredential(credential: BackgroundImportCredential): boolean {
+    return isBackgroundImportIntakeAvailable()
+        && getNative().writeBackgroundImportCredential(JSON.stringify(credential));
+}
+
+export function clearBackgroundImportCredential(): void {
+    if (isBackgroundImportIntakeAvailable()) getNative().clearBackgroundImportCredential();
+}
+
+export function getPendingBackgroundImportRevocations(): BackgroundImportCredential[] {
+    if (!isBackgroundImportIntakeAvailable()) return [];
+    try { return JSON.parse(getNative().getPendingBackgroundImportRevocations()) as BackgroundImportCredential[]; }
+    catch { return []; }
+}
+
+export async function revokeBackgroundImportCredential(credential: BackgroundImportCredential): Promise<boolean> {
+    if (!isBackgroundImportIntakeAvailable()) return false;
+    return getNative().revokeBackgroundImportCredential(JSON.stringify(credential));
+}
+
+export function getBackgroundImportTransfer(jobId: string): BackgroundImportTransferRecord | null {
+    if (!isBackgroundImportIntakeAvailable()) return null;
+    try {
+        const raw = getNative().getBackgroundImportTransfer(jobId);
+        if (!raw) return null;
+        const value = JSON.parse(raw) as BackgroundImportTransferRecord;
+        return value.jobId === jobId && ['uploading', 'accepted', 'uncertain', 'rejected'].includes(value.status) ? value : null;
+    } catch { return null; }
+}
+
+export function onBackgroundImportTransfer(listener: (event: { jobId: string }) => void): () => void {
+    if (!isBackgroundImportIntakeAvailable()) return () => {};
+    const subscription = getNative().addListener('onBackgroundImportTransfer', listener);
     return () => subscription.remove();
 }
 

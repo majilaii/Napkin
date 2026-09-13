@@ -138,6 +138,10 @@ jobs:
         # failing ASSERT in the spec into a non-zero exit → red job.
         run: |
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 -f supabase/tests/background_imports.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
+            -v ON_ERROR_STOP=1 -f supabase/tests/import_push.spec.sql
+          psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \
             -v ON_ERROR_STOP=1 \
             -f supabase/tests/saves_visible_predicate.spec.sql
           psql "postgresql://postgres:postgres@127.0.0.1:54329/postgres" \

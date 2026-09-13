@@ -447,6 +447,17 @@ const CHECKS: Check[] = [
         },
     },
     {
+        name: 'background-imports?action=list',
+        method: 'POST',
+        fn: 'background-imports',
+        body: { action: 'list' },
+        shape: (json) => {
+            const data = (json as { data?: { jobs?: unknown[] } }).data;
+            if (!data) return 'missing data envelope';
+            return Array.isArray(data.jobs) ? null : 'data.jobs is not an array';
+        },
+    },
+    {
         name: 'notifications?action=inbox',
         method: 'POST',
         fn: 'notifications',

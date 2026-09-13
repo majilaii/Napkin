@@ -122,6 +122,39 @@ describe('root import queue gallery integration', () => {
         await flush();
     }
 
+    it('holds a remotely prepared import for review without extracting or saving on the phone', async () => {
+        seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', remoteJobId: 'job-1',
+            videoPath: undefined, sourcePreparation: undefined, mode: 'auto' });
+        mockEdge.mockImplementation(async (fn: string, options: any) => {
+            if (fn === 'background-imports' && options.action === 'status') return {
+                job_id: 'job-1', owner_id: 'user-1', import_nonce: 'nonce-1',
+                url: 'https://www.tiktok.com/@chef/video/123', status: 'ready',
+                result: { source_type: 'tiktok', candidates: [candidate] },
+            };
+            throw new Error(`Unexpected request ${fn}:${options.action}`);
+        });
+        await mount();
+        const checkpoint = getImport('job-1');
+        expect(checkpoint).toMatchObject({ mode: 'review', remoteState: 'ready',
+            spots: [expect.objectContaining({ resolution_id: 'resolution-1', restaurant_name: 'Salvo Bakehouse' })] });
+        await act(async () => { pokeImportQueue(); });
+        await flush();
+        expect(getImport('job-1')?.spots?.[0].client_nonce).toBe(checkpoint?.spots?.[0].client_nonce);
+        expect(mockExtract).not.toHaveBeenCalled();
+        expect(mockPerceive).not.toHaveBeenCalled();
+        expect(mockEdge.mock.calls.every(([fn]) => fn === 'background-imports')).toBe(true);
+    });
+
+    it('keeps unresolved server work pending without local extraction or attempt inflation', async () => {
+        seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', remoteJobId: 'job-1',
+            videoPath: undefined, sourcePreparation: undefined });
+        mockEdge.mockRejectedValue(new Error('connection lost after acceptance'));
+        await mount();
+        expect(getImport('job-1')).toMatchObject({ status: 'pending', stage: 'waiting for connection', attempts: 0 });
+        expect(mockPerceive).not.toHaveBeenCalled();
+        expect(mockExtract).not.toHaveBeenCalled();
+    });
+
     it.each(['no slide URLs', 'failed downloads', 'failed OCR'] as const)(
         'preserves photo title when %s and never retries generic URL after abstention', async failure => {
             seed({ kind: 'url', url: 'https://vm.tiktok.com/ZN8jyna5p/', videoPath: undefined });

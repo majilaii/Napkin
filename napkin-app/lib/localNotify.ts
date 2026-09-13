@@ -4,8 +4,8 @@
  * Imports (video/TikTok shares → OCR/resolve → save or review-hold) finish silently
  * when the app is backgrounded. This posts a device-scheduled notification the moment
  * a drain checkpoint lands while the app isn't foregrounded, and gates a soft
- * pre-permission sheet on a quiet cadence. NO remote push, NO APNs token, NO server —
- * CLAUDE.md's "push deferred" still holds for remote; this is local-only.
+ * pre-permission sheet on a quiet cadence. Server imports use the same permission
+ * moment to register import-only remote push through importPush.ts.
  *
  * expo-notifications is LAZILY required inside try/catch (mirrors the media-extract
  * accessor discipline) so Expo Go / web / a build without the native module degrades
@@ -14,6 +14,12 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Linking, Platform } from 'react-native';
+
+function registerImportPushForImport(): void {
+    // Keep local-only routes and the pure cadence helpers independent of auth
+    // initialization and remote push native modules until an import opts in.
+    void import('./importPush').then(push => push.registerImportPushForImport()).catch(() => undefined);
+}
 
 // LAZY native binding. `require('expo-notifications')` throws when the module isn't
 // present in this build — resolve it on first CALL, cache the null so we probe once.
@@ -97,7 +103,10 @@ export async function requestPermission(): Promise<NotifPermission> {
     if (!N) return 'denied';
     try {
         const perms = await N.requestPermissionsAsync();
-        if (perms.granted || perms.status === 'granted') return 'granted';
+        if (perms.granted || perms.status === 'granted') {
+            void registerImportPushForImport();
+            return 'granted';
+        }
         if (perms.status === 'undetermined') return 'undetermined';
         return 'denied';
     } catch {
@@ -309,6 +318,10 @@ export async function maybeOfferNotifPrompt(): Promise<void> {
     try {
         if (!isNotifAvailable()) return;
         const permission = await getPermissionState();
+        if (permission === 'granted') {
+            void registerImportPushForImport();
+            return;
+        }
         const state = await readPromptState();
         if (!shouldOfferNotifPrompt(permission, state, Date.now())) return;
         await recordNotifPromptShown();

@@ -1,7 +1,12 @@
-import { importNoticeDetail, importNoticeUrl } from './importNotificationNavigation';
+import { importNoticeDetail, importNoticeUrl, importNotificationMatchesOwner } from './importNotificationNavigation';
 import type { ImportManifest } from './importQueue';
 const serverId = 'a1234567-1111-2222-3333-123456789abc';
 const review = { jobId: 'local-1', userId: 'alice', mode: 'review', status: 'pending', spots: [{}] } as ImportManifest;
+it('blocks old-account import push routes before entering the hub', () => {
+    expect(importNotificationMatchesOwner('/import-progress?openJob=a&owner=alice', 'bob')).toBe(false);
+    expect(importNotificationMatchesOwner('/import-progress?openJob=a&owner=alice', 'alice')).toBe(true);
+    expect(importNotificationMatchesOwner('/import-progress?owner=alice', null)).toBe(false);
+});
 const resolve = (edits: Partial<Parameters<typeof importNoticeDetail>[0]> = {}) => importNoticeDetail({
     jobId: 'local-1', outcome: 'review', currentUserId: 'alice', manifests: [review], ...edits,
 });

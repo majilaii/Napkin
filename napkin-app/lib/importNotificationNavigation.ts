@@ -3,6 +3,15 @@ import type { ImportManifest } from './importQueue';
 export type ImportNoticeOutcome = 'saved' | 'review' | 'failed';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Old local notices have no owner; new push notices are rejected before routing. */
+export function importNotificationMatchesOwner(url: string, currentUserId?: string | null): boolean {
+    if (!url.startsWith('/import-progress')) return true;
+    try {
+        const owner = new URL(url, 'https://napkin.invalid').searchParams.get('owner');
+        return !owner || (!!currentUserId && owner === currentUserId);
+    } catch { return false; }
+}
+
 /** Land through the hub so a detail opened by an alert has a real parent. */
 export function importNoticeUrl(jobId?: string | null, outcome: ImportNoticeOutcome = 'saved', ownerId?: string | null): string {
     if (!jobId) return '/import-progress';

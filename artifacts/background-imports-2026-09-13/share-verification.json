@@ -1,0 +1,15 @@
+{
+  "simulator": "BD3F66C7-C3CC-4199-981C-03BC9AC4C7B1",
+  "fixtureOwner": "b9130000-0000-4000-8000-000000000001",
+  "fixtureEndpoint": "https://fixture.invalid/functions/v1/background-imports",
+  "keychainReadWrite": [
+    "LOG  BACKGROUND_IMPORT_QA_SHARED_KEYCHAIN true true"
+  ],
+  "nativeShareDestinationVisible": true,
+  "nativeShareFinalTapVerified": false,
+  "transferSidecarVerified": false,
+  "limitation": "Simulator share sheet exposed only dismiss popup in AX; coordinate taps failed noWindowsAvailable.",
+  "shippingFilesRestoredFromExactBackups": true,
+  "fixtureAuthRemoved": true,
+  "metro8091StopRequested": true
+}

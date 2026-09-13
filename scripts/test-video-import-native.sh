@@ -11,6 +11,11 @@ swiftc -swift-version 5 \
 "$VIDEO_IMPORT_TEST_DIR/preparation-tests"
 if [[ "$(uname)" == "Darwin" ]]; then
   swiftc -swift-version 5 \
+    napkin-app/modules/media-extract/ios/BackgroundImportTransfer.swift \
+    scripts/tests/media-extract/BackgroundImportTransferTests.swift \
+    -o "$VIDEO_IMPORT_TEST_DIR/background-transfer-tests"
+  "$VIDEO_IMPORT_TEST_DIR/background-transfer-tests"
+  swiftc -swift-version 5 \
     napkin-app/modules/media-extract/ios/VideoSpeechAuthorization.swift \
     scripts/tests/media-extract/VideoSpeechAuthorizationTests.swift \
     -o "$VIDEO_IMPORT_TEST_DIR/speech-tests"

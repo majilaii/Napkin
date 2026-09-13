@@ -65,6 +65,9 @@ import {
     failImport,
     retryImport,
     markImportNotification,
+    checkpointRemoteImport,
+    removeImport,
+    listRetiredRemoteImports,
     type ImportManifest,
     type PersistedImportSpot,
 } from './importQueue';
@@ -95,6 +98,23 @@ function seedManifest(partial: Partial<ImportManifest> & { jobId: string }): voi
 beforeEach(() => {
     store.clear();
     nativeMock.__resetWrites();
+});
+
+it('retiring remote work retains its immutable capture until server cancellation succeeds', () => {
+    seedManifest({ jobId: 'remote-1', remoteJobId: 'remote-1', userId: 'alice' });
+    removeImport('remote-1');
+    expect(getImport('remote-1')).toBeNull();
+    expect(listRetiredRemoteImports('alice')).toEqual([{ jobId: 'remote-1', remoteJobId: 'remote-1',
+        importNonce: 'nonce-1', url: 'https://www.tiktok.com/@topjaw/video/1' }]);
+    expect(listRetiredRemoteImports('bob')).toEqual([]);
+});
+
+it('a failed remote checkpoint never exposes half-persisted review results', () => {
+    seedManifest({ jobId: 'remote-1', remoteJobId: 'remote-1', userId: 'alice' });
+    nativeMock.__failNextWrite();
+    expect(() => checkpointRemoteImport('remote-1', 'alice', [], {})).toThrow('checkpoint');
+    expect(getImport('remote-1')?.remoteState).toBeUndefined();
+    expect(checkpointRemoteImport('remote-1', 'bob', [], {})).toBeNull();
 });
 
 describe('review-first import creation', () => {

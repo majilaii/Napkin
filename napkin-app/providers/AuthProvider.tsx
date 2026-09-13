@@ -5,6 +5,8 @@ import { queryClient } from '@/lib/queryClient';
 import { searchLocalityStore } from '@/hooks/search/searchLocalityStore';
 import { searchCache } from '@/hooks/search/searchCache';
 import { placesScreenState } from '@/hooks/search/placesScreenState';
+import { setImportPushOwner, unlinkImportPushDevice, watchImportPushRegistration } from '@/lib/importPush';
+import { setBackgroundImportOwner, unlinkBackgroundImportIntake } from '@/lib/backgroundImportIntake';
 
 interface AuthContextType {
     session: Session | null;
@@ -102,6 +104,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         // Get initial session
         supabase.auth.getSession().then(({ data: { session } }) => {
+            setImportPushOwner(session?.user?.id);
+            setBackgroundImportOwner(session?.user?.id);
             searchLocalityStore.setActiveUser(session?.user?.id);
             searchCache.setActiveUser(session?.user?.id);
             placesScreenState.setActiveUser(session?.user?.id);
@@ -114,6 +118,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (_event, session) => {
+                setImportPushOwner(session?.user?.id);
+                setBackgroundImportOwner(session?.user?.id);
                 searchLocalityStore.setActiveUser(session?.user?.id);
                 searchCache.setActiveUser(session?.user?.id);
                 placesScreenState.setActiveUser(session?.user?.id);
@@ -130,8 +136,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
     }, []);
 
+    useEffect(() => watchImportPushRegistration(), []);
+
     const signOut = async () => {
         gateReadGeneration.current += 1;
+        await Promise.all([
+            unlinkImportPushDevice(user?.id),
+            unlinkBackgroundImportIntake(user?.id),
+        ]);
         await supabase.auth.signOut();
         searchLocalityStore.setActiveUser(null);
         searchCache.setActiveUser(null);
