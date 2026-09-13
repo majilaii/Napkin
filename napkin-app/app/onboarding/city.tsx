@@ -22,7 +22,7 @@ import { Colors, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCoDiners } from '@/hooks/feed/useCoDiners';
-import { CitySuggestField } from '@/components/onboarding/CitySuggestField';
+import { HomeCityPicker } from '@/components/onboarding/HomeCityPicker';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
 import { SetupFrame } from '@/components/onboarding/SetupFrame';
@@ -38,7 +38,6 @@ export default function OnboardingCityScreen() {
 
     const [city, setCity] = useState(draft.home_city ?? '');
     const [branching, setBranching] = useState(false);
-    const [focused, setFocused] = useState(false);
 
     // Prefetch on entry — populates queryKeys.feed.coDiners so the branch below
     // (and the follows screen) reads a warm cache.
@@ -137,21 +136,11 @@ export default function OnboardingCityScreen() {
             </Text>
             <View style={[s.paper, Shadow.note, { backgroundColor: palette.surfaceNote }]}>
                 <Text style={[s.label, { color: palette.textSecondary }]}>Home city · optional</Text>
-                <CitySuggestField
+                <HomeCityPicker
                     value={city}
-                    onChangeText={(t) => setCity(t.slice(0, 120))}
-                    maxLength={120}
-                    placeholder="e.g. Hong Kong"
-                    placeholderTextColor={palette.textMuted}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                    editable={!isBusy}
-                    returnKeyType="done"
-                    onSubmitEditing={() => proceed(city.trim() || null)}
-                    onFocus={() => setFocused(true)}
-                    onBlur={() => setFocused(false)}
-                    accessibilityLabel="Home city, optional"
-                    style={[s.input, { color: palette.text, borderBottomColor: focused ? palette.primary : palette.ruleInkSoft }]}
+                    onChange={setCity}
+                    palette={palette}
+                    disabled={isBusy}
                 />
             </View>
         </SetupFrame>

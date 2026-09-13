@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,10 +8,12 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { enableDiscoveryGuide } from '@/lib/discoveryGuide';
 import { PINNED_PLACES_ROUTE } from '@/lib/handoffNavigation';
-import { GUIDE_CHAPTERS, findGuideChapter } from '@/components/onboarding/guideContent';
+import { GUIDE_CHAPTERS, INTRO_CHAPTERS } from '@/components/onboarding/guideContent';
 import { GuideIllustration } from '@/components/onboarding/GuideIllustration';
 
-/** Three short first-run chapters; the same content stays available as a guide. */
+import { ShareWalkthrough } from '@/components/onboarding/ShareWalkthrough';
+
+/** Short first-run chapters and a replayable guide, limited to supported features. */
 export default function WelcomeScreen() {
     const palette = Colors[useColorScheme() ?? 'light'];
     const insets = useSafeAreaInsets();
@@ -19,15 +21,20 @@ export default function WelcomeScreen() {
     const { user, onboardedAt } = useAuth();
     const { intro, preview, topic } = useLocalSearchParams<{ intro?: string; preview?: string; topic?: string }>();
     const isIntro = intro === '1' || preview === '1';
-    const [selected, setSelected] = useState<string | null>(() => isIntro ? 'journal' : findGuideChapter(topic)?.id ?? null);
+    const supportsSharing = Platform.OS === 'ios';
+    const chapters = useMemo(() => GUIDE_CHAPTERS.filter((item) => item.id !== 'sharing' || supportsSharing), [supportsSharing]);
+    const introChapters = useMemo(() => INTRO_CHAPTERS.filter((item) => chapters.includes(item)), [chapters]);
+    const [selected, setSelected] = useState<string | null>(() => isIntro ? introChapters[0].id : chapters.find((item) => item.id === topic)?.id ?? null);
     const scroll = useRef<ScrollView>(null);
-    const chapter = findGuideChapter(selected);
-    const index = GUIDE_CHAPTERS.findIndex((item) => item.id === selected);
+    const chapter = chapters.find((item) => item.id === selected);
+    const [demoOpen, setDemoOpen] = useState(false);
+    const index = introChapters.findIndex((item) => item.id === selected);
 
     useEffect(() => {
-        setSelected(isIntro ? 'journal' : findGuideChapter(topic)?.id ?? null);
+        setDemoOpen(false);
+        setSelected(isIntro ? introChapters[0].id : chapters.find((item) => item.id === topic)?.id ?? null);
         scroll.current?.scrollTo({ y: 0, animated: false });
-    }, [isIntro, topic]);
+    }, [isIntro, topic, chapters, introChapters]);
 
     useEffect(() => {
         if (intro === '1' && preview !== '1' && user?.id && typeof onboardedAt === 'string') {
@@ -44,12 +51,15 @@ export default function WelcomeScreen() {
         else router.back();
     };
     const back = () => {
-        if (isIntro) select(GUIDE_CHAPTERS[Math.max(0, index - 1)].id);
+        if (isIntro) select(introChapters[Math.max(0, index - 1)].id);
         else select(null);
     };
 
     return (
         <View style={[s.root, { backgroundColor: palette.background }]}>
+            {supportsSharing ? <Modal visible={demoOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setDemoOpen(false)}>
+                {demoOpen ? <ShareWalkthrough palette={palette} onClose={() => setDemoOpen(false)} onDone={() => { setDemoOpen(false); if (isIntro) select(introChapters[Math.min(index + 1, introChapters.length - 1)].id); }} /> : null}
+            </Modal> : null}
             <Stack.Screen options={{ headerShown: false, gestureEnabled: !isIntro }} />
             <View style={[s.header, { paddingTop: insets.top + Spacing.sm }]}>
                 {chapter && (!isIntro || index > 0) ? (
@@ -67,8 +77,8 @@ export default function WelcomeScreen() {
                 {chapter ? (
                     <>
                         {isIntro ? (
-                            <View accessible style={s.progress} accessibilityRole="progressbar" accessibilityLabel="Introduction" accessibilityValue={{ min: 0, max: 3, now: index + 1, text: `${index + 1} of 3` }}>
-                                {GUIDE_CHAPTERS.slice(0, 3).map((item, i) => <View key={item.id} style={[s.segment, { backgroundColor: i <= index ? palette.primary : palette.ruleInkSoft }]} />)}
+                            <View accessible style={s.progress} accessibilityRole="progressbar" accessibilityLabel="Introduction" accessibilityValue={{ min: 0, max: introChapters.length, now: index + 1, text: `${index + 1} of ${introChapters.length}` }}>
+                                {introChapters.map((item, i) => <View key={item.id} style={[s.segment, { backgroundColor: i <= index ? palette.primary : palette.ruleInkSoft }]} />)}
                             </View>
                         ) : null}
                         <Text style={[Type.sectionKicker, { color: palette.textMuted }]}>{chapter.label}</Text>
@@ -89,7 +99,7 @@ export default function WelcomeScreen() {
                     <>
                         <Text accessibilityRole="header" style={[Type.displayLarge, s.title, { color: palette.text }]}>Make yourself at home.</Text>
                         <Text style={[Type.body, s.body, { color: palette.textSecondary }]}>A few ways to get more out of Napkin.</Text>
-                        {GUIDE_CHAPTERS.map((item) => (
+                        {chapters.map((item) => (
                             <Pressable key={item.id} onPress={() => select(item.id)} style={({ pressed }) => [s.chapterRow, { backgroundColor: palette.card, opacity: pressed ? 0.85 : 1 }]} accessibilityRole="button" accessibilityLabel={item.label}>
                                 <Ionicons name={item.icon} size={24} color={palette.primary} />
                                 <View style={s.flex}>
@@ -105,18 +115,22 @@ export default function WelcomeScreen() {
             </ScrollView>
 
             <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
-                {isIntro && index === 2 ? (
+                        {chapter?.id === 'sharing' ? <Pressable onPress={() => setDemoOpen(true)} style={[s.demoButton, { backgroundColor: palette.primaryMuted }]} accessibilityRole="button">
+                            <Ionicons name="play-outline" size={20} color={palette.primary} />
+                            <Text style={[Type.body, { color: palette.primary }]}>Try the sharing demo</Text>
+                        </Pressable> : null}
+                {isIntro && index === introChapters.length - 1 ? (
                     <Pressable onPress={() => router.replace('/(tabs)/tables')} style={s.secondaryButton} accessibilityRole="button">
                         <Text style={[Type.body, { color: palette.primary }]}>Explore Tables</Text>
                     </Pressable>
                 ) : null}
                 <Pressable onPress={() => {
-                    if (isIntro && index < 2) select(GUIDE_CHAPTERS[index + 1].id);
+                    if (isIntro && index < introChapters.length - 1) select(introChapters[index + 1].id);
                     else if (isIntro || !chapter) close();
                     else router.push(chapter.route);
                 }} style={({ pressed }) => [s.primary, { backgroundColor: palette.primary, opacity: pressed ? 0.85 : 1 }]} accessibilityRole="button">
                     <Text style={[Type.body, s.buttonLabel, { color: palette.textInverse }]}>
-                        {isIntro ? index < 2 ? 'Continue' : 'Find my first place' : chapter?.action ?? 'Back to Napkin'}
+                        {isIntro ? index < introChapters.length - 1 ? 'Continue' : 'Find my first place' : chapter?.action ?? 'Back to Napkin'}
                     </Text>
                     <Ionicons name="arrow-forward-outline" size={20} color={palette.textInverse} />
                 </Pressable>
@@ -141,5 +155,6 @@ const s = StyleSheet.create({
     secondaryButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
     chapterRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.lg, borderRadius: Radius.lg, marginBottom: Spacing.sm },
     flex: { flex: 1, gap: Spacing.xs },
+    demoButton: { minHeight: 52, marginBottom: Spacing.md, borderRadius: Radius.full, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, padding: Spacing.sm },
     privacyLink: { minHeight: 44, marginTop: Spacing.lg, gap: Spacing.xs },
 });

@@ -8,16 +8,13 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
 import { Redirect, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-import { TeachShareSheetDemo } from '@/components/import-education';
+import { ShareWalkthrough } from '@/components/onboarding/ShareWalkthrough';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function ImportTutorialReplayScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const insets = useSafeAreaInsets();
     const router = useRouter();
 
     const close = () => router.back();
@@ -30,13 +27,10 @@ export default function ImportTutorialReplayScreen() {
 
     return (
         <View style={{ flex: 1, backgroundColor: palette.background }}>
-            <TeachShareSheetDemo
+            <ShareWalkthrough
                 palette={palette}
-                topInset={insets.top}
-                bottomInset={insets.bottom}
                 onClose={close}
                 onDone={close}
-                doneLabel="Done"
             />
         </View>
     );
