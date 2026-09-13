@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -254,6 +255,7 @@ export default function RestaurantScreen() {
     const [gatherSheetOpen, setGatherSheetOpen] = useState(false);
     const [photoUnderStatusBar, setPhotoUnderStatusBar] = useState(true);
     const [renderedPhotoHeight, setRenderedPhotoHeight] = useState(0);
+    const isFocused = useIsFocused();
 
     const savePayload = useMemo<RestaurantPayload | null>(() => {
         if (ghostWishlistPayload) return ghostWishlistPayload;
@@ -374,7 +376,7 @@ export default function RestaurantScreen() {
         return (
             <View style={[styles.container, { backgroundColor: palette.background }]}>
                 <Stack.Screen options={{ headerShown: false }} />
-                <StatusBar style="dark" />
+                {isFocused ? <StatusBar style="dark" /> : null}
                 <Pressable
                     onPress={() => router.back()}
                     accessibilityRole="button"
@@ -399,9 +401,9 @@ export default function RestaurantScreen() {
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
-            <StatusBar
+            {isFocused ? <StatusBar
                 style={mastheadPhotos.length > 0 && photoUnderStatusBar ? 'light' : 'dark'}
-            />
+            /> : null}
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xxl }}

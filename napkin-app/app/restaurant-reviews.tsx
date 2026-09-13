@@ -3,6 +3,7 @@ import { View, Text, Pressable, StyleSheet, FlatList, ActivityIndicator } from '
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -25,6 +26,7 @@ export default function RestaurantReviewsScreen() {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const isFocused = useIsFocused();
 
     const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
         useRestaurantReviews(id);
@@ -34,7 +36,7 @@ export default function RestaurantReviewsScreen() {
     return (
         <View style={[styles.container, { backgroundColor: palette.background, paddingTop: insets.top }]}>
             <Stack.Screen options={{ headerShown: false }} />
-            <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+            {isFocused ? <StatusBar style="dark" /> : null}
 
             <View style={styles.header}>
                 <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back} accessibilityLabel="back">
