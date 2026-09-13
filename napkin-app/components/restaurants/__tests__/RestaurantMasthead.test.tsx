@@ -161,7 +161,7 @@ describe('RestaurantTop photo mode', () => {
     it('reserves measured room between a multiline title and its photo credit', () => {
         const onMastheadHeightChange = jest.fn();
         const screen = render(<RestaurantTop {...baseProps}
-            photos={resolveMastheadPhotos({ restaurant })}
+            photos={resolveMastheadPhotos({ restaurant }, { clippings: [], settled: true })}
             onMastheadHeightChange={onMastheadHeightChange} />);
         fireEvent(screen.getByTestId('masthead-photo-credit'), 'layout', {
             nativeEvent: { layout: { height: 46 } },
