@@ -16,24 +16,23 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, View, Text, Pressable, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Spacing, Type, Radius, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCoDiners } from '@/hooks/feed/useCoDiners';
 import { useFollow } from '@/hooks/users/useFollow';
-import { CoDinerFollowCard } from '@/components/feed/CoDinerFollowCard';
+import { Avatar } from '@/components/feed/Avatar';
 import { resolveEmptyState } from '@/components/feed/feedEmptyStateGate';
 import { onboardingStyles as s } from './styles';
-import { OnboardingProgress } from './OnboardingProgress';
+import { SetupFrame } from '@/components/onboarding/SetupFrame';
 import { useFinishOnboarding } from '@/hooks/onboarding/useFinishOnboarding';
 
 export default function OnboardingFollowsScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const insets = useSafeAreaInsets();
+    const router = useRouter();
     const { user } = useAuth();
 
     const { data: candidates, isFetched } = useCoDiners(user?.id);
@@ -90,73 +89,113 @@ export default function OnboardingFollowsScreen() {
     const finishOnboarding = useCallback(() => finish(), [finish]);
 
     return (
-        <View style={[s.root, { backgroundColor: palette.background }]}>
-            <Stack.Screen options={{ headerShown: false }} />
-            <View style={[s.body, { paddingTop: insets.top + Spacing.xxl }]}>
-                <OnboardingProgress step={4} palette={palette} />
-                <Text style={[s.kicker, { color: palette.textMuted }]}>already here</Text>
-                <Text style={[s.brandLine, { color: palette.text }]}>people you know</Text>
-
-                <View style={styles.list}>
-                    {cards.map((candidate) => (
-                        <CoDinerFollowCard
-                            key={candidate.user_id}
-                            candidate={candidate}
-                            followed={followedIds.has(candidate.user_id)}
-                            onFollow={() => handleFollow(candidate.user_id)}
-                            // Mid-onboarding we keep the loop closed — the row is a
-                            // follow target, not a doorway out of the stack.
-                            onOpenProfile={() => {}}
-                            subtitle={candidate.meals_together > 1 ? undefined : null}
-                        />
-                    ))}
-                </View>
-
-                <Pressable
-                    onPress={finishOnboarding}
-                    disabled={isPending}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                >
-                    <Text style={[s.skip, { color: palette.textMuted }]}>Skip</Text>
-                </Pressable>
-            </View>
-
-            <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
-                {completionError ? (
-                    <Text
-                        accessible
-                        accessibilityRole="alert"
-                        accessibilityLiveRegion="polite"
-                        style={[s.completionError, { color: palette.error }]}
+        <SetupFrame
+            palette={palette}
+            step={3}
+            optional
+            onBack={() => router.back()}
+            backDisabled={isPending}
+            footer={
+                <>
+                    {completionError ? (
+                        <Text
+                            accessible
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="polite"
+                            style={[s.completionError, { color: palette.error }]}
+                        >
+                            {completionError}
+                        </Text>
+                    ) : null}
+                    <Pressable
+                        onPress={finishOnboarding}
+                        disabled={isPending}
+                        style={({ pressed }) => [
+                            s.primaryBtn,
+                            { backgroundColor: palette.primary, opacity: isPending ? 0.6 : pressed ? 0.85 : 1 },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: isPending, busy: isPending }}
                     >
-                        {completionError}
+                        {isPending ? <ActivityIndicator color={palette.textInverse} /> : (
+                            <Text style={[s.primaryBtnText, { color: palette.textInverse }]}>
+                                {completionError ? 'Try again' : 'Open Napkin'}
+                            </Text>
+                        )}
+                    </Pressable>
+                    <Pressable
+                        onPress={finishOnboarding}
+                        disabled={isPending}
+                        style={s.skipButton}
+                        accessibilityRole="button"
+                        accessibilityLabel="Skip people suggestions"
+                        accessibilityState={{ disabled: isPending }}
+                    >
+                        <Text style={[s.skip, { color: palette.textSecondary }]}>Maybe later</Text>
+                    </Pressable>
+                </>
+            }
+        >
+            <Stack.Screen options={{ headerShown: false }} />
+            <Text style={[s.heading, { color: palette.text }]}>Good taste, familiar faces.</Text>
+            <Text style={[s.description, { color: palette.textSecondary }]}>
+                Follow people you know to see where they’ve been eating.
+            </Text>
+            <View style={[styles.list, Shadow.note, { backgroundColor: palette.surfaceNote }]}>
+                {cards.map((candidate) => {
+                    const followed = followedIds.has(candidate.user_id);
+                    return (
+                        <View key={candidate.user_id} style={styles.person}>
+                            <Avatar name={candidate.display_name} url={candidate.avatar_url} size={Spacing.xxl} palette={palette} />
+                            <View style={styles.personText}>
+                                <Text style={[styles.name, { color: palette.text }]}>{candidate.display_name}</Text>
+                                {candidate.meals_together > 1 ? (
+                                    <Text style={[styles.meta, { color: palette.textMuted }]}>
+                                        {candidate.meals_together} meals together
+                                    </Text>
+                                ) : null}
+                            </View>
+                            <Pressable
+                                onPress={() => handleFollow(candidate.user_id)}
+                                disabled={followed || isPending}
+                                accessibilityRole="button"
+                                accessibilityLabel={`${followed ? 'Following' : 'Follow'} ${candidate.display_name}`}
+                                accessibilityState={{ disabled: followed || isPending }}
+                                style={({ pressed }) => [
+                                    styles.followButton,
+                                    { backgroundColor: followed ? palette.surfaceJournal : palette.primaryMuted, opacity: pressed ? 0.85 : 1 },
+                                ]}
+                            >
+                                <Text style={[styles.followLabel, { color: followed ? palette.textSecondary : palette.primary }]}>
+                                    {followed ? 'Following' : 'Follow'}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    );
+                })}
+                {cards.length === 0 ? (
+                    <Text style={[styles.meta, { color: palette.textSecondary }]}>
+                        {isFetched ? 'You’re all set.' : 'Finding familiar faces…'}
                     </Text>
                 ) : null}
-                <Pressable
-                    onPress={finishOnboarding}
-                    disabled={isPending}
-                    style={({ pressed }) => [
-                        s.primaryBtn,
-                        { backgroundColor: palette.primary, opacity: isPending ? 0.6 : pressed ? 0.85 : 1 },
-                    ]}
-                    accessibilityRole="button"
-                >
-                    {isPending ? (
-                        <ActivityIndicator color={palette.textInverse} />
-                    ) : (
-                        <Text style={s.primaryBtnText}>
-                            {completionError ? 'Try again' : 'Done'}
-                        </Text>
-                    )}
-                </Pressable>
             </View>
-        </View>
+        </SetupFrame>
     );
 }
 
 const styles = StyleSheet.create({
-    list: {
-        marginTop: Spacing.md,
+    list: { padding: Spacing.md, borderRadius: Radius.xl, gap: Spacing.lg },
+    person: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+    personText: { flex: 1 },
+    name: { ...Type.titleMedium },
+    meta: { ...Type.metadata },
+    followButton: {
+        minHeight: Spacing.hitTarget,
+        borderRadius: Radius.full,
+        paddingHorizontal: Spacing.md,
+        paddingVertical: Spacing.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
+    followLabel: { ...Type.metadata },
 });

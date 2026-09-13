@@ -19,10 +19,9 @@
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, Stack } from 'expo-router';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { Avatar } from '@/components/feed/Avatar';
@@ -30,7 +29,8 @@ import { chooseAvatarAsset } from '@/lib/avatarPicker';
 import { isModerationRejected, stageAndModerate } from '@/lib/imageStaging';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
-import { OnboardingProgress } from './OnboardingProgress';
+import { SetupFrame } from '@/components/onboarding/SetupFrame';
+import { Ionicons } from '@expo/vector-icons';
 
 function isVisionUnavailable(error: unknown): boolean {
     let current: unknown = error;
@@ -45,7 +45,6 @@ function isVisionUnavailable(error: unknown): boolean {
 export default function OnboardingPhotoScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
     const { draft, patch } = useOnboardingDraft();
@@ -87,95 +86,103 @@ export default function OnboardingPhotoScreen() {
     };
 
     return (
-        <View style={[s.root, { backgroundColor: palette.background }]}>
-            <Stack.Screen options={{ headerShown: false }} />
-            <View style={[s.body, { paddingTop: insets.top + Spacing.xxl }]}>
-                <OnboardingProgress step={2} palette={palette} />
-                <Text style={[s.kicker, { color: palette.textMuted }]}>who you are</Text>
-                <Text style={[s.brandLine, { color: palette.text }]}>your photo</Text>
-
-                <View
-                    style={[
-                        styles.stage,
-                        { backgroundColor: palette.surfaceJournal },
-                        Shadow.ambient,
-                    ]}
-                >
-                    <Pressable
-                        onPress={pick}
-                        disabled={uploading}
-                        accessibilityRole="button"
-                        accessibilityLabel="Choose a profile photo"
-                    >
-                        <View>
-                            <Avatar
-                                name={draft.display_name || 'You'}
-                                url={draft.avatar_url}
-                                size={132}
-                                palette={palette}
-                            />
-                            {uploading && (
-                                <View style={[styles.uploadOverlay, { backgroundColor: palette.scrimDark }]}>
-                                    <ActivityIndicator color={palette.textInverse} />
-                                </View>
-                            )}
-                        </View>
-                    </Pressable>
-
-                    <Pressable onPress={pick} disabled={uploading} hitSlop={8} accessibilityRole="button">
-                        <Text style={[styles.pickLabel, { color: palette.primary }]}>
-                            {draft.avatar_url ? 'Change photo' : 'Add a photo'}
-                        </Text>
-                    </Pressable>
-                </View>
-
-            </View>
-
-            <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
+        <SetupFrame
+            palette={palette}
+            step={2}
+            onBack={() => router.back()}
+            backDisabled={uploading}
+            footer={
                 <Pressable
                     onPress={goCity}
                     disabled={uploading || !draft.avatar_url}
                     style={({ pressed }) => [
                         s.primaryBtn,
-                        {
-                            backgroundColor: palette.primary,
-                            opacity: uploading || !draft.avatar_url ? 0.5 : pressed ? 0.85 : 1,
-                        },
+                        { backgroundColor: palette.primary, opacity: uploading || !draft.avatar_url ? 0.5 : pressed ? 0.85 : 1 },
                     ]}
                     accessibilityRole="button"
                     accessibilityLabel="Continue"
                     accessibilityState={{ disabled: uploading || !draft.avatar_url }}
                 >
-                    <Text style={s.primaryBtnText}>Continue</Text>
+                    <Text style={[s.primaryBtnText, { color: palette.textInverse }]}>Continue</Text>
+                </Pressable>
+            }
+        >
+            <Stack.Screen options={{ headerShown: false }} />
+            <Text style={[s.heading, { color: palette.text }]}>Put a face to your taste.</Text>
+            <Text style={[s.description, { color: palette.textSecondary }]}>
+                A photo helps your friends find you.
+            </Text>
+            <View style={[styles.stage, Shadow.note, { backgroundColor: palette.surfaceNote }]}>
+                <Text style={[s.label, { color: palette.textMuted }]}>Your journal</Text>
+                <Pressable
+                    onPress={pick}
+                    disabled={uploading}
+                    accessibilityRole="button"
+                    accessibilityLabel="Choose a profile photo"
+                    accessibilityState={{ disabled: uploading, busy: uploading }}
+                    style={styles.avatarControl}
+                >
+                    <Avatar name={draft.display_name || 'You'} url={draft.avatar_url} size={128} palette={palette} />
+                    {uploading ? (
+                        <View style={[styles.uploadOverlay, { backgroundColor: palette.scrimDark }]}>
+                            <ActivityIndicator color={palette.textOnImage} />
+                        </View>
+                    ) : (
+                        <View style={[styles.cameraBadge, { backgroundColor: palette.primary }]}>
+                            <Ionicons name="camera-outline" size={Spacing.lg} color={palette.textInverse} />
+                        </View>
+                    )}
+                </Pressable>
+                <Text style={[styles.name, { color: palette.text }]}>{draft.display_name || 'Your journal'}</Text>
+                <Pressable
+                    onPress={pick}
+                    disabled={uploading}
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: uploading }}
+                    style={({ pressed }) => [styles.pickButton, { backgroundColor: palette.primaryMuted, opacity: uploading ? 0.5 : pressed ? 0.85 : 1 }]}
+                >
+                    <Text style={[styles.pickLabel, { color: palette.primary }]}>
+                        {uploading ? 'Checking photo…' : draft.avatar_url ? 'Change photo' : 'Add a photo'}
+                    </Text>
                 </Pressable>
             </View>
-        </View>
+        </SetupFrame>
     );
 }
 
 const styles = StyleSheet.create({
-    /**
-     * A warm plate under the avatar. Without it the circle floated on bare
-     * cream and the screen read as unfinished — which is the wrong feel for the
-     * one step you cannot skip. Same card language as Settings.
-     */
     stage: {
         alignItems: 'center',
-        gap: Spacing.lg,
-        marginTop: Spacing.md,
-        paddingVertical: Spacing.xxl,
-        paddingHorizontal: Spacing.lg,
+        padding: Spacing.lg,
+        paddingVertical: Spacing.xl,
         borderRadius: Radius.xl,
     },
+    avatarControl: { marginTop: Spacing.md },
     uploadOverlay: {
         ...StyleSheet.absoluteFillObject,
-        borderRadius: 66,
+        borderRadius: Radius.full,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    pickLabel: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 14,
-        letterSpacing: 0.2,
+    cameraBadge: {
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        width: Spacing.hitTarget,
+        height: Spacing.hitTarget,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
+    name: { ...Type.headlineLarge, textAlign: 'center', marginTop: Spacing.lg },
+    pickButton: {
+        minHeight: Spacing.hitTarget,
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.sm,
+        marginTop: Spacing.md,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    pickLabel: { ...Type.titleMedium },
 });

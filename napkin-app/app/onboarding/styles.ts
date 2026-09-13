@@ -1,72 +1,41 @@
-/**
- * Shared onboarding styles (TICKET-107) — Heirloom Journal grammar.
- * Labels in Manrope (functional text, real contrast); serif italic reserved for
- * brand/content moments only — never for prompts or field labels.
- */
+/** Shared setup grammar: paper insets, upright editorial type, clear controls. */
 import { StyleSheet } from 'react-native';
-import { Colors, Spacing } from '@/constants/theme';
+import { Radius, Spacing, Type } from '@/constants/theme';
 
 export const onboardingStyles = StyleSheet.create({
-    root: {
-        flex: 1,
-    },
+    root: { flex: 1 },
     body: {
-        flex: 1,
-        paddingHorizontal: 24,
+        flexGrow: 1,
+        paddingHorizontal: Spacing.lg,
+        paddingTop: Spacing.lg,
+        paddingBottom: Spacing.xl,
     },
-    kicker: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        letterSpacing: 1.8,
-        textTransform: 'uppercase',
-        marginBottom: 8,
-    },
-    // The ONE serif-italic brand moment per screen.
-    brandLine: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 32,
-        lineHeight: 38,
-        letterSpacing: -0.5,
-        marginBottom: Spacing.xl,
-    },
-    label: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 12,
-        letterSpacing: 1.2,
-        textTransform: 'uppercase',
-        marginBottom: 8,
-    },
+    heading: { ...Type.displayLarge, marginBottom: Spacing.md },
+    description: { ...Type.body, marginBottom: Spacing.xl },
+    paper: { padding: Spacing.lg, borderRadius: Radius.xl },
+    label: { ...Type.sectionKicker, marginBottom: Spacing.sm },
     input: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
-        paddingVertical: 8,
+        ...Type.listNameInput,
+        minHeight: Spacing.xxl,
+        paddingVertical: Spacing.sm,
         borderBottomWidth: 1,
     },
-    skip: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-        marginTop: Spacing.lg,
-        alignSelf: 'flex-start',
+    skipButton: {
+        minHeight: Spacing.hitTarget,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: Spacing.sm,
     },
-    footer: {
-        paddingHorizontal: 24,
-    },
+    skip: { ...Type.body },
+    footer: { paddingTop: Spacing.md, paddingHorizontal: Spacing.lg },
     primaryBtn: {
-        height: 52,
-        borderRadius: 999,
+        minHeight: Spacing.hitTarget + Spacing.sm,
+        borderRadius: Radius.full,
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.lg,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    primaryBtnText: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 15,
-        letterSpacing: 0.3,
-        color: Colors.light.textInverse,
-    },
-    completionError: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 13,
-        lineHeight: 18,
-        marginBottom: Spacing.sm,
-    },
+    primaryBtnText: { ...Type.titleMedium },
+    completionError: { ...Type.metadata, marginBottom: Spacing.sm },
 });

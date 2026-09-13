@@ -28,6 +28,7 @@ import { ListCard, EmptyListsState, CreateListSheet } from '@/components/lists';
 import { OwnerActionsSheet } from '@/components/common';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 import { useToast } from '@/providers/ToastProvider';
+import { DiscoveryTip } from '@/components/onboarding/DiscoveryTip';
 
 type Segment = 'my' | 'saved';
 
@@ -124,6 +125,8 @@ export default function ListsScreen() {
                         })}
                     </View>
                 </View>
+
+                <DiscoveryTip topic="lists" />
 
                 {isLoading ? (
                     <View style={styles.loading}>

@@ -15,26 +15,22 @@ import {
     Text,
     Pressable,
     ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, Stack } from 'expo-router';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Colors, Shadow } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useCoDiners } from '@/hooks/feed/useCoDiners';
 import { CitySuggestField } from '@/components/onboarding/CitySuggestField';
 import { onboardingStyles as s } from './styles';
 import { useOnboardingDraft } from './OnboardingDraftContext';
-import { OnboardingProgress } from './OnboardingProgress';
+import { SetupFrame } from '@/components/onboarding/SetupFrame';
 import { useFinishOnboarding } from '@/hooks/onboarding/useFinishOnboarding';
 
 export default function OnboardingCityScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const insets = useSafeAreaInsets();
     const router = useRouter();
     const { user } = useAuth();
     const { draft, patch } = useOnboardingDraft();
@@ -42,6 +38,7 @@ export default function OnboardingCityScreen() {
 
     const [city, setCity] = useState(draft.home_city ?? '');
     const [branching, setBranching] = useState(false);
+    const [focused, setFocused] = useState(false);
 
     // Prefetch on entry — populates queryKeys.feed.coDiners so the branch below
     // (and the follows screen) reads a warm cache.
@@ -87,17 +84,59 @@ export default function OnboardingCityScreen() {
     };
 
     return (
-        <KeyboardAvoidingView
-            style={[s.root, { backgroundColor: palette.background }]}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        <SetupFrame
+            palette={palette}
+            step={3}
+            onBack={() => router.back()}
+            backDisabled={isBusy}
+            footer={
+                <>
+                    {completionError ? (
+                        <Text
+                            accessible
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="polite"
+                            style={[s.completionError, { color: palette.error }]}
+                        >
+                            {completionError}
+                        </Text>
+                    ) : null}
+                    <Pressable
+                        onPress={() => proceed(city.trim() || null)}
+                        disabled={isBusy}
+                        style={({ pressed }) => [
+                            s.primaryBtn,
+                            { backgroundColor: palette.primary, opacity: isBusy ? 0.6 : pressed ? 0.85 : 1 },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: isBusy, busy: isBusy }}
+                    >
+                        {isBusy ? <ActivityIndicator color={palette.textInverse} /> : (
+                            <Text style={[s.primaryBtnText, { color: palette.textInverse }]}>
+                                {completionError ? 'Try again' : isTerminal ? 'Open Napkin' : 'Continue'}
+                            </Text>
+                        )}
+                    </Pressable>
+                    <Pressable
+                        onPress={skip}
+                        disabled={isBusy}
+                        style={s.skipButton}
+                        accessibilityRole="button"
+                        accessibilityLabel="Skip home city"
+                        accessibilityState={{ disabled: isBusy }}
+                    >
+                        <Text style={[s.skip, { color: palette.textSecondary }]}>Maybe later</Text>
+                    </Pressable>
+                </>
+            }
         >
             <Stack.Screen options={{ headerShown: false }} />
-            <View style={[s.body, { paddingTop: insets.top + Spacing.xxl }]}>
-                <OnboardingProgress step={3} palette={palette} />
-                <Text style={[s.kicker, { color: palette.textMuted }]}>where you eat</Text>
-                <Text style={[s.brandLine, { color: palette.text }]}>your home city</Text>
-
-                <Text style={[s.label, { color: palette.textSecondary }]}>Home city</Text>
+            <Text style={[s.heading, { color: palette.text }]}>Start close to home.</Text>
+            <Text style={[s.description, { color: palette.textSecondary }]}>
+                Discover places around your city.
+            </Text>
+            <View style={[s.paper, Shadow.note, { backgroundColor: palette.surfaceNote }]}>
+                <Text style={[s.label, { color: palette.textSecondary }]}>Home city · optional</Text>
                 <CitySuggestField
                     value={city}
                     onChangeText={(t) => setCity(t.slice(0, 120))}
@@ -106,51 +145,15 @@ export default function OnboardingCityScreen() {
                     placeholderTextColor={palette.textMuted}
                     autoCapitalize="words"
                     autoCorrect={false}
-                    autoFocus
-                    returnKeyType="next"
+                    editable={!isBusy}
+                    returnKeyType="done"
                     onSubmitEditing={() => proceed(city.trim() || null)}
-                    style={[s.input, { color: palette.text, borderBottomColor: palette.ruleInkSoft }]}
+                    onFocus={() => setFocused(true)}
+                    onBlur={() => setFocused(false)}
+                    accessibilityLabel="Home city, optional"
+                    style={[s.input, { color: palette.text, borderBottomColor: focused ? palette.primary : palette.ruleInkSoft }]}
                 />
-
-                <Pressable
-                    onPress={skip}
-                    disabled={isBusy}
-                    hitSlop={8}
-                    accessibilityRole="button"
-                >
-                    <Text style={[s.skip, { color: palette.textMuted }]}>Skip</Text>
-                </Pressable>
             </View>
-
-            <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
-                {completionError ? (
-                    <Text
-                        accessible
-                        accessibilityRole="alert"
-                        accessibilityLiveRegion="polite"
-                        style={[s.completionError, { color: palette.error }]}
-                    >
-                        {completionError}
-                    </Text>
-                ) : null}
-                <Pressable
-                    onPress={() => proceed(city.trim() || null)}
-                    disabled={isBusy}
-                    style={({ pressed }) => [
-                        s.primaryBtn,
-                        { backgroundColor: palette.primary, opacity: isBusy ? 0.6 : pressed ? 0.85 : 1 },
-                    ]}
-                    accessibilityRole="button"
-                >
-                    {isBusy ? (
-                        <ActivityIndicator color={palette.textInverse} />
-                    ) : (
-                        <Text style={s.primaryBtnText}>
-                            {completionError ? 'Try again' : isTerminal ? 'Done' : 'Continue'}
-                        </Text>
-                    )}
-                </Pressable>
-            </View>
-        </KeyboardAvoidingView>
+        </SetupFrame>
     );
 }

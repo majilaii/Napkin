@@ -371,6 +371,7 @@ function RootLayoutNav() {
           <Stack.Screen name="auth" options={{ headerShown: false }} />
           {/* TICKET-107/204: first-sign-in onboarding (name · photo · city · follows?) */}
           <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+          <Stack.Screen name="welcome" options={{ headerShown: false }} />
           <Stack.Screen
             name="create-entry"
             options={{ presentation: 'modal', headerShown: false }}

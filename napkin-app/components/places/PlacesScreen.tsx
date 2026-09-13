@@ -1,3 +1,4 @@
+import { DiscoveryTip } from '@/components/onboarding/DiscoveryTip';
 import React, {
     useCallback,
     useEffect,
@@ -1244,14 +1245,12 @@ export function PlacesScreen({
                         styles.cityLedgerContent,
                         { paddingBottom: listModeBottomPadding },
                     ]}
-                    ListHeaderComponent={failurePresentation.kind === 'inline'
-                        ? (
-                            <InlineErrorState
-                                onRetry={handleRetryFailure}
-                                message="couldn't refresh places"
-                            />
-                        )
-                        : null}
+                    ListHeaderComponent={(
+                        <>
+                            {recentlyAdded ? <DiscoveryTip topic="places" /> : null}
+                            {failurePresentation.kind === 'inline' ? <InlineErrorState onRetry={handleRetryFailure} message="couldn't refresh places" /> : null}
+                        </>
+                    )}
                     ListEmptyComponent={(
                         <View style={styles.emptyResults}>
                             <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
@@ -1295,14 +1294,12 @@ export function PlacesScreen({
                         styles.cityLedgerContent,
                         { paddingBottom: listModeBottomPadding },
                     ]}
-                    ListHeaderComponent={failurePresentation.kind === 'inline'
-                        ? (
-                            <InlineErrorState
-                                onRetry={handleRetryFailure}
-                                message="couldn't refresh places"
-                            />
-                        )
-                        : null}
+                    ListHeaderComponent={(
+                        <>
+                            {activeScope.kind === 'you' && screenState.layerFilter === 'pinned' ? <DiscoveryTip topic="places" /> : null}
+                            {failurePresentation.kind === 'inline' ? <InlineErrorState onRetry={handleRetryFailure} message="couldn't refresh places" /> : null}
+                        </>
+                    )}
                     ListEmptyComponent={(
                         <View style={styles.emptyResults}>
                             <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
