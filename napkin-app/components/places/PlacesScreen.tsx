@@ -42,7 +42,8 @@ import {
 import type { SearchMode } from '@/components/search';
 import { ErrorState, InlineErrorState } from '@/components/ErrorState';
 import { PlacesListsPane } from '@/components/places/PlacesListsPane';
-import { PlacesRatingLabel, PlacesRow } from '@/components/places/PlacesRow';
+import { PlacesRow } from '@/components/places/PlacesRow';
+import { PlacesSelectedCard } from '@/components/places/PlacesSelectedCard';
 import { PlacesSearchSections } from '@/components/places/PlacesSearchSections';
 import { ScopePickerSheet, WhoChip } from '@/components/places/ScopePickerSheet';
 import { TableScopeRow } from '@/components/places/TableScopeRow';
@@ -74,8 +75,6 @@ import {
     priceFacets,
 } from '@/components/wishlist/mapFacets';
 import {
-    composeFriendCaptionMeta,
-    composeRowMeta,
     composePlacesContentKey,
     decorateAndSortRows,
     deriveDistanceOrigin,
@@ -389,6 +388,15 @@ export function PlacesScreen({
     const liveBottomInset = useDerivedValue(() => (
         liveVisibleHeight(sheetH, sheetTranslateY.value, PLACES_SNAP_METRICS)
     ));
+    const previewContainerHeight = useSharedValue(height);
+    const mapControlsBottom = useSharedValue(0);
+    const handlePreviewContainerLayout = useCallback((event: LayoutChangeEvent) => {
+        previewContainerHeight.value = event.nativeEvent.layout.height;
+    }, [previewContainerHeight]);
+    const handleMapControlsLayout = useCallback((event: LayoutChangeEvent) => {
+        const { y, height: controlsHeight } = event.nativeEvent.layout;
+        mapControlsBottom.value = y + controlsHeight;
+    }, [mapControlsBottom]);
     const sheetChromeAnimatedStyle = useAnimatedStyle(() => ({
         transform: [{ translateY: -liveBottomInset.value }],
     }));
@@ -794,10 +802,16 @@ export function PlacesScreen({
     const selectedRow = renderedProjection.rows.find(
         (row) => row.id === screenState.selectedPinId,
     ) ?? null;
+    const selectedItem = renderedProjection.pins.find((item) => item.id === screenState.selectedPinId) ?? null;
     const selectedDistance = selectedRow
         ? decorateAndSortRows([selectedRow], distanceOrigin)[0]?.distanceLabel ?? null
         : null;
-    const selectedCaptionVisible = mapMode && activeSegment === 'places' && !!selectedRow;
+    const selectedCaptionVisible = mapMode && activeSegment === 'places' && !!selectedRow && !!selectedItem;
+    const selectedCaptionViewportStyle = useAnimatedStyle(() => ({
+        // Measure the controls because their height grows with Dynamic Type.
+        maxHeight: Math.max(0, previewContainerHeight.value - liveBottomInset.value
+            - mapControlsBottom.value - 2 * (Spacing.sm + Spacing.xs)),
+    }));
 
     useEffect(() => {
         const trimmed = debouncedQuery.trim();
@@ -1314,7 +1328,10 @@ export function PlacesScreen({
     };
 
     return (
-        <View style={[styles.screen, { backgroundColor: palette.background }]}>
+        <View
+            style={[styles.screen, { backgroundColor: palette.background }]}
+            onLayout={handlePreviewContainerLayout}
+        >
             {mapMode ? (
                 <WishlistMapView
                     items={renderedProjection.pins}
@@ -1499,6 +1516,7 @@ export function PlacesScreen({
                     showsHorizontalScrollIndicator={false}
                     style={styles.chipScroller}
                     contentContainerStyle={styles.chipLine}
+                    onLayout={handleMapControlsLayout}
                 >
                     <SearchLocalityBar
                         compact
@@ -1602,43 +1620,30 @@ export function PlacesScreen({
                 </View>
             ) : null}
 
-            {selectedCaptionVisible && selectedRow ? (
+            {selectedCaptionVisible && selectedRow && selectedItem ? (
                 <Animated.View
                     style={[
                         styles.selectedCaptionPosition,
                         { bottom: Spacing.sm + Spacing.xs },
                         sheetChromeAnimatedStyle,
+                        selectedCaptionViewportStyle,
                     ]}
                 >
-                    <Pressable
-                        onPress={() => openRestaurant(selectedRow)}
-                        style={[
-                            styles.selectedCaption,
-                            Shadow.ambient,
-                            { backgroundColor: palette.surfaceNote },
-                        ]}
-                        accessibilityRole="button"
-                        testID="places-selected-caption"
-                        accessibilityLabel={`open ${selectedRow.name}`}
+                    <ScrollView
+                        key={`${user?.id}:${scopeKey}:${selectedRow.id}`}
+                        testID="places-selected-scroll"
+                        style={styles.selectedCaptionScroll}
+                        showsVerticalScrollIndicator
                     >
-                        <View style={styles.captionCopy}>
-                            <View style={styles.nameRatingLine}>
-                                <Text style={[styles.captionName, { color: palette.text }]} numberOfLines={1}>
-                                    {selectedRow.name}
-                                </Text>
-                                <PlacesRatingLabel row={selectedRow} />
-                            </View>
-                            <Text style={[styles.resultMeta, { color: palette.textMuted }]} numberOfLines={1}>
-                                {selectedRow.network
-                                    ? composeFriendCaptionMeta(selectedRow)
-                                    : composeRowMeta(
-                                        { ...selectedRow, friendsBeenCount: 0, isPinned: false },
-                                        selectedDistance,
-                                    )}
-                            </Text>
-                        </View>
-                        <Ionicons name="chevron-forward-outline" size={17} color={palette.textFaint} />
-                    </Pressable>
+                        <PlacesSelectedCard
+                            row={selectedRow}
+                            item={selectedItem}
+                            viewerId={user?.id}
+                            distance={selectedDistance}
+                            palette={palette}
+                            onOpen={() => openRestaurant(selectedRow)}
+                        />
+                    </ScrollView>
                 </Animated.View>
             ) : null}
 
@@ -2032,43 +2037,18 @@ const styles = StyleSheet.create({
         flexGrow: 1,
         paddingHorizontal: 8,
     },
-    nameRatingLine: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 10,
-    },
-    resultMeta: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
-        lineHeight: 18,
-    },
     selectedCaptionPosition: {
         position: 'absolute',
         left: 14,
         right: 14,
         zIndex: 1,
     },
-    selectedCaption: {
-        minHeight: 64,
+    selectedCaptionScroll: {
+        flexGrow: 0,
         borderRadius: Radius.lg,
-        paddingHorizontal: 15,
-        paddingVertical: 11,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
     },
     mapSheet: {
         zIndex: 5,
-    },
-    captionCopy: {
-        flex: 1,
-        gap: 3,
-    },
-    captionName: {
-        flex: 1,
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 16,
-        lineHeight: 21,
     },
     loader: {
         marginTop: Spacing.xl,

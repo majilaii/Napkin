@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 
 import { Colors } from '@/constants/theme';
 import { WishlistMapView, type WishlistMapItem } from '../WishlistMapView';
@@ -70,7 +70,7 @@ jest.mock('react-native-maps', () => {
     return {
         __esModule: true,
         default: MockMapView,
-        Marker: ({ children }: { children?: React.ReactNode }) => ReactModule.createElement('Marker', null, children),
+        Marker: ({ children, ...props }: { children?: React.ReactNode }) => ReactModule.createElement('Marker', props, children),
         UrlTile: () => ReactModule.createElement('UrlTile'),
         PROVIDER_GOOGLE: 'google',
         PROVIDER_DEFAULT: null,
@@ -121,6 +121,34 @@ describe('WishlistMapView collection framing', () => {
     afterEach(() => {
         jest.runOnlyPendingTimers();
         jest.useRealTimers();
+    });
+
+    it('keeps native marker bounds and identity stable while selection moves or clears', () => {
+        const onSelectedChange = jest.fn();
+        const props = {
+            items: ITEMS, unmappableCount: 0, userCoords: null,
+            locationStatus: 'denied' as const, onRequestLocation: jest.fn(),
+            onOpenRestaurant: jest.fn(), onSelectedChange,
+            palette: Colors.light, peek: 'none' as const,
+        };
+        const screen = render(<WishlistMapView {...props} selectedId={null} />);
+        act(() => jest.advanceTimersByTime(600));
+        const pins = ITEMS.map((item) => screen.getByTestId(`map-pin-${item.id}`));
+        const markers = screen.UNSAFE_getAllByType('Marker' as never);
+        fireEvent(markers[0], 'press');
+        expect(onSelectedChange).toHaveBeenCalledTimes(1);
+        expect(onSelectedChange).toHaveBeenCalledWith('a');
+        for (const selectedId of ['a', 'b', null]) {
+            screen.rerender(<WishlistMapView {...props} selectedId={selectedId} />);
+            expect(screen.UNSAFE_getAllByType('Marker' as never)).toEqual(markers);
+            ITEMS.forEach((item, index) => {
+                const pin = screen.getByTestId(`map-pin-${item.id}`);
+                expect(pin).toBe(pins[index]);
+                expect(pin.props.collapsable).toBe(false);
+                expect(pin.props.style).toMatchObject({ width: 56, height: 56 });
+            });
+            act(() => jest.advanceTimersByTime(600));
+        }
     });
 
     it('still frames when a parent re-renders with a new inline selection callback', () => {
