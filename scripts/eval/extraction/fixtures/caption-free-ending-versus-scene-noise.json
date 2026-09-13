@@ -25,5 +25,6 @@
       "name": "Nicolas",
       "why": "middle storefront; no featured-venue evidence"
     }
-  ]
+  ],
+  "exact_names": true
 }

@@ -14,6 +14,7 @@ import type {
 export interface FixtureSpot {
     name: string;
     area?: string;
+    aliases?: string[];
 }
 export interface ForbiddenSpot {
     name: string;
@@ -41,6 +42,8 @@ export interface Fixture {
     forbidden?: ForbiddenSpot[];
     /** TICKET-209: promote ANY unlisted candidate to a violation. */
     fail_on_extras?: boolean;
+    /** Require complete observed identities; no containment matching for expected venues. */
+    exact_names?: boolean;
     min_recall: number;
 }
 
@@ -109,17 +112,21 @@ export function scoreFixture(
     candidates: ExtractedCandidate[],
 ): FixtureScore {
     const names = candidates.map((c) => c.name ?? '');
+    const matchesExpected = (name: string, spot: FixtureSpot) =>
+        [spot.name, ...(spot.aliases ?? [])].some(expected => f.exact_names
+            ? normalize(name) !== '' && normalize(name) === normalize(expected)
+            : namesMatch(name, expected));
 
     const hits: string[] = [];
     const misses: string[] = [];
     for (const exp of f.expected) {
-        if (names.some((n) => namesMatch(n, exp.name))) hits.push(exp.name);
+        if (names.some((n) => matchesExpected(n, exp))) hits.push(exp.name);
         else misses.push(exp.name);
     }
 
     const knowns = [...f.expected, ...(f.optional ?? []), ...(f.forbidden ?? [])];
     const extras = candidates.filter(
-        (c) => c.name && !knowns.some((k) => namesMatch(c.name!, k.name)),
+        (c) => c.name && !knowns.some((k) => matchesExpected(c.name!, k)),
     );
 
     const violations: string[] = [];

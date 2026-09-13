@@ -1,11 +1,33 @@
 /**
  * resolve-url pure helpers — extracted for unit testing.
  *
- * These functions contain no I/O and no Deno.serve() — safe to import
- * in test files without triggering the HTTP server.
+ * These helpers have no Deno.serve(). Any I/O is supplied by callbacks, so
+ * tests can exercise decisions and failure lifecycles without real services.
  *
  * TICKET-063 fix-pass-1.
  */
+
+import { ExtractionError, isExtractionAbort } from '../_shared/importModel.ts';
+
+export function extractionFailureDecision(error: unknown): { code: string; message: string; status: number } | null {
+  if (error instanceof ExtractionError) {
+    return { code: error.code, message: error.message, status: error.code === 'EXTRACTION_NOT_CONFIGURED' ? 503 : 502 };
+  }
+  if (isExtractionAbort(error)) {
+    return { code: 'TIMEOUT', message: 'Import extraction timed out', status: 503 };
+  }
+  return null;
+}
+
+/** The dispatching caller is fire-and-forget: settle placeholders before reporting failure. */
+export async function runAsyncImportExtraction<T>(extract: () => Promise<T>, failJob: () => Promise<void>): Promise<T> {
+  try {
+    return await extract();
+  } catch (error) {
+    await failJob();
+    throw error;
+  }
+}
 
 // ── Source detection (TICKET-079) ─────────────────────────────────────────────
 

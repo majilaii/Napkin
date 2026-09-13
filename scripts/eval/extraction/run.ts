@@ -9,8 +9,8 @@
  * import becomes a fixture by copying `raw_text` out of extraction_cache.
  *
  * Run:
- *   ANTHROPIC_API_KEY=sk-… npm run eval:extraction
- *   # optionally: EXTRACTION_MODEL=claude-sonnet-5 npm run eval:extraction
+ *   OPENAI_API_KEY=<configured securely> npm run eval:extraction
+ *   # rollback: EXTRACTION_MODEL=claude-haiku-4-5-20251001 with ANTHROPIC_API_KEY
  *
  * Requires a key. A missing credential is not a successful model evaluation.
  * Deliberately OUTSIDE supabase/functions/ — the pre-commit deno pass runs
@@ -42,35 +42,46 @@
  * extraction context so a fixture exercises the prompt block the server would
  * actually have sent.
  */
+import { extractionKeyName, getExtractionModel, extractionCacheContract } from '../../../supabase/functions/_shared/importModel.ts';
 import { extractFromTextMulti } from '../../../supabase/functions/_shared/visionExtract.ts';
 import { type Fixture, scoreFixture, toExtractionContext } from './score.ts';
 
-if (!Deno.env.get('ANTHROPIC_API_KEY')) {
-    console.error('eval:extraction — NOT RUN: ANTHROPIC_API_KEY is not set.');
+const keyName = extractionKeyName();
+if (!Deno.env.get(keyName)) {
+    console.error(`eval:extraction — NOT RUN: ${keyName} is not set.`);
     Deno.exit(2);
 }
 
-const model = Deno.env.get('EXTRACTION_MODEL') ?? '(default)';
+const model = getExtractionModel();
+const outputIndex = Deno.args.indexOf('--json-output');
+const outputFile = outputIndex >= 0 ? Deno.args[outputIndex + 1] : undefined;
+const records: unknown[] = [];
+const filterIndex = Deno.args.indexOf('--filter');
+const fixtureFilter = filterIndex >= 0 ? Deno.args[filterIndex + 1] : undefined;
 const fixturesDir = new URL('./fixtures/', import.meta.url);
 const fixtures: Fixture[] = [];
 for await (const entry of Deno.readDir(fixturesDir)) {
     if (!entry.isFile || !entry.name.endsWith('.json')) continue;
     const raw = await Deno.readTextFile(new URL(entry.name, fixturesDir));
-    fixtures.push(JSON.parse(raw) as Fixture);
+    const fixture = JSON.parse(raw) as Fixture;
+    if (!fixtureFilter || fixture.name.includes(fixtureFilter)) fixtures.push(fixture);
 }
 fixtures.sort((a, b) => a.name.localeCompare(b.name));
+if (fixtures.length === 0) throw new Error('No evaluation fixtures matched');
 
 console.log(`eval:extraction — ${fixtures.length} fixtures, model ${model}\n`);
 
 let failed = false;
 
 for (const f of fixtures) {
+    const started = Date.now();
     const candidates = await extractFromTextMulti(
         f.fused_text,
         undefined,
         f.cap,
         toExtractionContext(f.context),
     );
+    records.push({ fixture: f, candidates, elapsed_ms: Date.now() - started });
     const { pass, hits, misses, extras, violations } = scoreFixture(f, candidates);
     if (!pass) failed = true;
 
@@ -81,6 +92,8 @@ for (const f of fixtures) {
     if (extras.length) console.log(`      extras: ${extras.map((e) => `${e.name}${e.stance === 'warned' ? ' (warned)' : ''}`).join(' · ')}`);
     console.log('');
 }
+
+if (outputFile) await Deno.writeTextFile(outputFile, JSON.stringify({ model, contract: extractionCacheContract(), records }, null, 2) + '\n');
 
 if (failed) {
     console.error('eval:extraction — REGRESSION (see FAIL lines above)');

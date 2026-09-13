@@ -10,12 +10,23 @@
     "caption_cap": 5
   },
   "expected": [
-    { "name": "Taberna da Rua das Flores" },
-    { "name": "Cervejaria Ramiro" },
-    { "name": "O Velho Eurico" },
-    { "name": "Prado" },
-    { "name": "Sem Palavras" }
+    {
+      "name": "Taberna da Rua das Flores"
+    },
+    {
+      "name": "Cervejaria Ramiro"
+    },
+    {
+      "name": "O Velho Eurico"
+    },
+    {
+      "name": "Prado"
+    },
+    {
+      "name": "Sem Palavras"
+    }
   ],
   "fail_on_extras": true,
-  "min_recall": 1
+  "min_recall": 1,
+  "exact_names": true
 }

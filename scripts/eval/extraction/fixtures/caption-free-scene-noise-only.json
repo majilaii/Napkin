@@ -21,5 +21,6 @@
       "name": "Nicolas",
       "why": "incidental storefront"
     }
-  ]
+  ],
+  "exact_names": true
 }

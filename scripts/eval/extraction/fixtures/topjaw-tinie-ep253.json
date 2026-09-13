@@ -50,5 +50,7 @@
       "why": "a stout brand mentioned in passing"
     }
   ],
-  "min_recall": 0.83
+  "min_recall": 1,
+  "exact_names": true,
+  "fail_on_extras": true
 }

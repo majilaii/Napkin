@@ -10,25 +10,65 @@
     "caption_cap": 10
   },
   "expected": [
-    { "name": "Casa Urola" },
-    { "name": "Bar Txepetxa" },
-    { "name": "La Cuchara de San Telmo" },
-    { "name": "Akerbetlz" },
-    { "name": "Bar Sport" },
-    { "name": "El Patio de Simona" },
-    { "name": "Casa Julián" },
-    { "name": "Gabarron" },
-    { "name": "Antonio Taberna" }
+    {
+      "name": "Casa Urola"
+    },
+    {
+      "name": "Bar Txepetxa"
+    },
+    {
+      "name": "La Cuchara de San Telmo"
+    },
+    {
+      "name": "Akerbetlz"
+    },
+    {
+      "name": "Bar Sport"
+    },
+    {
+      "name": "El Patio de Simona"
+    },
+    {
+      "name": "Casa Julián"
+    },
+    {
+      "name": "Gabarron"
+    },
+    {
+      "name": "Antonio Taberna"
+    }
   ],
   "forbidden": [
-    { "name": "Ganbara", "why": "neighbouring storefront signage — a real San Sebastián bar, absent from the caption's enumerated list" },
-    { "name": "La Viña", "why": "storefront signage in frame, absent from the caption's list" },
-    { "name": "Borda Berri", "why": "storefront signage in frame, absent from the caption's list" },
-    { "name": "Nestor", "why": "storefront signage in frame, absent from the caption's list" },
-    { "name": "Topjaw", "why": "channel branding" },
-    { "name": "Gilda", "why": "pintxo on a menu board, not a venue" },
-    { "name": "Txakoli", "why": "a drink on a menu board, not a venue" }
+    {
+      "name": "Ganbara",
+      "why": "neighbouring storefront signage — a real San Sebastián bar, absent from the caption's enumerated list"
+    },
+    {
+      "name": "La Viña",
+      "why": "storefront signage in frame, absent from the caption's list"
+    },
+    {
+      "name": "Borda Berri",
+      "why": "storefront signage in frame, absent from the caption's list"
+    },
+    {
+      "name": "Nestor",
+      "why": "storefront signage in frame, absent from the caption's list"
+    },
+    {
+      "name": "Topjaw",
+      "why": "channel branding"
+    },
+    {
+      "name": "Gilda",
+      "why": "pintxo on a menu board, not a venue"
+    },
+    {
+      "name": "Txakoli",
+      "why": "a drink on a menu board, not a venue"
+    }
   ],
   "fail_on_extras": true,
-  "min_recall": 0.88
+  "min_recall": 1,
+  "exact_names": true
 }
