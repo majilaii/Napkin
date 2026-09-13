@@ -53,7 +53,7 @@ export function SectionHeading({
         <View style={styles.sectionHeading}>
             <Text
                 accessibilityRole="header"
-                style={[Type.feedSectionKicker, { color: palette.textMuted }]}
+                style={[Type.restaurantSectionTitle, styles.sectionTitle, { color: palette.text }]}
             >
                 {label}
             </Text>
@@ -79,6 +79,7 @@ export function RestaurantTop({
     onBack,
     onSave,
     onPhotoPress,
+    onMastheadHeightChange,
     topInset,
     photos = [],
     palette,
@@ -90,6 +91,7 @@ export function RestaurantTop({
     onBack: () => void;
     onSave: () => void;
     onPhotoPress?: (photo: MastheadPhoto) => void;
+    onMastheadHeightChange?: (height: number) => void;
     topInset: number;
     photos?: readonly MastheadPhoto[];
     palette: Palette;
@@ -97,8 +99,10 @@ export function RestaurantTop({
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
     const pagerRef = useRef<ScrollView>(null);
     const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
+    const [titleHeight, setTitleHeight] = useState(0);
+    const [sourceHeight, setSourceHeight] = useState(0);
     const photoSignature = photos.map((photo) => photo.url).join('|');
-    const mastheadHeight = Math.min(
+    const compactHeight = Math.min(
         Spacing.restaurant.photoMastheadHeight,
         windowHeight * Spacing.restaurant.photoMastheadMaxWindowRatio,
     );
@@ -118,9 +122,19 @@ export function RestaurantTop({
             : currentPhoto.kind === 'places' && currentPhoto.label
                 ? `${currentPhoto.label}${pagerCount}`
                 : null;
+        const showSourceChip = Boolean(entryChip || currentPhoto.kind === 'places');
+        // Reserve actual text height so long names and larger text never
+        // collide with the controls or photo credit. Ordinary names stay compact.
+        const mastheadHeight = Math.max(
+            compactHeight,
+            topInset + Spacing.sm + Spacing.restaurant.photoControlSize
+                + (showSourceChip ? Spacing.sm + sourceHeight : 0)
+                + Spacing.sm + titleHeight + Spacing.restaurant.photoTitleBottom,
+        );
         return (
             <View
                 testID="restaurant-photo-masthead"
+                onLayout={(event) => onMastheadHeightChange?.(event.nativeEvent.layout.height)}
                 style={[
                     styles.photoMasthead,
                     { height: mastheadHeight, backgroundColor: palette.plateSlate },
@@ -223,8 +237,10 @@ export function RestaurantTop({
                         />
                     </Pressable>
                 </View>
-                {entryChip || currentPhoto.kind === 'places' ? (
+                {showSourceChip ? (
                     <View
+                        testID="masthead-photo-credit"
+                        onLayout={(event) => setSourceHeight(event.nativeEvent.layout.height)}
                         style={[
                             styles.photoSourceChip,
                             {
@@ -249,7 +265,12 @@ export function RestaurantTop({
                         ) : null}
                     </View>
                 ) : null}
-                <View style={styles.photoTitleBlock} pointerEvents="none">
+                <View
+                    testID="masthead-photo-title"
+                    style={styles.photoTitleBlock}
+                    pointerEvents="none"
+                    onLayout={(event) => setTitleHeight(event.nativeEvent.layout.height)}
+                >
                     <Text
                         style={[Type.restaurantName, { color: palette.textOnImage }]}
                         numberOfLines={3}
@@ -437,7 +458,7 @@ export function FriendsNotesSection({
                     accessibilityLabel={actionLabel}
                     style={({ pressed }) => [styles.sectionHeading, pressed && styles.pressed]}
                 >
-                    <Text style={[Type.feedSectionKicker, { color: palette.textMuted }]}>REVIEWS</Text>
+                    <Text style={[Type.restaurantSectionTitle, { color: palette.text }]}>Reviews</Text>
                     <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>
                         {action}
                     </Text>
@@ -448,7 +469,7 @@ export function FriendsNotesSection({
     const allFriends = visible.every((review) => review.is_followee);
     return (
         <View style={styles.section}>
-            <SectionHeading label={allFriends ? 'FROM FRIENDS' : 'REVIEWS'} palette={palette} />
+            <SectionHeading label={allFriends ? 'Friends’ reviews' : 'Reviews'} palette={palette} />
             {visible.map((review) => (
                 <QuoteCard
                     key={review.entry_id}
@@ -489,7 +510,7 @@ export function TableNotesSection({
     return (
         <View style={styles.section}>
             <SectionHeading
-                label={group.table_name ? `FROM ${group.table_name.toUpperCase()}` : 'FROM YOUR TABLE'}
+                label={group.table_name ? `From ${group.table_name}` : 'From your Table'}
                 action={`all ${group.rows.length} ›`}
                 onAction={() => onSeeAll(group.table_id)}
                 palette={palette}
@@ -525,7 +546,7 @@ export function FriendsSpread({
     const modeIndex = mode == null ? -1 : Math.round(mode * 2) - 1;
     return (
         <View style={styles.section}>
-            <SectionHeading label="THE SPREAD" palette={palette} />
+            <SectionHeading label="Rating spread" palette={palette} />
             <View style={styles.spreadBars}>
                 {bins.map((count, index) => (
                     <View
@@ -578,7 +599,7 @@ export function FeaturedListsSection({
     ];
     return (
         <View style={styles.section}>
-            <SectionHeading label="IN LISTS" palette={palette} />
+            <SectionHeading label="In lists" palette={palette} />
             <View style={styles.listChips}>
                 {rows.map((list, index) => {
                     const owner = list.owner_display_name
@@ -690,7 +711,7 @@ export function RestaurantDetails({
         : null;
     return (
         <View style={styles.section}>
-            <SectionHeading label="DETAILS" palette={palette} />
+            <SectionHeading label="Details" palette={palette} />
             <RestaurantLocationPreview
                 name={restaurant.name}
                 lat={restaurant.lat}
@@ -868,8 +889,10 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.restaurant.pageGutter,
         marginTop: Spacing.restaurant.sectionGap,
     },
+    sectionTitle: { flexShrink: 1 },
     sectionHeading: {
         minHeight: Spacing.restaurant.sectionHeadingHeight,
+        paddingBottom: Spacing.xs,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',

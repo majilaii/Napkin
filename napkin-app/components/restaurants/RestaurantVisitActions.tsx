@@ -21,6 +21,7 @@ type Props = {
     visitsUpdatedAt?: number;
     visitsRefreshing?: boolean;
     onMissingVisit?: () => void;
+    regularStatus?: React.ReactNode;
 };
 export function visitDateLabel(iso: string | null) {
     if (!iso) return 'No date';
@@ -39,7 +40,7 @@ function hasReview(visit: SelfLogRow) {
     return visit.rating != null || !!visit.note?.trim() || visit.photos.length > 0;
 }
 
-export function RestaurantVisitActions({ userId, pageId, restaurantId, restaurantPayload, restaurantName, visits, disabled, palette, onLog, onOpenVisit, onReview, selectedVisitId, visitsUpdatedAt = 0, visitsRefreshing = false, onMissingVisit }: Props) {
+export function RestaurantVisitActions({ userId, pageId, restaurantId, restaurantPayload, restaurantName, visits, disabled, palette, onLog, onOpenVisit, onReview, selectedVisitId, visitsUpdatedAt = 0, visitsRefreshing = false, onMissingVisit, regularStatus }: Props) {
     const insets = useSafeAreaInsets();
     const mutations = useRestaurantVisitMutations(userId, pageId);
     const rows = useMemo(() => orderVisits(visits), [visits]);
@@ -167,7 +168,7 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
             </View> : null}
             {current || awaitingSelection ? <View style={[styles.visits, { borderColor: palette.ghostRule }]}>
                 <View style={styles.visitsHead}>
-                    <Text style={[Type.restaurantHistoryDateline, { color: palette.textMuted }]}>YOUR VISITS</Text>
+                    <Text accessibilityRole="header" style={[Type.restaurantSectionTitle, { color: palette.text }]}>Your visits</Text>
                     <Pressable disabled={locked || recordRetry} onPress={() => setSheet('history')} accessibilityRole="button" accessibilityLabel={`Visit history, ${rows.length} ${rows.length === 1 ? 'visit' : 'visits'}`} style={styles.count}>
                         <Text style={[Type.restaurantSectionAction, { color: palette.primary }]}>{rows.length} {rows.length === 1 ? 'visit' : 'visits'}</Text>
                         <Ionicons name="chevron-forward" size={14} color={palette.primary} />
@@ -202,6 +203,7 @@ export function RestaurantVisitActions({ userId, pageId, restaurantId, restauran
                     </Pressable>}
                 </View> : null}
             </View> : null}
+            {regularStatus}
             {sheet && current ? <Modal transparent animationType="fade" onRequestClose={close}>
                 <View style={[styles.scrim, { backgroundColor: palette.overlay }]}>
                     <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close visit sheet" />

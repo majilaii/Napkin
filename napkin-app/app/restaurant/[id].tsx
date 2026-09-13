@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -49,17 +50,16 @@ import {
     FeaturedListsSection,
     FriendsNotesSection,
     FriendsSpread,
-    LedgerLine,
     MemoriesStrip,
     OnSocialsRail,
     RestaurantActions,
     RestaurantDetails,
+    RestaurantOverview,
     RestaurantRegularRow,
     RestaurantTop,
     SavedFromTikTokPanel,
     SimilarPlacesSection,
     TableNotesSection,
-    formatLedgerLine,
 } from '@/components/restaurants';
 import { RestaurantVisitActions } from '@/components/restaurants/RestaurantVisitActions';
 import { useRestaurantClippings } from '@/hooks/restaurants/useRestaurantClippings';
@@ -254,6 +254,8 @@ export default function RestaurantScreen() {
     const [saveSheetOpen, setSaveSheetOpen] = useState(false);
     const [gatherSheetOpen, setGatherSheetOpen] = useState(false);
     const [photoUnderStatusBar, setPhotoUnderStatusBar] = useState(true);
+    const [renderedPhotoHeight, setRenderedPhotoHeight] = useState(0);
+    const isFocused = useIsFocused();
 
     const savePayload = useMemo<RestaurantPayload | null>(() => {
         if (ghostWishlistPayload) return ghostWishlistPayload;
@@ -351,7 +353,6 @@ export default function RestaurantScreen() {
         ? restaurantDirectionsUrl(restaurant)
         : '';
     const gatherVisible = !FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId;
-    const visitCount = page.data?.self_log?.length ?? page.data?.personal.visit_count ?? 0;
     const mastheadPhotos = useMemo(
         () => resolveMastheadPhotos(
             page.data ?? (restaurant ? { restaurant } : null),
@@ -367,15 +368,6 @@ export default function RestaurantScreen() {
         Spacing.restaurant.photoMastheadHeight,
         windowHeight * Spacing.restaurant.photoMastheadMaxWindowRatio,
     );
-    const ledgerLine = useMemo(
-        () => formatLedgerLine({
-            youRating: undefined,
-            visitCount: 0,
-            friendsRating: numberTiers?.friends.value,
-            friendsCount: numberTiers?.friendsCohort.length ?? 0,
-        }),
-        [numberTiers],
-    );
     const reserveUrl = persistedRow?.reserve_url
         ?? reserveLink.data?.reserve_url
         ?? findBookingUrl(restaurant?.website);
@@ -384,7 +376,7 @@ export default function RestaurantScreen() {
         return (
             <View style={[styles.container, { backgroundColor: palette.background }]}>
                 <Stack.Screen options={{ headerShown: false }} />
-                <StatusBar style="dark" />
+                {isFocused ? <StatusBar style="dark" /> : null}
                 <Pressable
                     onPress={() => router.back()}
                     accessibilityRole="button"
@@ -409,15 +401,15 @@ export default function RestaurantScreen() {
     return (
         <View style={[styles.container, { backgroundColor: palette.background }]}>
             <Stack.Screen options={{ headerShown: false }} />
-            <StatusBar
+            {isFocused ? <StatusBar
                 style={mastheadPhotos.length > 0 && photoUnderStatusBar ? 'light' : 'dark'}
-            />
+            /> : null}
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.xxl }}
                 onScroll={(event) => {
                     const underPhoto = event.nativeEvent.contentOffset.y
-                        <= mastheadHeight - insets.top;
+                        <= (renderedPhotoHeight || mastheadHeight) - insets.top;
                     setPhotoUnderStatusBar((current) => current === underPhoto
                         ? current
                         : underPhoto);
@@ -453,6 +445,7 @@ export default function RestaurantScreen() {
                                 });
                             }}
                             topInset={insets.top}
+                            onMastheadHeightChange={setRenderedPhotoHeight}
                             photos={mastheadPhotos}
                             palette={palette}
                         />
@@ -460,29 +453,37 @@ export default function RestaurantScreen() {
                             styles.photoPaper,
                             { backgroundColor: palette.background },
                         ] : undefined}>
-                            <LedgerLine
-                                line={ledgerLine}
-                                onPress={visitCount > 0 && persistedRestaurantId
-                                    ? () => router.push({
-                                        pathname: '/restaurant-history',
-                                        params: {
-                                            id: persistedRestaurantId,
-                                            name: restaurant.name,
-                                            ...(tableId ? { tableId } : {}),
-                                        },
-                                    })
-                                    : undefined}
-                                flushTop={mastheadPhotos.length > 0}
+                            <RestaurantOverview
+                                average={page.data?.napkin_aggregate.average}
+                                ratingCount={page.data?.napkin_aggregate.count}
+                                reviewCount={page.data?.public_reviews_total}
+                                loading={isPageLoading}
+                                unavailable={page.isError && !page.data}
+                                onReviews={persistedRestaurantId ? () => router.push({
+                                    pathname: '/restaurant-reviews',
+                                    params: { id: persistedRestaurantId, name: restaurant.name },
+                                }) : undefined}
                                 palette={palette}
                             />
                             <RestaurantActions
                                 onLog={handleLogPress}
+                                flushTop
                                 primaryActions={<RestaurantVisitActions
                                     key={`${user?.id ?? 'signed-out'}:${restaurantId}`}
                                     userId={user?.id} pageId={restaurantId ?? ''} restaurantId={persistedRestaurantId}
                                     restaurantPayload={savePayload} restaurantName={restaurant.name}
                                     visits={page.data?.self_log ?? []} disabled={page.isLoading}
                                     palette={palette} onLog={handleLogPress}
+                                    regularStatus={
+                                        <RestaurantRegularRow
+                                            detail={page.data?.regular_detail}
+                                            onPress={(regularUserId) => router.push({
+                                                pathname: '/u/[identifier]',
+                                                params: { identifier: regularUserId },
+                                            })}
+                                            palette={palette}
+                                        />
+                                    }
                                     selectedVisitId={visitSelection.selectedVisitId}
                                     visitsUpdatedAt={page.dataUpdatedAt}
                                     visitsRefreshing={page.isFetching}
@@ -501,7 +502,6 @@ export default function RestaurantScreen() {
                                         else if (persistedRestaurantId) router.push({ pathname: '/restaurant-history', params: { id: persistedRestaurantId, name: restaurant.name } });
                                     }}
                                 />}
-                                flushTop={mastheadPhotos.length > 0 && !ledgerLine}
                                 palette={palette}
                             />
 
@@ -519,15 +519,6 @@ export default function RestaurantScreen() {
                                     onRetry={() => void page.refetch()}
                                 />
                             ) : null}
-
-                        <RestaurantRegularRow
-                            detail={page.data?.regular_detail}
-                            onPress={(regularUserId) => router.push({
-                                pathname: '/u/[identifier]',
-                                params: { identifier: regularUserId },
-                            })}
-                            palette={palette}
-                        />
 
                         <FriendsNotesSection
                             cohort={numberTiers.friendsCohort}

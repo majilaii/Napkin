@@ -9,6 +9,7 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
     classifyInteractiveCandidate,
+    classifyInteractiveSearchResults,
     dedupeAndRank,
     mergeExtracted,
     namesOverlap,
@@ -135,6 +136,96 @@ Deno.test('namesOverlap: whole-name spacing differences match without substring 
     assertEquals(tokenJaccard('Bagel Boy', 'Bagelboy'), 0);
     assertEquals(classifyInteractiveCandidate({ name: 'Bagel Boy', city: 'Amsterdam' },
         { name: 'Bagelboy', city: 'Rotterdam' }), 'locality_reject');
+});
+
+function classifySingleSearchResult(
+    extracted: Parameters<typeof classifyInteractiveSearchResults>[0],
+    place: Parameters<typeof classifyInteractiveSearchResults>[1][number],
+) {
+    return classifyInteractiveSearchResults(extracted, [{ id: 'top-place', ...place }]);
+}
+
+Deno.test('interactive source typo: Bar Temini matches Bar Termini with a corroborating structured city', () => {
+    // The source slide itself omitted the r; OCR and extraction preserved it.
+    const extracted = { name: 'Bar Temini', city: 'London', area: 'Soho' };
+    const place = { name: 'Bar Termini', city: 'London', formattedAddress: '7 Old Compton St, London W1D 5JE, UK' };
+    assertEquals(classifySingleSearchResult(extracted, place), 'matched');
+    // This is a classification-only exception, not a new dedupe or deferred rule.
+    assertEquals(namesOverlap(extracted.name, place.name), false);
+    assertEquals(scoreDeferredCandidates(extracted, [{ ...place, externalId: 'termini-london' }]).decision, 'name_reject');
+    assertEquals(classifySingleSearchResult({ name: 'Brenjak', city: 'London' },
+        { name: 'Berenjak', city: 'London' }), 'matched');
+    assertEquals(classifySingleSearchResult({ name: 'Bar Termmini', city: 'London' }, place), 'matched');
+});
+
+Deno.test('interactive source typo: wrong, absent, area-only and partial city evidence cannot corroborate', () => {
+    const extracted = { name: 'Bar Temini', city: 'London', area: 'Soho' };
+    for (const place of [
+        { name: 'Bar Termini', city: 'Hertford', formattedAddress: '7 London Road, Hertford, UK' },
+        { name: 'Bar Termini', city: 'Bristol', formattedAddress: 'Soho, Bristol, UK' },
+        { name: 'Bar Termini', city: null, formattedAddress: '7 Old Compton St, London W1D 5JE, UK' },
+        { name: 'Bar Termini', city: null, formattedAddress: null },
+    ]) assertEquals(classifySingleSearchResult(extracted, place), 'name_reject');
+    assertEquals(classifySingleSearchResult({ ...extracted, city: null },
+        { name: 'Bar Termini', city: 'London', formattedAddress: 'Soho, London' }), 'name_reject');
+    assertEquals(classifySingleSearchResult({ ...extracted, city: 'York' },
+        { name: 'Bar Termini', city: 'New York' }), 'name_reject');
+});
+
+Deno.test('interactive source typo: short words, substitutions, transpositions and different brands remain rejected', () => {
+    for (const [wanted, found] of [
+        ['Bar Temin', 'Bar Termini'],
+        ['Bar Temni', 'Bar Termni'], // single internal omission, but only five source letters
+        ['Camino', 'Casino'],
+        ['Bar Temrini', 'Bar Termini'],
+        ['Bar Termin', 'Bar Termini'],
+        ['Bar Termini', 'Bar Terminii'],
+        ['Bar Te3mini', 'Bar Temini'],
+        ['Bagelboy', 'Bagelboyz'],
+        ['Bar Temini', 'Bar Termini North'],
+        ['Bar Temini North', 'Bar Termini'],
+        ['Bar Temini', 'Bar Terminal'],
+        ['Kartuli', 'Cartouche'],
+        ['Ria', 'Osteria'],
+        ['Norma', "Norman's"],
+    ]) assertEquals(classifySingleSearchResult({ name: wanted, city: 'London' },
+        { name: found, city: 'London' }), 'name_reject', `${wanted} vs ${found}`);
+});
+
+Deno.test('interactive source typo: explicit branch address still rejects the wrong branch in the same city', () => {
+    const extracted = { name: 'Bar Temini', city: 'London', area: 'Soho', address: '7 Old Compton Street' };
+    assertEquals(classifySingleSearchResult(extracted,
+        { name: 'Bar Termini', city: 'London', formattedAddress: '31 Duke Street, London' }), 'locality_reject');
+    assertEquals(classifySingleSearchResult(extracted,
+        { name: 'Bar Termini', city: 'London', formattedAddress: '9 Old Compton St, London' }), 'locality_reject');
+    assertEquals(classifySingleSearchResult(extracted,
+        { name: 'Bar Termini', city: 'London', formattedAddress: '7 Old Compton St, London' }), 'matched');
+});
+
+Deno.test('interactive source typo: a second plausible identity blocks recovery without promoting it', () => {
+    const extracted = { name: 'Bar Temini', city: 'London', area: 'Soho' };
+    const top = { id: 'termini', name: 'Bar Termini', city: 'London', formattedAddress: '7 Old Compton St, London' };
+    assertEquals(classifyInteractiveSearchResults(extracted, [top, { ...top, id: 'another-termini' }]), 'name_reject');
+    assertEquals(classifyInteractiveSearchResults(extracted,
+        [top, { id: 'exact-temini', name: 'Bar Temini', city: 'London' }]), 'name_reject');
+    assertEquals(classifyInteractiveSearchResults(extracted, [top, { ...top }]), 'matched');
+    assertEquals(classifyInteractiveSearchResults(extracted,
+        [top, { ...top, id: 'termini-elsewhere', city: 'Hertford' }]), 'matched');
+    assertEquals(classifyInteractiveSearchResults(extracted,
+        [top, { id: 'other-bar', name: 'Another Bar', city: 'London' }]), 'matched');
+    assertEquals(classifyInteractiveSearchResults({ ...extracted, address: '7 Old Compton Street' },
+        [top, { ...top, id: 'wrong-branch', formattedAddress: '31 Duke Street, London' }]), 'matched');
+    assertEquals(classifyInteractiveSearchResults(extracted,
+        [{ id: 'unrelated', name: 'Another Bar', city: 'London' }, top]), 'name_reject');
+});
+
+Deno.test('interactive source typo: exact-match behavior and missing top identity remain unchanged', () => {
+    const extracted = { name: 'Bar Termini', city: 'London' };
+    const top = { id: 'termini', name: 'Bar Termini', city: 'London' };
+    assertEquals(classifyInteractiveSearchResults(extracted, [top, { ...top, id: 'other-branch' }]), 'matched');
+    assertEquals(classifyInteractiveSearchResults(extracted, []), 'no_result');
+    assertEquals(classifyInteractiveSearchResults(extracted, [{ ...top, id: null }]), 'no_result');
+    assertEquals(classifyInteractiveCandidate({ name: 'Bar Temini', city: 'London' }, top), 'name_reject');
 });
 
 Deno.test('interactive address: Salvo uses the explicit branch, not another Salvo in Amsterdam', () => {

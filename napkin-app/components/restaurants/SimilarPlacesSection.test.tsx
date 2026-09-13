@@ -62,7 +62,7 @@ describe('SimilarPlacesSection', () => {
             />,
         );
 
-        expect(screen.getByText('SIMILAR PLACES')).toBeTruthy();
+        expect(screen.getByText('Similar places')).toBeTruthy();
         expect(screen.getByTestId('similar-places-carousel')).toBeTruthy();
         expect(screen.getByText('japanese · 0.3 km')).toBeTruthy();
         expect(screen.getByText('1.5 km')).toBeTruthy();
@@ -121,7 +121,7 @@ describe('SimilarPlacesSection', () => {
         expect(screen.toJSON()).toBeNull();
     });
 
-    it('always reads SIMILAR PLACES — the server no longer returns merely-nearby rows', () => {
+    it('identifies similar places rather than merely-nearby rows', () => {
         const screen = render(
             <SimilarPlacesSection
                 rows={[row({ match: 'type' }), row({ id: 'r2', match: 'cuisine' })]}
@@ -129,7 +129,7 @@ describe('SimilarPlacesSection', () => {
                 palette={Colors.light}
             />,
         );
-        expect(screen.getByText('SIMILAR PLACES')).toBeTruthy();
+        expect(screen.getByText('Similar places')).toBeTruthy();
         expect(screen.queryByText('NEARBY')).toBeNull();
     });
 
