@@ -1,180 +1,113 @@
 import React, { useEffect, useState } from 'react';
-import { AccessibilityInfo, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Image, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
+import { StatusBar } from 'expo-status-bar';
+import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown, useReducedMotion } from 'react-native-reanimated';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
+import { DEMO_ICON, DEMO_SPOTS, ExternalUI as C, type DemoSource } from './share-demo/demoContent';
+import { SourceAppScene, SourceSharePanel } from './share-demo/SourceAppScene';
+import { SystemSharePanels } from './share-demo/SystemSharePanels';
+import { DemoButton, NapkinDemoScene } from './share-demo/NapkinDemoScene';
 
 type Palette = typeof Colors.light;
-type Source = 'TikTok' | 'Instagram';
-const ICON = require('@/assets/images/icon.png');
-const CLIPS = {
-    TikTok: require('@/assets/onboarding/tiktok-crudo.png'),
-    Instagram: require('@/assets/onboarding/reel-kitchen.png'),
+const STEPS = ['clip', 'source-share', 'system-share', 'apps', 'extension', 'queued', 'tray', 'review', 'map'] as const;
+type Step = typeof STEPS[number];
+const HINTS: Record<Step, string> = {
+    clip: 'Tap the video’s Share button.',
+    'source-share': 'Open the iPhone share sheet from the video’s sharing menu.',
+    'system-share': 'Tap More to find Napkin in the Apps list.',
+    apps: 'Tap Napkin. You can add it to your share favorites using Edit next time.',
+    extension: 'Tap add for review. You can carry on watching afterward.',
+    queued: 'Added for review. Open Napkin when you are ready.',
+    tray: 'In Places, open the clip from your clip tray.',
+    review: 'Review the places. Keep your picks and save them to your map.',
+    map: 'Your selected example places are pinned. Nothing was saved to your account.',
 };
-const SPOTS = ['Matchado', 'TSUJIRI', 'Frothee'];
-const TITLES = ['A good find starts here.', 'Send it a little further.', 'Find Napkin.', 'A place for your finds.', 'Ready when you are.', 'Keep the places you want.', 'From your feed to your map.'];
-const CAPTIONS = [
-    'Tap the video’s Share button.',
-    'Choose More to open the iPhone share sheet.',
-    'Choose Napkin. If it’s hidden, look under More.',
-    'Add the clip for review, then carry on watching.',
-    'Open Napkin and find the clip in Places.',
-    'Review the restaurants, then save your picks.',
-    'Your saved restaurants are ready to find again.',
-];
 
-/** Local rehearsal only: no import, queue, account, native Share or network access. */
+/** Offline interaction-gated rehearsal. No URL, import, queue, or save side effects. */
 export function ShareWalkthrough({ palette, onClose, onDone }: { palette: Palette; onClose: () => void; onDone: () => void }) {
     const insets = useSafeAreaInsets();
+    const { width, height } = useWindowDimensions();
     const reduced = useReducedMotion();
-    const [step, setStep] = useState(0);
-    const [source, setSource] = useState<Source>('TikTok');
-    const [more, setMore] = useState(false);
-    const [selected, setSelected] = useState(SPOTS);
-    const next = () => { setMore(false); setStep((current) => Math.min(current + 1, TITLES.length - 1)); };
-    useEffect(() => { AccessibilityInfo.announceForAccessibility(`${TITLES[step]} ${CAPTIONS[step]}`); }, [step]);
-    const action = (label: string, onPress: () => void, disabled = false) => (
-        <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
-            style={({ pressed }) => [s.action, { backgroundColor: palette.primary, opacity: disabled ? 0.4 : pressed ? 0.8 : 1 }]}>
-            <Text style={[Type.body, s.bold, { color: palette.textInverse }]}>{label}</Text>
-            <Ionicons name="arrow-forward-outline" size={20} color={palette.textInverse} />
-        </Pressable>
-    );
-    return (
-        <View style={[s.root, { backgroundColor: palette.background, paddingTop: insets.top }]}>
-            <View style={s.header}>
-                <Pressable onPress={() => { setMore(false); setStep((current) => Math.max(current - 1, 0)); }} disabled={step === 0} accessibilityRole="button" accessibilityLabel="Previous demo step" accessibilityState={{ disabled: step === 0 }} style={[s.iconButton, { opacity: step ? 1 : 0 }]}>
-                    <Ionicons name="arrow-back-outline" size={24} color={palette.text} />
-                </Pressable>
-                <Text style={[Type.sectionKicker, { color: palette.primary }]}>Try it · example only</Text>
-                <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close sharing demo" style={s.iconButton}><Ionicons name="close-outline" size={24} color={palette.text} /></Pressable>
-            </View>
-            <ScrollView key={step} contentContainerStyle={s.content} showsVerticalScrollIndicator>
-                <View accessible accessibilityRole="progressbar" accessibilityLabel="Sharing demo" accessibilityValue={{ min: 1, max: TITLES.length, now: step + 1 }} style={s.progress}>
-                    {TITLES.map((title, i) => <View key={title} style={[s.segment, { backgroundColor: i <= step ? palette.primary : palette.ruleInkSoft }]} />)}
-                </View>
-                <Text accessibilityRole="header" style={[Type.displayLarge, s.title, { color: palette.text }]}>{TITLES[step]}</Text>
-                <Text style={[Type.body, s.caption, { color: palette.textSecondary }]}>{CAPTIONS[step]}</Text>
-                <Animated.View key={`${step}-${source}`} entering={reduced ? undefined : FadeIn.duration(180)}>
-                    {step === 0 ? <>
-                        <View accessibilityRole="tablist" style={[s.sources, { backgroundColor: palette.surfaceJournal }]}>
-                            {(['TikTok', 'Instagram'] as const).map((item) => <Pressable key={item} onPress={() => setSource(item)} accessibilityRole="tab" accessibilityState={{ selected: item === source }} style={[s.source, { backgroundColor: item === source ? palette.card : undefined }]}>
-                                <Ionicons name={item === 'TikTok' ? 'logo-tiktok' : 'logo-instagram'} size={20} color={palette.text} />
-                                <Text style={[Type.metadata, { color: palette.text }]}>{item}</Text>
-                            </Pressable>)}
-                        </View>
-                        <View style={[s.video, { backgroundColor: palette.surfaceJournal }]}>
-                            <Image source={CLIPS[source]} style={s.fillPhoto} resizeMode="cover" accessible={false} />
-                            <View style={[s.videoShade, { backgroundColor: palette.overlayPhoto }]} />
-                            <View style={s.videoTop}><Text style={[Type.sectionKicker, { color: palette.textOnImage }]}>Your next good meal</Text></View>
-                            <View style={s.videoBottom}>
-                                <Text style={[Type.displaySmall, s.flex, { color: palette.textOnImage }]}>A few places worth keeping.</Text>
-                                <Pressable onPress={next} accessibilityRole="button" accessibilityLabel={`Share ${source} video`} style={[s.shareTarget, { backgroundColor: palette.card }]}>
-                                    <Ionicons name={source === 'Instagram' ? 'paper-plane-outline' : 'arrow-redo-outline'} size={28} color={palette.primary} />
-                                    <Text style={[Type.metadata, { color: palette.primary }]}>Share</Text>
-                                </Pressable>
-                            </View>
-                        </View>
-                    </> : null}
-                    {step === 1 || step === 2 ? <View style={[s.sheetStage, { backgroundColor: palette.surfaceJournal }]}>
-                        <View style={s.clipSummary}>
-                            <Image source={CLIPS[source]} style={s.thumbnail} accessible={false} />
-                            <View style={s.flex}><Text style={[Type.editorialTitle, { color: palette.text }]}>A few good finds</Text><Text style={[Type.metadata, { color: palette.textMuted }]}>A clip from {source}</Text></View>
-                        </View>
-                        <View style={[s.sheet, Shadow.note, { backgroundColor: palette.card }]}>
-                            <View style={[s.handle, { backgroundColor: palette.ruleInkSoft }]} />
-                            <Text style={[Type.sectionKicker, s.caption, { color: palette.textMuted }]}>{step === 1 ? 'Share to' : more ? 'Apps' : 'iPhone share sheet'}</Text>
-                            {step === 1 ? <View style={s.apps}>
-                                <View style={s.decorativeApp} accessible={false}><Ionicons name="link-outline" size={28} color={palette.textMuted} /><Text style={[Type.metadata, { color: palette.textMuted }]}>Copy link</Text></View>
-                                <Pressable onPress={next} accessibilityRole="button" accessibilityLabel="More sharing options" style={[s.appTarget, { backgroundColor: palette.primaryMuted }]}><Ionicons name="ellipsis-horizontal" size={28} color={palette.primary} /><Text style={[Type.body, { color: palette.primary }]}>More</Text></Pressable>
-                            </View> : <>
-                                <Pressable onPress={next} accessibilityRole="button" accessibilityLabel="Choose Napkin" style={[s.appRow, { backgroundColor: palette.primaryMuted }]}>
-                                    <Image source={ICON} style={s.appIcon} accessible={false} /><Text style={[Type.body, s.flex, { color: palette.text }]}>Napkin</Text><Ionicons name="arrow-forward-outline" size={24} color={palette.primary} />
-                                </Pressable>
-                                {!more ? <Pressable onPress={() => setMore(true)} accessibilityRole="button" accessibilityLabel="More apps" style={s.appRow}><Ionicons name="ellipsis-horizontal" size={24} color={palette.textMuted} /><Text style={[Type.body, { color: palette.textMuted }]}>More</Text></Pressable> : null}
-                            </>}
-                        </View>
-                        <Text style={[Type.metadata, s.helper, { color: palette.textMuted }]}>{step === 2 ? 'Tip: add Napkin to your share favourites for next time.' : 'Share menus can look a little different across apps.'}</Text>
-                    </View> : null}
-                    {step === 3 ? <View style={[s.paper, Shadow.note, { backgroundColor: palette.card }]}>
-                        <Image source={ICON} style={s.appIcon} accessible={false} />
-                        <Text style={[Type.displaySmall, { color: palette.text }]}>save to napkin</Text>
-                        <View style={s.clipSummary}><Image source={CLIPS[source]} style={s.thumbnail} accessible={false} /><Text style={[Type.body, s.flex, { color: palette.textSecondary }]}>link ready · {source}</Text></View>
-                        <Text style={[Type.body, { color: palette.textSecondary }]}>Review the restaurants in Napkin before saving.</Text>
-                        {action('add for review', next)}
-                    </View> : null}
-                    {step === 4 ? <View style={[s.paper, Shadow.note, { backgroundColor: palette.card }]}>
-                        <Ionicons name="checkmark-circle-outline" size={48} color={palette.secondary} />
-                        <Text style={[Type.displaySmall, { color: palette.text }]}>Added for review</Text>
-                        <Text style={[Type.body, { color: palette.textSecondary }]}>You’re back in {source}. The clip is waiting in Napkin.</Text>
-                        {action('Open Napkin in the demo', next)}
-                    </View> : null}
-                    {step === 5 ? <View style={[s.paper, Shadow.note, { backgroundColor: palette.card }]}>
-                        <Text style={[Type.sectionKicker, { color: palette.primary }]}>Places · clip tray</Text>
-                        <View style={s.clipSummary}><Image source={CLIPS[source]} style={s.thumbnail} accessible={false} /><View style={s.flex}><Text style={[Type.editorialTitle, { color: palette.text }]}>3 places to review</Text><Text style={[Type.metadata, { color: palette.textMuted }]}>Example results · {source}</Text></View></View>
-                        {SPOTS.map((name) => <Pressable key={name} onPress={() => setSelected((current) => current.includes(name) ? current.filter((spot) => spot !== name) : [...current, name])} accessibilityRole="checkbox" accessibilityLabel={name} accessibilityState={{ checked: selected.includes(name) }} style={s.reviewRow}>
-                            <Ionicons name={selected.includes(name) ? 'checkmark-circle-outline' : 'ellipse-outline'} size={24} color={selected.includes(name) ? palette.primary : palette.textMuted} /><Text style={[Type.editorialTitle, { color: palette.text }]}>{name}</Text>
-                        </Pressable>)}
-                        {action(`Save ${selected.length} ${selected.length === 1 ? 'spot' : 'spots'}`, next, !selected.length)}
-                    </View> : null}
-                    {step === 6 ? <>
-                        <SavedPlacesIllustration palette={palette} names={selected} />
-                        {action('Got it', onDone)}
-                    </> : null}
-                </Animated.View>
-            </ScrollView>
-            <Text style={[Type.metadata, s.footnote, { color: palette.textMuted, paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>A practice run. Nothing is saved.</Text>
-        </View>
-    );
-}
+    const [step, setStep] = useState<Step>('clip');
+    const [source, setSource] = useState<DemoSource>('TikTok');
+    const [selected, setSelected] = useState(DEMO_SPOTS.map((spot) => spot.name));
+    const index = STEPS.indexOf(step);
+    const inNapkin = index >= STEPS.indexOf('tray');
+    // Every target captures the step it belongs to. Repeated or outgoing-layer
+    // taps cannot skip the next step while sheets are entering/exiting.
+    const advance = (expected: Step) => setStep((current) => current === expected ? STEPS[Math.min(STEPS.indexOf(current) + 1, STEPS.length - 1)] : current);
+    const back = () => setStep((current) => STEPS[Math.max(STEPS.indexOf(current) - 1, 0)]);
+    const sheetEnter = reduced ? undefined : SlideInDown.duration(340);
+    const sheetExit = reduced ? undefined : SlideOutDown.duration(260);
+    const sceneEnter = reduced ? undefined : FadeIn.duration(260);
+    const sceneExit = reduced ? undefined : FadeOut.duration(180);
+    const headerBottom = insets.top + 56;
+    useEffect(() => { AccessibilityInfo.announceForAccessibility(HINTS[step]); }, [step]);
 
-export function SharingPreview({ palette }: { palette: Palette }) {
-    return <View style={[s.preview, { backgroundColor: palette.surfaceJournal }]} accessible accessibilityLabel="Example: TikTok and Instagram clips become restaurants to review in Napkin">
-        <View style={[s.previewClip, s.rearClip, Shadow.note]}><Image source={CLIPS.Instagram} style={s.fillPhoto} resizeMode="cover" accessible={false} /><View style={[s.clipBadge, { backgroundColor: palette.card }]}><Ionicons name="logo-instagram" size={20} color={palette.text} /><Text style={[Type.metadata, { color: palette.text }]}>Reels</Text></View></View>
-        <View style={[s.previewClip, s.frontClip, Shadow.note]}><Image source={CLIPS.TikTok} style={s.fillPhoto} resizeMode="cover" accessible={false} /><View style={[s.clipBadge, { backgroundColor: palette.card }]}><Ionicons name="logo-tiktok" size={20} color={palette.text} /><Text style={[Type.metadata, { color: palette.text }]}>TikTok</Text></View></View>
-        <View style={[s.previewResult, Shadow.note, { backgroundColor: palette.card }]}><Image source={ICON} style={s.smallIcon} accessible={false} /><View style={s.flex}><Text style={[Type.editorialTitle, { color: palette.text }]}>A few good finds</Text><Text style={[Type.metadata, { color: palette.secondary }]}>Ready to review in Napkin</Text></View><Ionicons name="location-outline" size={24} color={palette.primary} /></View>
+    return <View style={[s.root, { backgroundColor: inNapkin ? palette.background : C.background }]}>
+        <StatusBar style={inNapkin ? 'dark' : 'light'} />
+        {!inNapkin ? <View style={StyleSheet.absoluteFill} accessibilityElementsHidden={step !== 'clip'} importantForAccessibility={step === 'clip' ? 'auto' : 'no-hide-descendants'}>
+            <SourceAppScene source={source} top={headerBottom + Spacing.md} bottom={insets.bottom} active={step === 'clip'} onShare={() => advance('clip')} />
+        </View> : null}
+        {index > 0 && !inNapkin ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: C.scrim }]} /> : null}
+        {step === 'source-share' ? <Animated.View key="source" entering={sheetEnter} exiting={sheetExit} style={s.bottomLayer}>
+            <SourceSharePanel source={source} bottom={insets.bottom} onMore={() => advance('source-share')} />
+        </Animated.View> : null}
+        {step === 'system-share' || step === 'apps' ? <Animated.View key={step} entering={sheetEnter} exiting={sheetExit} style={s.bottomLayer}>
+            <SystemSharePanels width={width} height={step === 'apps' ? height - headerBottom - Spacing.sm : Math.min(height * 0.61, 490)} bottomInset={insets.bottom} stage={step === 'apps' ? 'apps' : 'system'} source={source} onMore={() => advance('system-share')} onNapkin={() => advance('apps')} />
+        </Animated.View> : null}
+        {step === 'extension' ? <Animated.View key="extension" entering={sheetEnter} exiting={sheetExit} style={[s.extensionLayer, { paddingBottom: Math.max(insets.bottom, Spacing.sm), maxHeight: height - headerBottom }]}>
+            <Text maxFontSizeMultiplier={1.2} style={s.floatingHint}>Add it now. Review it in Napkin.</Text>
+            <View style={[s.extension, Shadow.note, { backgroundColor: palette.card }]}><ScrollView style={s.extensionScroll} contentContainerStyle={s.extensionContent} bounces={false} showsVerticalScrollIndicator>
+                <View style={[s.handle, { backgroundColor: palette.ruleInkSoft }]} />
+                <Text accessibilityRole="header" style={[Type.displayMedium, { color: palette.text }]}>save to napkin</Text>
+                <View style={s.linkReady}><Ionicons name="link-outline" size={16} color={palette.textSecondary} /><Text style={[Type.metadata, { color: palette.textSecondary }]}>link ready · {source}</Text></View>
+                <View style={[s.reviewPanel, { backgroundColor: palette.primaryMuted }]}><Ionicons name="shield-checkmark-outline" size={25} color={palette.primary} /><View style={s.flex}><Text style={[Type.body, s.bold, { color: palette.text }]}>review before saving</Text><Text style={[Type.metadata, { color: palette.textSecondary, marginTop: Spacing.xs }]}>Check the restaurants in Napkin before you pin them.</Text></View></View>
+                </ScrollView><Pressable accessibilityRole="button" accessibilityLabel="add for review" onPress={() => advance('extension')} style={({ pressed }) => [s.extensionButton, { backgroundColor: palette.primary, opacity: pressed ? 0.8 : 1 }]}><Text style={[Type.body, s.bold, { color: palette.textInverse }]}>add for review</Text></Pressable>
+            </View>
+        </Animated.View> : null}
+        {step === 'queued' ? <Animated.View key="queued" entering={sceneEnter} exiting={sceneExit} style={[s.queued, { paddingTop: headerBottom }]}>
+            <View style={[s.queuedCard, Shadow.note, { backgroundColor: palette.card }]}>
+                <Image source={DEMO_ICON} style={s.icon} accessible={false} /><Text accessibilityRole="header" style={[Type.displaySmall, { color: palette.text }]}>Added for review</Text><Text style={[Type.body, { color: palette.textSecondary }]}>Carry on watching. Open Napkin when you’re ready.</Text>
+                <DemoButton palette={palette} label="Open Napkin in the demo" displayLabel="Open Napkin" onPress={() => advance('queued')} />
+            </View>
+        </Animated.View> : null}
+        {inNapkin ? <Animated.View key={step === 'review' ? 'review' : 'places'} entering={sceneEnter} exiting={sceneExit} style={StyleSheet.absoluteFill}>
+            <NapkinDemoScene palette={palette} source={source} stage={step as 'tray' | 'review' | 'map'} selected={selected} top={headerBottom} bottom={insets.bottom}
+                onReview={() => advance('tray')} onToggle={(name) => setSelected((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])}
+                onSave={() => { if (selected.length) advance('review'); }} onDone={onDone} />
+        </Animated.View> : null}
+        <View style={[s.header, { top: insets.top + Spacing.xs }]}>
+            <Pressable onPress={back} disabled={index === 0} accessibilityRole="button" accessibilityLabel="Previous demo step" accessibilityState={{ disabled: index === 0 }} style={[s.headerButton, { backgroundColor: inNapkin ? palette.surfaceJournal : C.scrim, opacity: index ? 1 : 0 }]}><Ionicons name="arrow-back" size={21} color={inNapkin ? palette.text : C.white} /></Pressable>
+            <View accessible accessibilityRole="progressbar" accessibilityLabel="Sharing demo" accessibilityValue={{ min: 1, max: STEPS.length, now: index + 1 }} style={[s.demoBadge, { backgroundColor: inNapkin ? palette.surfaceJournal : C.scrim }]}>
+                <Text style={[Type.metadata, { color: inNapkin ? palette.textSecondary : C.white }]}>Practice · {index + 1} of {STEPS.length}</Text>
+            </View>
+            <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel="Close sharing demo" style={[s.headerButton, { backgroundColor: inNapkin ? palette.surfaceJournal : C.scrim }]}><Ionicons name="close" size={23} color={inNapkin ? palette.text : C.white} /></Pressable>
+        </View>
+        {step === 'clip' ? <View style={[s.sourcePicker, { top: headerBottom + 61 }]} accessibilityRole="tablist">
+            {(['TikTok', 'Instagram'] as const).map((item) => <Pressable key={item} accessibilityRole="tab" accessibilityLabel={item} accessibilityState={{ selected: source === item }} onPress={() => setSource(item)} style={[s.sourceTab, { backgroundColor: source === item ? C.white : C.scrim }]}><Ionicons name={item === 'TikTok' ? 'logo-tiktok' : 'logo-instagram'} size={15} color={source === item ? C.background : C.white} /><Text style={[Type.metadata, { color: source === item ? C.background : C.white }]}>{item}</Text></Pressable>)}
+        </View> : null}
     </View>;
 }
 
-function SavedPlacesIllustration({ palette, names }: { palette: Palette; names: string[] }) {
-    return <View style={[s.map, { backgroundColor: palette.oliveCream }]}>
-        <View accessible={false} style={[s.road, { backgroundColor: palette.card, top: '32%', transform: [{ rotate: '-28deg' }] }]} />
-        <View accessible={false} style={[s.road, { backgroundColor: palette.card, top: '65%', transform: [{ rotate: '24deg' }] }]} />
-        <Text style={[Type.sectionKicker, { color: palette.secondary }]}>Example · your map</Text>
-        {names.map((name, i) => <View key={name} style={[s.mapPin, Shadow.note, { backgroundColor: palette.card, alignSelf: i % 2 ? 'flex-end' : 'flex-start' }]}><Ionicons name="location-outline" size={24} color={palette.primary} /><View><Text style={[Type.editorialTitle, { color: palette.text }]}>{name}</Text><Text style={[Type.metadata, { color: palette.secondary }]}>pinned</Text></View></View>)}
+/** The welcome artwork previews the same source sheet users will rehearse. */
+export function SharingPreview({ palette }: { palette: Palette }) {
+    return <View style={[s.preview, { backgroundColor: palette.surfaceJournal }]} accessible accessibilityLabel="Practice sharing a TikTok or Instagram clip, then review its restaurants in Napkin">
+        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={s.miniPhone}>
+            <View style={s.miniScene}><SourceAppScene source="TikTok" top={15} bottom={0} active={false} onShare={() => undefined} /><View style={s.bottomLayer}><SourceSharePanel source="TikTok" bottom={0} onMore={() => undefined} /></View></View>
+        </View>
+        <View style={[s.previewLabel, { backgroundColor: palette.card }]}><Ionicons name="logo-tiktok" size={20} color={palette.text} /><Ionicons name="logo-instagram" size={20} color={palette.text} /></View>
+        <View style={[s.previewResult, Shadow.note, { backgroundColor: palette.card }]}><Image source={DEMO_ICON} style={s.icon} accessible={false} /><Text style={[Type.editorialTitle, { color: palette.text }]}>3 good finds.</Text><Text style={[Type.metadata, { color: palette.textMuted }]}>One clip.</Text><View style={[s.resultRule, { backgroundColor: palette.ruleInkSoft }]} />{DEMO_SPOTS.map((spot) => <View key={spot.name} style={s.previewSpot}><Ionicons name="location-outline" size={17} color={palette.primary} /><Text style={[Type.metadata, { color: palette.text }]}>{spot.name}</Text></View>)}</View>
     </View>;
 }
 
 const s = StyleSheet.create({
-    fillPhoto: { position: 'absolute', width: '100%', height: '100%' },
-    root: { flex: 1 }, flex: { flex: 1 }, bold: { fontFamily: 'Manrope_700Bold' },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.md },
-    iconButton: { minWidth: Spacing.hitTarget, minHeight: Spacing.hitTarget, alignItems: 'center', justifyContent: 'center' },
-    content: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm, paddingBottom: Spacing.lg, flexGrow: 1 },
-    progress: { flexDirection: 'row', gap: Spacing.xs, marginBottom: Spacing.lg }, segment: { flex: 1, height: 2, borderRadius: Radius.full },
-    title: { marginBottom: Spacing.sm }, caption: { marginBottom: Spacing.lg },
-    sources: { flexDirection: 'row', borderRadius: Radius.full, padding: Spacing.xs, marginBottom: Spacing.md },
-    source: { flex: 1, minHeight: Spacing.hitTarget, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, borderRadius: Radius.full },
-    video: { height: 340, borderRadius: Radius.xxl, overflow: 'hidden' }, videoShade: { ...StyleSheet.absoluteFillObject },
-    videoTop: { padding: Spacing.lg }, videoBottom: { position: 'absolute', bottom: Spacing.lg, left: Spacing.lg, right: Spacing.lg, flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.md },
-    shareTarget: { borderRadius: Radius.full, padding: Spacing.md, alignItems: 'center', gap: Spacing.xs },
-    sheetStage: { padding: Spacing.md, borderRadius: Radius.xxl, gap: Spacing.lg },
-    clipSummary: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md }, thumbnail: { width: 56, height: 72, borderRadius: Radius.md },
-    sheet: { padding: Spacing.lg, borderRadius: Radius.xxl }, handle: { width: 36, height: 4, alignSelf: 'center', borderRadius: Radius.full, marginBottom: Spacing.lg },
-    apps: { flexDirection: 'row', alignItems: 'center', gap: Spacing.lg }, decorativeApp: { flex: 1, alignItems: 'center', gap: Spacing.sm },
-    appTarget: { flex: 1, padding: Spacing.md, borderRadius: Radius.lg, alignItems: 'center', gap: Spacing.sm },
-    appRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.md, padding: Spacing.sm },
-    appIcon: { width: 48, height: 48, borderRadius: Radius.md }, smallIcon: { width: 40, height: 40, borderRadius: Radius.md }, helper: { textAlign: 'center' },
-    paper: { padding: Spacing.lg, borderRadius: Radius.xxl, gap: Spacing.lg },
-    action: { minHeight: 56, padding: Spacing.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, borderRadius: Radius.full },
-    reviewRow: { minHeight: Spacing.hitTarget, flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-    footnote: { textAlign: 'center', paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm },
-    preview: { height: 304, borderRadius: Radius.xxl, overflow: 'hidden' },
-    previewClip: { position: 'absolute', width: '46%', height: 220, top: Spacing.lg, borderRadius: Radius.lg, overflow: 'hidden' },
-    rearClip: { left: '12%', transform: [{ rotate: '-9deg' }] }, frontClip: { right: '12%', top: Spacing.xl, transform: [{ rotate: '8deg' }] },
-    clipBadge: { position: 'absolute', top: Spacing.sm, left: Spacing.sm, flexDirection: 'row', gap: Spacing.xs, alignItems: 'center', padding: Spacing.sm, borderRadius: Radius.full },
-    previewResult: { position: 'absolute', bottom: Spacing.md, left: Spacing.md, right: Spacing.md, borderRadius: Radius.lg, padding: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-    map: { padding: Spacing.lg, borderRadius: Radius.xxl, gap: Spacing.lg, overflow: 'hidden', marginBottom: Spacing.lg, minHeight: 300 },
-    road: { position: 'absolute', height: 28, left: -40, right: -40 }, mapPin: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center', padding: Spacing.md, borderRadius: Radius.lg },
+    root: { flex: 1 }, flex: { flex: 1 }, bold: { fontFamily: 'Manrope_700Bold' }, bottomLayer: { position: 'absolute', bottom: 0, left: 0, right: 0 },
+    header: { position: 'absolute', left: Spacing.md, right: Spacing.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, headerButton: { width: Spacing.hitTarget, height: Spacing.hitTarget, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center' }, demoBadge: { paddingHorizontal: Spacing.md, minHeight: 36, borderRadius: Radius.full, justifyContent: 'center' },
+    sourcePicker: { position: 'absolute', left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: Spacing.sm }, sourceTab: { minHeight: Spacing.hitTarget, borderRadius: Radius.full, paddingHorizontal: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+    extensionLayer: { position: 'absolute', bottom: 0, left: 10, right: 10 }, floatingHint: { color: C.white, fontFamily: 'Manrope_700Bold', fontSize: 18, textAlign: 'center', marginBottom: Spacing.lg, paddingHorizontal: Spacing.md, textShadowColor: C.shadow, textShadowRadius: 6 }, extension: { borderRadius: Radius.xxl, flexShrink: 1, overflow: 'hidden' }, extensionScroll: { flexShrink: 1 }, extensionContent: { padding: 22, paddingTop: 10, paddingBottom: 0 }, handle: { height: 5, width: 40, borderRadius: Radius.full, alignSelf: 'center', marginBottom: Spacing.lg }, linkReady: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.sm }, reviewPanel: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', padding: Spacing.md, borderRadius: Radius.lg, marginVertical: Spacing.lg }, extensionButton: { marginHorizontal: 22, marginBottom: 22, minHeight: 54, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', padding: Spacing.md },
+    queued: { flex: 1, justifyContent: 'center', padding: Spacing.lg }, queuedCard: { padding: Spacing.lg, borderRadius: Radius.xxl, gap: Spacing.md }, icon: { width: 44, height: 44, borderRadius: Radius.md },
+    preview: { height: 320, overflow: 'hidden', borderRadius: Radius.xxl }, miniPhone: { position: 'absolute', left: 16, top: 16, width: 180, height: 326, borderRadius: 20, overflow: 'hidden', transform: [{ rotate: '-5deg' }] }, miniScene: { width: 375, height: 680, transform: [{ scale: 0.48 }], transformOrigin: 'top left' }, previewLabel: { position: 'absolute', right: Spacing.lg, top: Spacing.lg, flexDirection: 'row', gap: Spacing.sm, padding: Spacing.sm, borderRadius: Radius.full }, previewResult: { position: 'absolute', right: Spacing.md, bottom: Spacing.lg, width: 168, padding: Spacing.md, borderRadius: Radius.lg, gap: Spacing.xs }, previewSpot: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginTop: Spacing.xs }, resultRule: { height: 1, marginVertical: Spacing.sm },
 });
