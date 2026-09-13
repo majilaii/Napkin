@@ -79,7 +79,7 @@ describe('useFinishOnboarding', () => {
 
         const options = mutate.mock.calls[0][1] as { onSuccess: () => void };
         act(() => options.onSuccess());
-        expect(replace).toHaveBeenCalledWith('/(tabs)/places?view=list&layer=pinned');
+        expect(replace).toHaveBeenCalledWith('/welcome?intro=1');
     });
 
     it('uses the submitted city override before the draft context rerenders', () => {
@@ -127,7 +127,7 @@ describe('useFinishOnboarding', () => {
         act(() => result.current.finish());
 
         expect(mutate).not.toHaveBeenCalled();
-        expect(replace).toHaveBeenCalledWith('/(tabs)/places?view=list&layer=pinned');
+        expect(replace).toHaveBeenCalledWith('/welcome?preview=1');
     });
 
     it('keeps a first-run user on the real completion path even if preview is enabled', () => {

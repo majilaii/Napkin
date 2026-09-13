@@ -96,6 +96,8 @@ import { GatheringCard, UpcomingStrip } from '@/components/gatherings';
 import { ListAddLedgerLine } from '@/components/feed/ListAddLedgerLine';
 // TICKET-121: murmur + retry when a primary query fails with no cached data
 import { ErrorState } from '@/components/ErrorState';
+import { TableIntroduction } from '@/components/onboarding/TableIntroduction';
+import { DiscoveryTip } from '@/components/onboarding/DiscoveryTip';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -348,44 +350,12 @@ export default function TablesScreen() {
                 </View>
             );
         }
-        // Launch-readiness (2026-07-03): this was a dead end — copy with no
-        // affordance, and every create-table entry point unreachable at zero
-        // tables. One quiet CTA; solo stays a complete product (emergence arc).
         return (
-            <View style={[styles.center, { backgroundColor: palette.background }]}>
-                <Text style={[Type.displaySmall, { color: palette.text }]}>
-                    No table yet
-                </Text>
-                <Text
-                    style={{
-                        fontFamily: 'Newsreader_400Regular_Italic',
-                        fontSize: 15,
-                        lineHeight: 22,
-                        color: palette.textSecondary,
-                        marginTop: Spacing.sm,
-                        textAlign: 'center',
-                    }}
-                >
-                    {"— when your crew's ready, gather one."}
-                </Text>
-                <Pressable
-                    onPress={() => router.push('/create-table')}
-                    style={({ pressed }) => ({
-                        borderWidth: 1.5,
-                        borderColor: 'rgba(160,63,40,0.35)',
-                        borderRadius: 9999,
-                        paddingVertical: 10,
-                        paddingHorizontal: 22,
-                        marginTop: Spacing.lg,
-                        opacity: pressed ? 0.7 : 1,
-                    })}
-                    accessibilityRole="button"
-                >
-                    <Text style={{ fontFamily: 'Manrope_700Bold', fontSize: 13, color: palette.primary }}>
-                        gather your table
-                    </Text>
-                </Pressable>
-            </View>
+            <TableIntroduction
+                palette={palette}
+                onCreate={() => router.push('/create-table')}
+                onLearn={() => router.push({ pathname: '/welcome', params: { topic: 'tables' } })}
+            />
         );
     }
 
@@ -444,6 +414,8 @@ export default function TablesScreen() {
                 onBellPress={() => router.push('/notifications')}
                 bellUnread={hasUnread}
             />
+
+            <DiscoveryTip topic="tables" />
 
             {/* Welcome banner — shown once when a user is added to a table (TICKET-029) */}
             {showWelcomeBanner && activeTable?.id && (

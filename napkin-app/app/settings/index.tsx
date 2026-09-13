@@ -152,7 +152,7 @@ export default function SettingsScreen() {
     const isPublic = (profile?.account_privacy ?? 'public') === 'public';
     const showImportTutorial = Platform.OS === 'ios';
     const showOnboardingPreviewToggle = !FRIEND_TEST.hideOnboardingPreviewToggle;
-    const showHelpSection = showImportTutorial || showOnboardingPreviewToggle;
+    const showHelpSection = true;
 
     // Real OS permission state — refreshed whenever the screen regains focus
     // (so a trip out to system Settings and back reflects immediately).
@@ -324,6 +324,12 @@ export default function SettingsScreen() {
 
                 {showHelpSection ? (
                     <Section title="help" palette={palette}>
+                        <Row
+                            label="A guide to Napkin"
+                            palette={palette}
+                            onPress={() => router.push('/welcome')}
+                            last={!showImportTutorial && !showOnboardingPreviewToggle}
+                        />
                         {showImportTutorial ? (
                             <Row
                                 label="How to save from videos"

@@ -46,6 +46,10 @@ jest.mock('@/hooks/use-color-scheme', () => ({ useColorScheme: () => 'light' }))
 jest.mock('@/providers/AuthProvider', () => ({
     useAuth: () => ({ user: { id: 'viewer' } }),
 }));
+// These route tests exercise a populated Table. Discovery has dedicated tests
+// and its bundled photo assets do not belong in the route harness.
+jest.mock('@/components/onboarding/TableIntroduction', () => ({ TableIntroduction: () => null }));
+jest.mock('@/components/onboarding/DiscoveryTip', () => ({ DiscoveryTip: () => null }));
 jest.mock('@/constants/flags', () => ({
     FRIEND_TEST: {
         hideAtlas: true,

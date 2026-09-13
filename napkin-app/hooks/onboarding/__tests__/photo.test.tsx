@@ -18,6 +18,8 @@ jest.mock('react-native', () => {
         ReactModule.createElement(name, props, props.children);
     return {
         View: host('View'),
+        ScrollView: host('ScrollView'),
+        KeyboardAvoidingView: host('KeyboardAvoidingView'),
         Text: host('Text'),
         Pressable: host('Pressable'),
         ActivityIndicator: host('ActivityIndicator'),
@@ -35,6 +37,8 @@ jest.mock('react-native', () => {
         },
     };
 });
+
+jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 jest.mock('expo-router', () => ({
     useRouter: () => ({ push: mockPush }),

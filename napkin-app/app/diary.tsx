@@ -24,6 +24,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useUserDiary, groupDiaryByMonth } from '@/hooks/users/useUserDiary';
 import { DiaryRow } from '@/components/profile/DiaryRow';
 import type { DiaryEntryRow } from '@/hooks/users/useUserProfile';
+import { DiscoveryTip } from '@/components/onboarding/DiscoveryTip';
 
 export default function DiaryScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -64,6 +65,8 @@ export default function DiaryScreen() {
                     <Text style={[styles.title, { color: palette.text }]}>Diary</Text>
                     <View style={{ width: 24 }} />
                 </View>
+
+                {targetId === user?.id ? <DiscoveryTip topic="journal" /> : null}
 
                 {/* Loading */}
                 {isLoading && (

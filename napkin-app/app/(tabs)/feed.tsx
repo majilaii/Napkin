@@ -24,6 +24,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { useFriendsFeed } from '@/hooks/feed';
 import { FeedHeader, FollowingFeed, ForYouFeed } from '@/components/feed';
 import type { FeedMode } from '@/components/feed';
+import { DiscoveryTip } from '@/components/onboarding/DiscoveryTip';
 
 export default function FeedScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -44,7 +45,7 @@ export default function FeedScreen() {
         }, [user?.id, refetch]),
     );
 
-    const header = <FeedHeader mode={mode} onModeChange={setMode} />;
+    const header = <><FeedHeader mode={mode} onModeChange={setMode} /><DiscoveryTip topic="friends" /></>;
 
     return (
         <View style={[styles.root, { backgroundColor: palette.background }]}>
