@@ -28,7 +28,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
     {
         id: 'sharing', label: 'From your feed', title: 'Turn clips into places.',
         body: 'Find a restaurant on TikTok or Instagram? Share it to Napkin, review the places, and keep your picks on the map.',
-        detail: 'Tap Share in TikTok or Instagram, then choose Napkin. If you don’t see it, look under More. Add for review, then open Napkin’s clip tray in Places to check and save the restaurants.',
+        detail: 'Tap Share, then More in TikTok or Share to in Instagram. Choose Napkin from the iPhone share sheet, or find it under More. Add for review, then open your clip tray in Places to check and save the restaurants.',
         action: 'Open Places', route: '/(tabs)/places?view=list&layer=pinned', icon: 'share-outline',
     },
     {

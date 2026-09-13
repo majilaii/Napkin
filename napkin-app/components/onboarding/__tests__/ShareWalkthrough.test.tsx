@@ -10,6 +10,8 @@ const mockEnableGuide = jest.fn();
 const mockShare = jest.fn();
 const mockAnnounce = jest.fn();
 const mockLiveImport = jest.fn();
+const mockOpenURL = jest.fn();
+let mockReducedMotion = true;
 let mockParams: { intro?: string; preview?: string; topic?: string } = {};
 
 jest.mock('react-native', () => {
@@ -23,11 +25,14 @@ jest.mock('react-native', () => {
         Modal: (props: Record<string, unknown>) => props.visible ? ReactModule.createElement('Modal', props, props.children) : null,
         AccessibilityInfo: { announceForAccessibility: (...args: unknown[]) => mockAnnounce(...args) },
         Share: { share: (...args: unknown[]) => mockShare(...args) },
+        Linking: { openURL: (...args: unknown[]) => mockOpenURL(...args) },
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
         Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios ?? options.default },
         StyleSheet: {
             create: (styles: unknown) => styles,
             flatten: (style: unknown) => Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : style ?? {},
             absoluteFill: {}, absoluteFillObject: {},
+            hairlineWidth: 0.5,
         },
     };
 });
@@ -35,12 +40,20 @@ jest.mock('react-native-reanimated', () => ({
     __esModule: true,
     default: { View: jest.requireMock('react-native').View },
     FadeIn: { duration: () => undefined },
-    useReducedMotion: () => true,
+    FadeOut: { duration: () => undefined },
+    SlideInDown: { duration: () => undefined },
+    SlideOutDown: { duration: () => undefined },
+    useReducedMotion: () => mockReducedMotion,
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
+jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
+jest.mock('expo-linear-gradient', () => ({ LinearGradient: jest.requireMock('react-native').View }));
 jest.mock('@/assets/images/icon.png', () => 1);
 jest.mock('@/assets/onboarding/tiktok-crudo.png', () => 2);
 jest.mock('@/assets/onboarding/reel-kitchen.png', () => 3);
+jest.mock('@/assets/guide/clara.jpg', () => 4);
+jest.mock('@/assets/guide/julian.jpg', () => 5);
+jest.mock('@/assets/guide/maya.jpg', () => 6);
 jest.mock('expo-router', () => ({
     useRouter: () => ({ push: mockPush, replace: mockReplace, back: mockBack, canGoBack: () => true }),
     useLocalSearchParams: () => mockParams,
@@ -64,7 +77,7 @@ jest.mock('@/lib/importQueue', () => ({
     confirmImportReview: (...args: unknown[]) => mockLiveImport(...args),
 }));
 
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import { Platform } from 'react-native';
 import { Colors } from '@/constants/theme';
 import WelcomeScreen from '@/app/welcome';
@@ -72,27 +85,34 @@ import ImportTutorialReplayScreen from '@/app/settings/import-tutorial';
 import { ShareWalkthrough } from '../ShareWalkthrough';
 
 type Screen = ReturnType<typeof render>;
-function reachReview(screen: Screen, source: 'TikTok' | 'Instagram' = 'TikTok', hiddenApp = false) {
+function reachReview(screen: Screen, source: 'TikTok' | 'Instagram' = 'TikTok') {
     if (source === 'Instagram') fireEvent.press(screen.getByRole('tab', { name: 'Instagram' }));
     expect(screen.getByRole('tab', { name: source }).props.accessibilityState.selected).toBe(true);
     fireEvent.press(screen.getByLabelText(`Share ${source} video`));
-    expect(screen.getByText(`A clip from ${source}`)).toBeTruthy();
+    expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(2);
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByLabelText(`Share ${source} video`)).toBeNull();
     expect(screen.queryByLabelText('Choose Napkin')).toBeNull();
     fireEvent.press(screen.getByLabelText('More sharing options'));
-    if (hiddenApp) {
-        fireEvent.press(screen.getByLabelText('More apps'));
-        expect(screen.getByText('Apps')).toBeTruthy();
-        expect(screen.queryByLabelText('More apps')).toBeNull();
-    }
+    expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(3);
+    expect(screen.queryByLabelText('Choose Napkin')).toBeNull();
+    fireEvent.press(screen.getByLabelText('More apps'));
+    expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(4);
+    expect(screen.queryByLabelText('More apps')).toBeNull();
     fireEvent.press(screen.getByLabelText('Choose Napkin'));
     expect(screen.getByText(`link ready · ${source}`)).toBeTruthy();
     expect(screen.queryByLabelText('Save 3 spots')).toBeNull();
     fireEvent.press(screen.getByLabelText('add for review'));
-    expect(screen.getByText(`You’re back in ${source}. The clip is waiting in Napkin.`)).toBeTruthy();
+    expect(screen.getByRole('header', { name: 'Added for review' })).toBeTruthy();
+    expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(6);
     expect(screen.queryByRole('checkbox')).toBeNull();
     fireEvent.press(screen.getByLabelText('Open Napkin in the demo'));
-    expect(screen.getByText('Places · clip tray')).toBeTruthy();
-    expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(6);
+    expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(7);
+    expect(screen.getByText(`3 places · ${source}`)).toBeTruthy();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    fireEvent.press(screen.getByLabelText('Review example clip'));
+    expect(screen.getByRole('header', { name: `3 spots from ${source}` })).toBeTruthy();
+    expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(8);
 }
 
 describe('offline sharing walkthrough', () => {
@@ -100,6 +120,7 @@ describe('offline sharing walkthrough', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockParams = {};
+        mockReducedMotion = true;
         Platform.OS = 'ios';
         mockEnableGuide.mockResolvedValue(undefined);
         mockLiveImport.mockImplementation(() => { throw new Error('A sharing rehearsal must not import or mutate'); });
@@ -108,6 +129,7 @@ describe('offline sharing walkthrough', () => {
     afterEach(() => {
         expect(fetchSpy).not.toHaveBeenCalled();
         expect(mockShare).not.toHaveBeenCalled();
+        expect(mockOpenURL).not.toHaveBeenCalled();
         expect(mockLiveImport).not.toHaveBeenCalled();
         fetchSpy.mockRestore();
     });
@@ -115,13 +137,17 @@ describe('offline sharing walkthrough', () => {
     it.each(['TikTok', 'Instagram'] as const)('rehearses the full %s handoff, review and result without leaving the demo', (source) => {
         const screen = render(<ShareWalkthrough palette={Colors.light} onClose={mockClose} onDone={mockDone} />);
         expect(screen.getByLabelText('Previous demo step').props.accessibilityState.disabled).toBe(true);
-        expect(screen.getByText('A practice run. Nothing is saved.')).toBeTruthy();
+        expect(screen.getByText('Practice · 1 of 9')).toBeTruthy();
+        expect(screen.getByLabelText('Sharing demo').props.accessibilityValue).toEqual({ min: 1, max: 9, now: 1 });
         reachReview(screen, source);
         expect(screen.getAllByRole('checkbox')).toHaveLength(3);
         expect(mockDone).not.toHaveBeenCalled();
         fireEvent.press(screen.getByLabelText('Save 3 spots'));
-        expect(screen.getByText('Example · your map')).toBeTruthy();
-        for (const name of ['Matchado', 'TSUJIRI', 'Frothee']) expect(screen.getByText(name)).toBeTruthy();
+        expect(screen.getByLabelText('Example · your map')).toBeTruthy();
+        expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(9);
+        for (const name of ['Barrafina', 'Kiln', 'Bocca di Lupo']) expect(screen.getByText(name)).toBeTruthy();
+        expect(screen.getByText('3 places from one clip')).toBeTruthy();
+        expect(screen.getByText('Example only. Nothing is saved.')).toBeTruthy();
         expect(screen.getAllByText('pinned')).toHaveLength(3);
         expect(mockDone).not.toHaveBeenCalled();
         fireEvent.press(screen.getByLabelText('Got it'));
@@ -131,34 +157,83 @@ describe('offline sharing walkthrough', () => {
         expect(mockReplace).not.toHaveBeenCalled();
     });
 
-    it('lets a hidden Napkin be found under More and keeps the chosen source on back navigation', () => {
+    it('ignores duplicate taps and stale targets from outgoing layers at every transition', () => {
+        mockReducedMotion = false;
         const screen = render(<ShareWalkthrough palette={Colors.light} onClose={mockClose} onDone={mockDone} />);
-        reachReview(screen, 'Instagram', true);
-        for (let index = 0; index < 5; index++) fireEvent.press(screen.getByLabelText('Previous demo step'));
+        const previousTargets: (() => void)[] = [];
+        const targets = ['Share TikTok video', 'More sharing options', 'More apps', 'Choose Napkin', 'add for review', 'Open Napkin in the demo', 'Review example clip', 'Save 3 spots'];
+        targets.forEach((label, index) => {
+            const tap = screen.getByLabelText(label).props.onPress as () => void;
+            // A native outgoing layer can dispatch again before its exit finishes.
+            act(() => { tap(); tap(); });
+            expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(index + 2);
+            previousTargets.push(tap);
+            act(() => { previousTargets.forEach((oldTap) => oldTap()); });
+            expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(index + 2);
+        });
+        expect(screen.getByLabelText('Got it')).toBeTruthy();
+        expect(mockDone).not.toHaveBeenCalled();
+    });
+
+    it('keeps decorative app artwork visible while exposing only the current action to accessibility', () => {
+        const screen = render(<ShareWalkthrough palette={Colors.light} onClose={mockClose} onDone={mockDone} />);
+        expect(screen.queryByText('For You')).toBeNull();
+        expect(screen.getByText('For You', { includeHiddenElements: true })).toBeTruthy();
+        fireEvent.press(screen.getByLabelText('Share TikTok video'));
+        expect(screen.queryByLabelText('Share TikTok video')).toBeNull();
+        expect(screen.getByLabelText('Share TikTok video', { includeHiddenElements: true }).props.disabled).toBe(true);
+        expect(screen.queryByText('Clara')).toBeNull();
+        expect(screen.getByText('Clara', { includeHiddenElements: true })).toBeTruthy();
+        fireEvent.press(screen.getByLabelText('More sharing options'));
+        expect(screen.queryByText('Maya')).toBeNull();
+        expect(screen.getByText('Maya', { includeHiddenElements: true })).toBeTruthy();
+        expect(screen.queryByText('Mail')).toBeNull();
+        expect(screen.getAllByRole('button').map((button) => button.props.accessibilityLabel).sort()).toEqual([
+            'Close sharing demo', 'More apps', 'Previous demo step',
+        ]);
+        fireEvent.press(screen.getByLabelText('More apps'));
+        expect(screen.queryByText('Edit')).toBeNull();
+        expect(screen.getByText('Edit', { includeHiddenElements: true })).toBeTruthy();
+        expect(screen.queryByText('Mail')).toBeNull();
+        expect(screen.getAllByRole('button').map((button) => button.props.accessibilityLabel).sort()).toEqual([
+            'Choose Napkin', 'Close sharing demo', 'Previous demo step',
+        ]);
+    });
+
+    it('keeps the chosen source and reviewed selection across every previous step', () => {
+        const screen = render(<ShareWalkthrough palette={Colors.light} onClose={mockClose} onDone={mockDone} />);
+        reachReview(screen, 'Instagram');
+        fireEvent.press(screen.getByRole('checkbox', { name: 'Barrafina' }));
+        for (let index = 0; index < 7; index++) fireEvent.press(screen.getByLabelText('Previous demo step'));
         expect(screen.getByRole('tab', { name: 'Instagram' }).props.accessibilityState.selected).toBe(true);
         expect(screen.getByLabelText('Share Instagram video')).toBeTruthy();
-        expect(mockAnnounce).toHaveBeenLastCalledWith('A good find starts here. Tap the video’s Share button.');
+        expect(mockAnnounce).toHaveBeenLastCalledWith('Tap the video’s Share button.');
+        reachReview(screen, 'Instagram');
+        expect(screen.getByRole('checkbox', { name: 'Barrafina' }).props.accessibilityState.checked).toBe(false);
+        expect(screen.getByRole('checkbox', { name: 'Kiln' }).props.accessibilityState.checked).toBe(true);
+        expect(screen.getByLabelText('Save 2 spots')).toBeTruthy();
     });
 
     it('requires one selected restaurant and puts only the selected picks on the result map', () => {
         const screen = render(<ShareWalkthrough palette={Colors.light} onClose={mockClose} onDone={mockDone} />);
         reachReview(screen);
-        for (const name of ['Matchado', 'TSUJIRI', 'Frothee']) fireEvent.press(screen.getByRole('checkbox', { name }));
+        for (const name of ['Barrafina', 'Kiln', 'Bocca di Lupo']) fireEvent.press(screen.getByRole('checkbox', { name }));
         expect(screen.getByLabelText('Save 0 spots').props.accessibilityState.disabled).toBe(true);
         fireEvent.press(screen.getByLabelText('Save 0 spots'));
-        expect(screen.getByText('Places · clip tray')).toBeTruthy();
-        expect(screen.queryByText('Example · your map')).toBeNull();
-        fireEvent.press(screen.getByRole('checkbox', { name: 'TSUJIRI' }));
-        expect(screen.getByRole('checkbox', { name: 'TSUJIRI' }).props.accessibilityState.checked).toBe(true);
+        expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(8);
+        expect(screen.queryByLabelText('Example · your map')).toBeNull();
+        fireEvent.press(screen.getByRole('checkbox', { name: 'Kiln' }));
+        expect(screen.getByRole('checkbox', { name: 'Kiln' }).props.accessibilityState.checked).toBe(true);
         expect(screen.getByLabelText('Save 1 spot').props.accessibilityState.disabled).toBe(false);
         fireEvent.press(screen.getByLabelText('Save 1 spot'));
-        expect(screen.getByText('TSUJIRI')).toBeTruthy();
-        expect(screen.queryByText('Matchado')).toBeNull();
-        expect(screen.queryByText('Frothee')).toBeNull();
+        expect(screen.getByText('Kiln')).toBeTruthy();
+        expect(screen.queryByText('Barrafina')).toBeNull();
+        expect(screen.queryByText('Bocca di Lupo')).toBeNull();
+        expect(screen.getByText('1 place from one clip')).toBeTruthy();
         expect(screen.getAllByText('pinned')).toHaveLength(1);
         fireEvent.press(screen.getByLabelText('Previous demo step'));
-        expect(screen.getByRole('checkbox', { name: 'Matchado' }).props.accessibilityState.checked).toBe(false);
-        expect(screen.getByRole('checkbox', { name: 'TSUJIRI' }).props.accessibilityState.checked).toBe(true);
+        expect(screen.getByRole('checkbox', { name: 'Barrafina' }).props.accessibilityState.checked).toBe(false);
+        expect(screen.getByRole('checkbox', { name: 'Kiln' }).props.accessibilityState.checked).toBe(true);
     });
 
     it('closes at any stage without completing', () => {
@@ -174,7 +249,7 @@ describe('offline sharing walkthrough', () => {
         const screen = render(<WelcomeScreen />);
         fireEvent.press(screen.getByText('Try the sharing demo'));
         reachReview(screen, 'Instagram');
-        fireEvent.press(screen.getByRole('checkbox', { name: 'Matchado' }));
+        fireEvent.press(screen.getByRole('checkbox', { name: 'Barrafina' }));
         fireEvent.press(screen.getByLabelText('Close sharing demo'));
         expect(screen.queryByLabelText('Sharing demo')).toBeNull();
         expect(screen.getByRole('header', { name: 'Turn clips into places.' })).toBeTruthy();
@@ -182,7 +257,7 @@ describe('offline sharing walkthrough', () => {
         expect(screen.getByLabelText('Sharing demo').props.accessibilityValue.now).toBe(1);
         expect(screen.getByRole('tab', { name: 'TikTok' }).props.accessibilityState.selected).toBe(true);
         reachReview(screen);
-        expect(screen.getByRole('checkbox', { name: 'Matchado' }).props.accessibilityState.checked).toBe(true);
+        expect(screen.getByRole('checkbox', { name: 'Barrafina' }).props.accessibilityState.checked).toBe(true);
         expect(mockEnableGuide).not.toHaveBeenCalled();
     });
 
