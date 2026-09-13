@@ -1,5 +1,4 @@
 import type { ExpoConfig, ConfigContext } from 'expo/config';
-import { withEntitlementsPlist, type ConfigPlugin } from 'expo/config-plugins';
 
 type NativeBuildPlatform = 'android' | 'ios' | null;
 
@@ -34,25 +33,8 @@ function getNativeBuildPlatform(): NativeBuildPlatform {
     return null;
 }
 
-// TICKET-120: notifications are device-LOCAL only — no APNs, ever (remote push is
-// explicitly deferred). expo-notifications' plugin unconditionally adds the
-// aps-environment (remote push) entitlement, which our provisioning profiles don't
-// carry — the first TICKET-120 TestFlight build died on exactly that mismatch.
-// Local notifications need NO entitlement, so strip it at prebuild.
-//
-// Ordering note: entitlements mods execute in REVERSE registration order (each
-// wrapper runs its action, then delegates to the previously registered chain — see
-// @expo/config-plugins withMod). Wrapping the exported config registers this mod
-// BEFORE the plugins array compiles, so it runs LAST and wins over
-// expo-notifications. Delete this when remote push actually ships.
-const withLocalOnlyNotifications: ConfigPlugin = (config) =>
-    withEntitlementsPlist(config, (c) => {
-        delete c.modResults['aps-environment'];
-        return c;
-    });
-
 export default ({ config }: ConfigContext): ExpoConfig =>
-    withLocalOnlyNotifications({
+    ({
     ...config,
     // ARCH-REVIEW-1: Keep name as 'dining-journal-app' (Expo project identity /
     // EAS dashboard / slug-derived identifiers). CFBundleDisplayName is set
@@ -167,6 +149,7 @@ export default ({ config }: ConfigContext): ExpoConfig =>
             },
         ],
         './plugins/withMapsStaticPods',
+        './plugins/withBackgroundImportTransfer',
         [
             'expo-image-picker',
             {
@@ -207,8 +190,8 @@ export default ({ config }: ConfigContext): ExpoConfig =>
         // Teach-flow footage playback (components/import-education). Bundled local
         // clips only: no PiP, no background audio, so no plugin options needed.
         'expo-video',
-        // TICKET-120/TICKET-210: device-LOCAL import-completion notifications
-        // (no APNs/remote push, no token). Android requires an all-white small icon;
+        // Import-completion notifications: local on-device work and remote server
+        // imports share one permission moment. Android requires a white small icon;
         // the accent mirrors Colors.light.primary from constants/theme.ts.
         [
             'expo-notifications',

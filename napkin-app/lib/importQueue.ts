@@ -63,6 +63,8 @@ export type ImportStage =
     | 'reading slides'
     | 'reading the video'
     | 'matching spots'
+    | 'processing in background'
+    | 'waiting for connection'
     | 'saving';
 
 /** A resolved spot in the exact shape resolve-url `save_spots` expects. */
@@ -107,6 +109,9 @@ export interface ImportDestinations {
 
 export interface ImportManifest {
     jobId: string;
+    /** Server pre-review job, created by the native URL share intake. */
+    remoteJobId?: string;
+    remoteState?: 'pending' | 'processing' | 'ready' | 'needs_device' | 'failed';
     /** 'video' = saved file → OCR; 'url' = shared link → caption resolve. */
     kind: 'video' | 'url';
     /** Present for kind 'video'. */
@@ -286,7 +291,7 @@ function readAll(): ImportManifest[] {
         for (const s of raw) {
             try {
                 const p = JSON.parse(s) as Partial<ImportManifest> & Record<string, unknown>;
-                if (typeof p.jobId !== 'string') continue;
+                if (typeof p.jobId !== 'string' || p.retired === true) continue;
                 const kind: 'video' | 'url' = p.kind === 'url' ? 'url' : 'video';
                 const videoPath = typeof p.videoPath === 'string' ? p.videoPath : undefined;
                 const url = typeof p.url === 'string' ? p.url : undefined;
@@ -300,6 +305,9 @@ function readAll(): ImportManifest[] {
                 // Missing destinations still normalize to the wishlist inbox.
                 out.push({
                     jobId: p.jobId,
+                    remoteJobId: typeof p.remoteJobId === 'string' && p.remoteJobId === p.jobId ? p.remoteJobId : undefined,
+                    remoteState: ['pending', 'processing', 'ready', 'needs_device', 'failed'].includes(String(p.remoteState))
+                        ? p.remoteState as ImportManifest['remoteState'] : undefined,
                     kind,
                     videoPath,
                     sourcePreparation: p.sourcePreparation === 'pending' || p.sourcePreparation === 'ready' || p.sourcePreparation === 'failed'
@@ -487,6 +495,16 @@ export function markImportNotification(jobId: string, outcome: 'review' | 'faile
 
 export function removeImport(jobId: string): void {
     try {
+        const manifest = getImport(jobId);
+        if (manifest?.remoteJobId && manifest.userId) {
+            // A durable tombstone prevents a late upload/list response resurrecting
+            // a discarded or saved import. The root sync removes it after server ack.
+            if (!writeImportManifest(jobId, JSON.stringify({ jobId, remoteJobId: manifest.remoteJobId,
+                userId: manifest.userId, importNonce: manifest.importNonce, url: manifest.url,
+                retired: true }))) throw new Error('Could not retire import');
+            pokeImportQueue();
+            return;
+        }
         removeImportManifest(jobId);
     } catch {
         /* native module absent */
@@ -537,7 +555,8 @@ export function retryImport(jobId: string): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     if (m.sourcePreparation === 'failed') return; // Photos must be selected again.
-    writeManifest({ ...m, attempts: 0, status: 'pending', notificationOutcome: undefined });
+    writeManifest({ ...m, attempts: 0, status: 'pending', notificationOutcome: undefined,
+        ...(m.remoteState === 'failed' ? { remoteState: 'needs_device' as const } : {}) });
     pokeImportQueue();
 }
 
@@ -587,6 +606,41 @@ export function setImportSpots(jobId: string, spots: PersistedImportSpot[], awai
     writeManifest({ ...m, spots, ...(awaitingNotification ? {
         notificationOutcome: 'pending' as const, localNotificationOutcome: undefined,
     } : {}) });
+}
+
+export function setRemoteImportState(jobId: string, ownerId: string, state: ImportManifest['remoteState']): void {
+    const manifest = getImportForUser(jobId, ownerId);
+    if (!manifest?.remoteJobId) return;
+    if (!writeManifest({ ...manifest, remoteState: state })) throw new Error('Could not checkpoint remote import');
+}
+
+export function checkpointRemoteImport(jobId: string, ownerId: string, spots: PersistedImportSpot[],
+    source: { listCount?: number | null; thumbUrl?: string | null; handle?: string | null }): ImportManifest | null {
+    const manifest = getImportForUser(jobId, ownerId);
+    if (!manifest?.remoteJobId) return null;
+    if (manifest.spots?.length) return manifest; // never overwrite edits or frozen save nonces
+    const ready: ImportManifest = { ...manifest, spots, mode: 'review', remoteState: 'ready',
+        notificationOutcome: 'review', localNotificationOutcome: 'review',
+        listCount: source.listCount, sourceThumbUrl: source.thumbUrl, sourceHandle: source.handle };
+    if (!writeManifest(ready)) throw new Error('Could not checkpoint ready import');
+    return ready;
+}
+
+export function listRetiredRemoteImports(ownerId: string): { jobId: string; remoteJobId: string; importNonce?: string; url?: string }[] {
+    try {
+        return listImportManifests().flatMap(raw => {
+            try {
+                const m = JSON.parse(raw);
+                return m.retired === true && m.userId === ownerId && typeof m.jobId === 'string'
+                    && m.remoteJobId === m.jobId ? [{ jobId: m.jobId, remoteJobId: m.remoteJobId,
+                        importNonce: m.importNonce, url: m.url }] : [];
+            } catch { return []; }
+        });
+    } catch { return []; }
+}
+
+export function finishRetiredRemoteImport(jobId: string, ownerId: string): void {
+    if (listRetiredRemoteImports(ownerId).some(m => m.jobId === jobId)) removeImportManifest(jobId);
 }
 
 /**

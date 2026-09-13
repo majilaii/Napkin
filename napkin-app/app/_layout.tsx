@@ -32,6 +32,8 @@ import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
 import { useNotificationNavigation } from '@/hooks/notifications/useNotificationNavigation';
 import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
+import { useBackgroundImportIntake } from '@/hooks/imports/useBackgroundImportIntake';
+import { importNotificationMatchesOwner } from '@/lib/importNotificationNavigation';
 import { useLargeImportKickoffTrigger } from '@/hooks/wishlist/useLargeImportKickoffTrigger';
 import { usePublishCollectionsSnapshot } from '@/hooks/wishlist/usePublishCollectionsSnapshot';
 import { NotifPermissionSheet } from '@/components/notifications';
@@ -251,6 +253,7 @@ function RootLayoutNav() {
   // (launch + every foreground). Self-gated on session; safe no-op when signed
   // out or when the native OCR module is absent.
   useProcessImportQueue();
+  useBackgroundImportIntake();
 
   // TICKET-152: route to the kickoff sheet when a large Maps list enumerates.
   useLargeImportKickoffTrigger();
@@ -327,7 +330,9 @@ function RootLayoutNav() {
     !isLoading && !!session && !!onboardedAt && previewOnLaunch !== undefined
       && !['auth', 'onboarding', 'reset-password', 'import', 'handoff', 'join-table'].includes(segments[0] ?? '')
       && (!previewOnLaunch || previewLaunchConsumed.current),
-    (url) => router.push(url as any),
+    (url) => {
+      if (importNotificationMatchesOwner(url, session?.user.id)) router.push(url as any);
+    },
   );
 
   // TICKET-088: app_open on launch + every foreground (D1/D7/D30 cohorts).

@@ -102,6 +102,8 @@ import {
 import { getCompletenessJobStatus } from "../restaurant-completeness/_status.ts";
 import { CompletenessProvider } from "../_shared/completenessProvider.ts";
 import { hasCompleteRestaurantFacts } from "../_shared/completeness.ts";
+import { resolveBackgroundImport } from "./background.ts";
+import { expandBackgroundTikTokVideo } from "./backgroundSourceUrl.ts";
 // TICKET-077: the handoff pin path re-reads the share LIVE (single source of truth,
 // shared with handoff/share-page) so it pins against the CURRENT spot set, never a
 // stale client-sent list.
@@ -438,6 +440,7 @@ async function writeExtractionCache(
 async function fetchTikTokOEmbed(
   url: string,
   signal: AbortSignal,
+  redirect: RequestRedirect = "follow",
 ): Promise<
   {
     title: string;
@@ -452,7 +455,7 @@ async function fetchTikTokOEmbed(
   }`;
   let res: Response;
   try {
-    res = await fetch(endpoint, { signal });
+    res = await fetch(endpoint, { signal, redirect });
   } catch (e) {
     if ((e as Error)?.name === "AbortError") throw e;
     throw { code: "UPSTREAM_UNAVAILABLE", retryable: true };
@@ -1046,6 +1049,8 @@ async function resolveStagedPlacesParallel(
   supabaseUrl: string,
   supabaseAnonKey: string,
   placeSignal: AbortSignal,
+  internalSecret?: string,
+  internalOwnerId?: string,
 ): Promise<{
   places: (PlacesPayload | null)[];
   typeRejectedByIndex: boolean[];
@@ -1068,6 +1073,8 @@ async function resolveStagedPlacesParallel(
           supabaseUrl,
           supabaseAnonKey,
           placeSignal,
+          internalSecret,
+          internalOwnerId,
         );
       } catch (error) {
         return failedCandidateResolution(error);
@@ -2991,6 +2998,8 @@ async function handleUrlResolve(
   // parsed Maps list exceeds the sync cap, we enumerate (name+address only) and
   // hand the list back for the client-pumped chunked job — no Places spend here.
   supportsLargeLists = false,
+  internalSecret?: string,
+  internalOwnerId?: string,
 ): Promise<Response> {
   // 086c: 8s → 12s. The 2.5s text-LLM stage aborted routinely, silently
   // falling back to a raw 3-place caption search — the founder's "3 random
@@ -3203,10 +3212,15 @@ async function handleUrlResolve(
         supabaseUrl,
         supabaseAnonKey,
         deadline.stageSignal(2500),
+        internalSecret,
+        internalOwnerId,
       );
       typeRejectedCount = search.typeRejected ? 1 : 0;
       resolvedPlaces = search.candidates.slice(0, 3).map((r) => r);
-    } catch {
+    } catch (error) {
+      // The durable worker retries provider/auth/budget failures; an empty
+      // successful result here would permanently settle a temporary failure.
+      if (internalSecret) throw error;
       resolvedPlaces = [];
     }
 
@@ -3318,6 +3332,8 @@ async function handleUrlResolve(
         supabaseUrl,
         supabaseAnonKey,
         deadline.stageSignal(2500),
+        internalSecret,
+        internalOwnerId,
       );
       placeCandidates = search.candidates;
       typeRejectedCount = search.typeRejected ? 1 : 0;
@@ -3369,6 +3385,8 @@ async function handleUrlResolve(
     supabaseUrl,
     supabaseAnonKey,
     placeSignal,
+    internalSecret,
+    internalOwnerId,
   );
 
   // ── Step 8: post-Places dedupe by google_place_id ─────────────────────────
@@ -3658,6 +3676,8 @@ async function handleVideoText(
   supabaseUrl: string,
   supabaseAnonKey: string,
   photoContext?: PhotoExtractionContext,
+  internalSecret?: string,
+  internalOwnerId?: string,
 ): Promise<Response> {
   const sourceType: SourceType = "video";
   const notePrefill = caption ? captionToNote(caption) : "";
@@ -3782,6 +3802,8 @@ async function handleVideoText(
       supabaseUrl,
       supabaseAnonKey,
       ac.signal,
+      internalSecret,
+      internalOwnerId,
     );
     placeResults = resolution.places;
     typeRejectedByIndex = resolution.typeRejectedByIndex;
@@ -3959,6 +3981,7 @@ serve(async (req) => {
     caption?: string;
     action?: string;
     job_id?: string;
+    lease_token?: string;
     import_nonce?: string;
     spots?: unknown[];
     source?: unknown;
@@ -3978,6 +4001,56 @@ serve(async (req) => {
     body = await req.json();
   } catch {
     return errorResponse("INVALID_BODY", "Request body must be JSON", 400);
+  }
+
+  // Background jobs carry immutable owner-bound input, never a retained user
+  // JWT. Only the worker's live lease and internal credential can use this path.
+  if (body?.action === "resolve_background") {
+    try {
+      return await resolveBackgroundImport(req, body as Record<string, unknown>, {
+        internalSecret: Deno.env.get("INTERNAL_CALL_SECRET"),
+        loadJob: async (id) => {
+          const { data, error } = await supabase.from("background_import_jobs")
+            .select("id,user_id,import_nonce,request,status,lease_token,lease_until")
+            .eq("id", id).maybeSingle();
+          if (error) throw error;
+          return data;
+        },
+        rateAllowed: async (ownerId) => {
+          const { data, error } = await supabase.rpc("check_and_increment_rate_limit", {
+            p_user_id: ownerId,
+            p_bucket_key: "resolve_url",
+            p_max: 30,
+            p_window_seconds: 3600,
+          });
+          if (error) throw error;
+          return data?.[0]?.allowed === true;
+        },
+        detectSource: detectSourceType,
+        expandTikTokVideo: (url) => expandBackgroundTikTokVideo(url, AbortSignal.timeout(5000)),
+        // Background intake never follows a redirect from this pinned endpoint.
+        fetchTikTok: (url) => fetchTikTokOEmbed(url, AbortSignal.timeout(5000), "error"),
+        resolveVideo: (context, text, caption, photoContext) => handleVideoText(
+          supabase, { id: context.ownerId }, text, caption,
+          `Bearer ${supabaseServiceKey}`, supabaseUrl, supabaseAnonKey,
+          photoContext, context.internalSecret, context.ownerId,
+        ),
+        resolveUrl: (context, url, source) => handleUrlResolve(
+          supabase, { id: context.ownerId }, url.href, url, source, null,
+          `Bearer ${supabaseServiceKey}`, supabaseUrl, supabaseAnonKey,
+          true, context.internalSecret, context.ownerId,
+        ),
+        attachProvenance: (context, response) => attachImportResolutionIds(
+          supabase, context.ownerId, response, context.importNonce, "background",
+        ),
+      });
+    } catch (error) {
+      const extractionFailure = extractionFailureResponse(error);
+      if (extractionFailure) return extractionFailure;
+      // Let the leased queue's bounded retry policy handle upstream outages.
+      // Do not log private source text or upstream payloads.
+      return errorResponse("UPSTREAM_UNAVAILABLE", "Background import could not finish", 503);
+    }
   }
 
   // ── [N1] Async extract action — INTERNAL ONLY ─────────────────────────────

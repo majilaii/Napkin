@@ -19,6 +19,11 @@ describe('native share extension policy', () => {
         expect(source).not.toContain('UISwitch()');
     });
 
+    it('uses canonical UUID case so server hydration finds the same local job', () => {
+        expect(source).toContain('let jobId = UUID().uuidString.lowercased()');
+        expect(source).toContain('"importNonce": UUID().uuidString.lowercased()');
+    });
+
     it('leaves list and table organisation to the app', () => {
         expect(source).toContain('"listIds": []');
         expect(source).toContain('"newListTitles": []');

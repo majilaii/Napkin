@@ -2,12 +2,11 @@
 //
 // Share a VIDEO (saved file) or URL (link) → one action writes a review-mode
 // pending-import manifest to the App-Group queue, then completes without an app
-// switch. Nothing is saved automatically: the main app resolves the share and
-// asks the user to confirm every spot. Lists and tables are chosen later in-app.
+// switch. URL imports also hand off to the server through an iOS-owned upload.
+// Nothing is saved automatically: every spot is confirmed later in the app.
 //
-// The extension reads only the user id from the app's collections snapshot for
-// cross-account safety. NO OCR here (~120MB cap). A movie is copied fully before
-// its manifest is written.
+// Snapshot identity must match the scoped intake credential in shared Keychain.
+// NO OCR here (~120MB cap). Movies retain the durable on-device queue.
 
 import UIKit
 import UniformTypeIdentifiers
@@ -379,7 +378,7 @@ class ShareViewController: UIViewController {
         let dir = container.appendingPathComponent("import-queue", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        let jobId = UUID().uuidString
+        let jobId = UUID().uuidString.lowercased()
         let destinations: [String: Any] = [
             "wishlist": true,
             "listIds": [],
@@ -390,7 +389,7 @@ class ShareViewController: UIViewController {
         var manifest: [String: Any] = [
             "jobId": jobId,
             "kind": kind,
-            "importNonce": UUID().uuidString,
+            "importNonce": UUID().uuidString.lowercased(),
             // Fixed at manifest creation. An older installed extension writes no
             // field and the updated app deliberately drains that manifest as legacy.
             "protocolGeneration": "v2",
@@ -403,6 +402,11 @@ class ShareViewController: UIViewController {
         ]
         if kind == "video", let p = capturedVideoPath { manifest["videoPath"] = p }
         if kind == "url", let u = capturedURL { manifest["url"] = u }
+        // Declare the remote lane before starting the upload. The app must not
+        // race its local extractor against a server job whose reply is in flight.
+        if kind == "url", BackgroundImportTransfer.canSubmit(owner: snapshotUserId) {
+            manifest["remoteJobId"] = jobId
+        }
 
         guard let data = try? JSONSerialization.data(withJSONObject: manifest) else {
             failToQueue()
@@ -418,8 +422,11 @@ class ShareViewController: UIViewController {
             failToQueue()
             return
         }
+        let submitted = manifest["remoteJobId"] != nil && BackgroundImportTransfer.submit(manifest: manifest, origin: "share")
         titleLabel.text = "added for review"
-        subtitleLabel.text = "open Napkin when you're ready to check the spots"
+        subtitleLabel.text = submitted
+            ? "Napkin will prepare the spots for review"
+            : "open Napkin when you're ready to check the spots"
         doneButton.setTitle("added", for: .normal)
         doneButton.setTitleColor(.white, for: .disabled)
         doneButton.accessibilityHint = nil

@@ -45,6 +45,18 @@ test('pre-v5 binaries use the existing picker path without touching missing capt
     expect(() => wrapper.onVideoImportPrepared(jest.fn())()).not.toThrow();
 });
 
+test('pre-v6 binaries never access missing background intake methods', () => {
+    const wrapper = loadWrapper();
+    expect(wrapper.isBackgroundImportIntakeAvailable()).toBe(false);
+    expect(wrapper.getBackgroundImportCredential()).toBeNull();
+    expect(wrapper.getBackgroundImportInstallationId()).toBeNull();
+    expect(wrapper.getBackgroundImportTransfer('job')).toBeNull();
+    expect(wrapper.getPendingBackgroundImportRevocations()).toEqual([]);
+    expect(() => wrapper.setNativeBackgroundImportOwner('owner')).not.toThrow();
+    expect(() => wrapper.clearBackgroundImportCredential()).not.toThrow();
+    expect(() => wrapper.onBackgroundImportTransfer(jest.fn())()).not.toThrow();
+});
+
 test('v5 gallery capture preserves owner, durable response, and prepared-event cleanup', async () => {
     mockNative.apiVersion = 5;
     const prepared = jest.fn();

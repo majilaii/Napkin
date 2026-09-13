@@ -24,6 +24,7 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { emitSelfImportDone } from './emitSelfImportDone.ts';
+import { handleImportPushDevice, verifiedTokenSessionId } from './importPushDevice.ts';
 import { encodeCursor, decodeCursor, type CursorTuple } from '../_shared/pagination.ts';
 import { viewerHasBeen } from './viewerHasBeen.ts';
 import { resolveCanonicalRestaurantIds } from '../_shared/canonicalRestaurant.ts';
@@ -698,6 +699,14 @@ serve(async (req) => {
 
         const body = await req.json();
         const action: string = body.action ?? '';
+
+        if (action === 'register_import_device' || action === 'unregister_import_device') {
+            const result = await handleImportPushDevice(supabase, user.id, verifiedTokenSessionId(token), body);
+            return new Response(JSON.stringify(result.payload), {
+                status: result.status,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+        }
 
         // ── inbox ────────────────────────────────────────────────────────────
         if (action === 'inbox') {
