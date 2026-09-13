@@ -81,6 +81,7 @@ import {
 } from '@/lib/restaurantPageV3';
 import { findBookingUrl } from '@/lib/reserveLink';
 import { resolveMastheadPhotos } from '@/lib/restaurantPhoto';
+import { restaurantDirectionsUrl } from '@/lib/restaurantLocation';
 
 function placePayloadToWishlistPayload(place: any): RestaurantPayload {
     return {
@@ -107,6 +108,8 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
     return restaurantFromPlace({
         external_id: payload.id ?? payload.external_id ?? payload.placeId ?? '',
         name: payload.name ?? 'Restaurant',
+        latitude: payload.latitude ?? payload.lat ?? undefined,
+        longitude: payload.longitude ?? payload.lng ?? undefined,
         formattedAddress: payload.formattedAddress ?? undefined,
         city: payload.city ?? undefined,
         country: payload.country ?? undefined,
@@ -125,16 +128,6 @@ function ghostRestaurantFromPayload(payload: any): RestaurantPageRestaurant {
 
 function quietOpen(url: string) {
     void Linking.openURL(url).catch(() => undefined);
-}
-
-function resolveDirectionsUrl(
-    googleMapsUri: string | null,
-    name: string,
-    city: string | null,
-): string {
-    if (googleMapsUri?.trim()) return googleMapsUri;
-    const query = encodeURIComponent([name, city].filter(Boolean).join(' '));
-    return `https://www.google.com/maps/search/?api=1&query=${query}`;
 }
 
 export default function RestaurantScreen() {
@@ -355,7 +348,7 @@ export default function RestaurantScreen() {
         [page.data?.table_notes, tableId],
     );
     const directionsUrl = restaurant
-        ? resolveDirectionsUrl(restaurant.google_maps_uri, restaurant.name, restaurant.city)
+        ? restaurantDirectionsUrl(restaurant)
         : '';
     const gatherVisible = !FRIEND_TEST.hideSuppers && hasAnyTable && !!persistedRestaurantId;
     const visitCount = page.data?.self_log?.length ?? page.data?.personal.visit_count ?? 0;

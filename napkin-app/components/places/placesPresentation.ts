@@ -7,6 +7,7 @@ import type { WishlistMapItem } from '@/components/wishlist/mapShared';
 import type { SearchMode } from '@/components/search/searchModeTabsGate';
 import type {
     PlacesLayerFilter,
+    PlacesPinnedOrder,
     PlacesScope,
     PlacesViewMode,
 } from '@/hooks/search/placesScreenState';
@@ -29,6 +30,8 @@ export interface PlacesDisplayRow {
     photoSource?: string | null;
     photoAttributionHtml?: string | null;
     isPinned: boolean;
+    /** When this viewer pinned it, never the restaurant or visit creation date. */
+    pinnedAt?: string | null;
     friendsBeenCount: number;
     searchRow?: SearchResultRow;
     been?: boolean;
@@ -53,6 +56,7 @@ export interface DecoratedPlacesRow {
     row: PlacesDisplayRow;
     distanceLabel: string | null;
     distanceMiles: number | null;
+    addedAtLabel?: string;
 }
 
 export interface PlacesRatingPresentation {
@@ -200,6 +204,7 @@ export function wishlistRowsToDisplayRows(
             photoSource: restaurant.photo_source ?? null,
             photoAttributionHtml: restaurant.places_photo_attribution_html ?? null,
             isPinned: true,
+            pinnedAt: item.created_at,
             friendsBeenCount: 0,
         }];
     });
@@ -356,6 +361,7 @@ export function filterPlacesRowsForScope(args: {
 export function decorateAndSortRows(
     rows: readonly PlacesDisplayRow[],
     distanceOrigin: LatLng | null,
+    order: PlacesPinnedOrder = 'nearby',
 ): DecoratedPlacesRow[] {
     const decorated = rows.map((row, index) => {
         const distance = distanceOrigin && row.lat != null && row.lng != null
@@ -365,19 +371,37 @@ export function decorateAndSortRows(
             row,
             distanceMiles: distance,
             distanceLabel: distance == null ? null : formatDistance(distance),
+            ...(order === 'recent' ? { addedAtLabel: formatPlacesAddedAt(row.pinnedAt) } : {}),
             index,
         };
     });
-    if (distanceOrigin) {
+    if (order === 'recent') {
+        decorated.sort((a, b) => (
+            pinnedTimestamp(b.row.pinnedAt) - pinnedTimestamp(a.row.pinnedAt)
+                || a.index - b.index
+        ));
+    } else if (distanceOrigin) {
         decorated.sort((a, b) => (
             (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity) || a.index - b.index
         ));
     }
-    return decorated.map(({ row, distanceLabel, distanceMiles }) => ({
-        row,
-        distanceLabel,
-        distanceMiles,
-    }));
+    return decorated.map(({ index: _index, ...item }) => item);
+}
+
+function pinnedTimestamp(value: string | null | undefined): number {
+    const timestamp = value ? Date.parse(value) : NaN;
+    return Number.isFinite(timestamp) ? timestamp : -Infinity;
+}
+
+/** Absolute, local dates stay accurate while an old import is being browsed. */
+export function formatPlacesAddedAt(value: string | null | undefined): string {
+    const timestamp = pinnedTimestamp(value);
+    if (!Number.isFinite(timestamp)) return 'added date unavailable';
+    return `added ${new Date(timestamp).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+    })}`;
 }
 
 export interface PlacesCityGroup {
@@ -548,7 +572,11 @@ export function composePlacesContentKey(args: {
 export function composeRowMeta(
     row: PlacesDisplayRow,
     distanceLabel: string | null,
+    addedAtLabel?: string,
 ): string {
+    if (addedAtLabel) {
+        return [addedAtLabel, row.city].filter(Boolean).join(' · ');
+    }
     const parts: string[] = [];
     if (row.cuisine) parts.push(row.cuisine.toLowerCase());
     if (distanceLabel) parts.push(distanceLabel);

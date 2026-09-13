@@ -6,6 +6,8 @@ import TestRenderer, { act } from 'react-test-renderer';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockAlert = jest.fn();
+const mockPush = jest.fn();
+let mockNoticeParams: Record<string, string> = {};
 const mockDismissMutate = jest.fn();
 const mockRetryMutate = jest.fn();
 const mockCorrectMutateAsync = jest.fn();
@@ -55,7 +57,8 @@ jest.mock('expo-router', () => {
             Screen: (props: Record<string, unknown>) =>
                 ReactModule.createElement('StackScreen', props),
         },
-        useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
+        useRouter: () => ({ back: jest.fn(), push: mockPush }),
+        useLocalSearchParams: () => mockNoticeParams,
     };
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -131,6 +134,7 @@ jest.mock('@/components/wishlist/PlacePickerModal', () => ({
     PlacePickerModal: 'PlacePickerModal',
 }));
 jest.mock('@/lib/importQueue', () => ({
+    listActiveManifests: () => mockActiveImports.map((item) => item.manifest),
     retryImport: jest.fn(),
     removeImport: (...args: unknown[]) => mockRemoveImport(...args),
     getImportForUser: (...args: unknown[]) => mockGetImport(...args),
@@ -328,5 +332,30 @@ describe('ImportProgressScreen needs-a-look actions', () => {
             }),
         );
         act(() => renderer.unmount());
+    });
+});
+
+
+describe('import alert destinations', () => {
+    afterEach(() => { mockNoticeParams = {}; mockActiveImports = []; });
+    it('opens its matching review above the hub once and does not reopen on Back', () => {
+        mockOwnerId = 'user-1';
+        mockNoticeParams = { openJob: 'review-1', outcome: 'review', owner: 'user-1' };
+        const manifest = { jobId: 'review-1', userId: 'user-1', mode: 'review', status: 'pending', spots: [{}] };
+        mockActiveImports = [{ jobId: 'review-1', phase: 'review', spotCount: 1, manifest }];
+        mockPush.mockClear();
+        const screen = renderScreen();
+        expect(mockPush).toHaveBeenCalledWith('/import-review?jobId=review-1');
+        act(() => screen.update(<ImportProgressScreen />));
+        expect(mockPush).toHaveBeenCalledTimes(1);
+        act(() => screen.unmount());
+    });
+    it('keeps a consumed review at the hub', () => {
+        mockNoticeParams = { openJob: 'gone', outcome: 'review' };
+        mockActiveImports = [];
+        mockPush.mockClear();
+        const screen = renderScreen();
+        expect(mockPush).not.toHaveBeenCalled();
+        act(() => screen.unmount());
     });
 });

@@ -61,6 +61,7 @@ jest.mock('@/modules/media-extract', () => ({
 }));
 
 import { useProcessImportQueue } from '../useProcessImportQueue';
+import { router } from 'expo-router';
 import { getImport, pokeImportQueue, releaseDrainLock, type ImportManifest } from '@/lib/importQueue';
 
 function Root({ showSheet = false }: { showSheet?: boolean }) {
@@ -161,6 +162,10 @@ describe('root import queue gallery integration', () => {
         expect(mockExtract).toHaveBeenCalledWith('/owned/video.mov');
         expect(getImport('job-1')).toMatchObject({ mode: 'review', notificationOutcome: 'review', spots: [expect.objectContaining({ restaurant_name: 'Salvo Bakehouse' })] });
         expect(mockEdge).not.toHaveBeenCalledWith('resolve-url', expect.objectContaining({ action: 'save_spots' }));
+        const reviewAction = mockToast.mock.calls.find(([copy]) => copy === '1 spot ready to review')?.[1];
+        expect(reviewAction).toBeDefined();
+        reviewAction.onPress();
+        expect(router.push).toHaveBeenCalledWith('/import-progress?openJob=job-1&outcome=review&owner=user-1');
         expect(mockOfferNotifications).not.toHaveBeenCalled(); // gallery asks after tray dismissal
         expect(mockEdge).toHaveBeenCalledWith('notifications', expect.objectContaining({ body: expect.objectContaining({ expected_owner_id: 'user-1' }) }));
     });
@@ -278,7 +283,7 @@ describe('root import queue gallery integration', () => {
             sourcePreparation: undefined, status: 'failed', notificationOutcome: 'pending' });
         mockAppState.currentState = 'background';
         await mount();
-        expect(mockLocalNotification).toHaveBeenCalledWith({ title, body: 'tap to try again' });
+        expect(mockLocalNotification).toHaveBeenCalledWith({ title, body: 'Open Napkin to try again', url: '/import-progress?openJob=job-1&outcome=failed&owner=user-1' });
         expect(getImport('job-1')?.notificationOutcome).toBe('failed');
     });
 

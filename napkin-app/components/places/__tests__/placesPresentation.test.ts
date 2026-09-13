@@ -7,6 +7,7 @@ import {
     filterPlacesLayerRows,
     filterPlacesRowsForScope,
     flattenPlacesCityGroups,
+    formatPlacesAddedAt,
     groupRowsByCity,
     networkRowsToDisplayRows,
     placesCountLabel,
@@ -25,10 +26,12 @@ import {
     shouldFetchNextPlacesPage,
     tableMapPinsToDisplayRows,
     tableWishlistRowsToDisplayRows,
+    spotRowsToDisplayRows,
     wishlistRowsToDisplayRows,
 } from '../placesPresentation';
 import type { SearchResultRow } from '@/hooks/search/useRestaurantSearch';
 import type { NetworkMapItem } from '@/hooks/users/useNetworkMapPins';
+import type { SpotSummary } from '@/hooks/users/useUserSpots';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -76,6 +79,47 @@ const networkPin: NetworkMapItem = {
 };
 
 describe('Places projection', () => {
+    it('orders recently added pins by the viewer save time before distance, with stable ties and unknowns last', () => {
+        const base = searchRowsToDisplayRows([ghost])[0];
+        const rows = [
+            { ...base, id: 'unknown', pinnedAt: null },
+            { ...base, id: 'old-nearby', lat: 51.5, lng: -0.1, pinnedAt: '2026-01-01T12:00:00Z' },
+            { ...base, id: 'new-faraway', pinnedAt: '2026-09-13T12:00:00Z' },
+            { ...base, id: 'same-import', pinnedAt: '2026-09-13T12:00:00Z' },
+            { ...base, id: 'invalid', pinnedAt: 'not a date' },
+        ];
+        const recent = decorateAndSortRows(rows, { latitude: 51.5, longitude: -0.1 }, 'recent');
+        expect(recent.map(({ row }) => row.id)).toEqual([
+            'new-faraway', 'same-import', 'old-nearby', 'unknown', 'invalid',
+        ]);
+        expect(recent[0].addedAtLabel).toBe('added 13 Sept 2026');
+        expect(recent[0].distanceMiles).toBeGreaterThan(100);
+        expect(recent[3].addedAtLabel).toBe('added date unavailable');
+        expect(rows[0].id).toBe('unknown');
+        expect(decorateAndSortRows(rows, { latitude: 51.5, longitude: -0.1 })[0].row.id)
+            .toBe('old-nearby');
+    });
+
+    it('carries wishlist created_at and never substitutes a visit date for an addition date', () => {
+        const [pin] = wishlistRowsToDisplayRows([{
+            id: 'save-1', created_at: '2026-09-13T12:00:00Z', note: null, source: null,
+            restaurant: {
+                id: 'restaurant-1', name: 'Saved', address: null, city: 'London', country: 'GB',
+                photo_url: null, cuisine: null, google_rating: null, price_level: null, external_id: null,
+            },
+        }]);
+        expect(pin.pinnedAt).toBe('2026-09-13T12:00:00Z');
+        const [visited] = spotRowsToDisplayRows([{
+            restaurant_id: 'restaurant-1', name: 'Visited', city: 'London', country: 'GB',
+            cuisine: null, price_level: null, lat: null, lng: null, photo_url: null,
+            visit_count: 1, avg_rating: null, last_visited_at: '2026-09-14',
+        } satisfies SpotSummary]);
+        expect(visited.pinnedAt).toBeUndefined();
+        expect(formatPlacesAddedAt(visited.pinnedAt)).toBe('added date unavailable');
+        expect(filterPlacesLayerRows('all', [pin], [visited])[0].pinnedAt).toBe(pin.pinnedAt);
+        expect(composeRowMeta(pin, '1 mi', 'added 13 Sept 2026')).toBe('added 13 Sept 2026 · London');
+    });
+
     it('dedupes the all layer by restaurant id and gives overlaps the been glyph', () => {
         const pinned = searchRowsToDisplayRows([
             {

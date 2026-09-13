@@ -126,6 +126,7 @@ export const IMPORT_NOTIF_URL = '/import-progress';
 export async function presentImportNotification(content: {
     title: string;
     body: string;
+    url?: string;
 }): Promise<void> {
     const N = getNotif();
     if (!N) return;
@@ -134,7 +135,7 @@ export async function presentImportNotification(content: {
             content: {
                 title: content.title,
                 body: content.body,
-                data: { url: IMPORT_NOTIF_URL },
+                data: { url: content.url ?? IMPORT_NOTIF_URL },
             },
             // A channel-aware trigger still presents immediately; unlike null it
             // routes Android 8+ notifications through the Imports channel above.

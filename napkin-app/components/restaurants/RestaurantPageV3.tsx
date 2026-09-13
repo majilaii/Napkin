@@ -28,6 +28,8 @@ import {
 } from '@/lib/restaurantPageV3';
 import { hasHours, todaysHoursLine, weekHoursLines } from '@/lib/restaurantHours';
 import { ReviewPhotoStrip, reviewPhotoUrls } from './ReviewPhotoStrip';
+import { RestaurantLocationPreview } from './RestaurantLocationPreview';
+import { restaurantMapCoordinate } from '@/lib/restaurantLocation';
 import type { MastheadPhoto } from '@/lib/restaurantPhoto';
 
 type Palette = typeof Colors.light;
@@ -679,7 +681,8 @@ export function RestaurantDetails({
         onGather ? 'gather' : null,
         restaurant.google_rating != null ? 'google' : null,
     ].filter(Boolean);
-    if (rows.length === 0) return null;
+    const hasMap = restaurantMapCoordinate(restaurant.lat, restaurant.lng) !== null;
+    if (rows.length === 0 && !hasMap) return null;
     const lastRow = rows.at(-1);
     const googleCount = restaurant.google_rating_count != null
         && restaurant.google_rating_count > 0
@@ -688,6 +691,13 @@ export function RestaurantDetails({
     return (
         <View style={styles.section}>
             <SectionHeading label="DETAILS" palette={palette} />
+            <RestaurantLocationPreview
+                name={restaurant.name}
+                lat={restaurant.lat}
+                lng={restaurant.lng}
+                directionsUrl={directionsUrl}
+                palette={palette}
+            />
             {restaurant.address ? (
                 <DetailRow
                     icon="location-outline"

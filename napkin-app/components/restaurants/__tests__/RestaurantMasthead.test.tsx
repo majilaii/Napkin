@@ -34,6 +34,7 @@ jest.mock('react-native', () => {
 });
 jest.mock('expo-image', () => ({ Image: 'ExpoImage' }));
 jest.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
+jest.mock('react-native-maps', () => ({ __esModule: true, default: 'MapView', Marker: 'Marker', UrlTile: 'UrlTile' }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 import React from 'react';
