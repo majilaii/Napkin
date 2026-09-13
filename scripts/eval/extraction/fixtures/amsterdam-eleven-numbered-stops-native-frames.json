@@ -15,7 +15,10 @@
       "name": "Kikkie van de Prinsensluis"
     },
     {
-      "name": "Salvo"
+      "name": "Salvo",
+      "aliases": [
+        "Salvo Bakery"
+      ]
     },
     {
       "name": "Nate"
@@ -27,7 +30,10 @@
       "name": "Locals"
     },
     {
-      "name": "Bagelboy"
+      "name": "Bagelboy",
+      "aliases": [
+        "Bagel Boy"
+      ]
     },
     {
       "name": "Caldi e Freddi"
@@ -52,5 +58,6 @@
     }
   ],
   "fail_on_extras": true,
-  "min_recall": 1
+  "min_recall": 1,
+  "exact_names": true
 }

@@ -19,7 +19,10 @@
     },
     {
       "name": "Behesht",
-      "area": "Kensal Green"
+      "area": "Kensal Green",
+      "aliases": [
+        "Behesht Restaurant"
+      ]
     },
     {
       "name": "Cinder",
@@ -54,18 +57,12 @@
       "area": "Clapton"
     }
   ],
-  "optional": [
-    {
-      "name": "Berenjak"
-    },
-    {
-      "name": "Padella"
-    },
-    {
-      "name": "Spitfire"
-    }
-  ],
+  "optional": [],
   "forbidden": [
+    {
+      "name": "Spitfire",
+      "why": "Incidental scene sign, not a featured destination or a prefix of Malaysian Deli"
+    },
     {
       "name": "Michelin",
       "why": "award badge OCR noise"
@@ -73,7 +70,17 @@
     {
       "name": "Topjaw",
       "why": "channel branding"
+    },
+    {
+      "name": "Berenjak",
+      "why": "Comparison-only restaurant, not a featured destination"
+    },
+    {
+      "name": "Padella",
+      "why": "Comparison-only restaurant, not a featured destination"
     }
   ],
-  "min_recall": 0.83
+  "min_recall": 1,
+  "exact_names": true,
+  "fail_on_extras": true
 }

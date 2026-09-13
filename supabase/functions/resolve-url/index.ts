@@ -60,6 +60,7 @@ import {
   type PhotoExtractionContext,
   validPhotoSlideCount,
 } from "../_shared/visionExtract.ts";
+import { getExtractionModel, extractionCacheContract, isCurrentExtractionCache } from "../_shared/importModel.ts";
 import {
   HASH_VERSION,
   hashImage,
@@ -121,6 +122,12 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
     diff |= a[i] ^ b[i];
   }
   return diff === 0;
+}
+
+
+function extractionFailureResponse(error: unknown): Response | null {
+  const failure = extractionFailureDecision(error);
+  return failure ? errorResponse(failure.code, failure.message, failure.status) : null;
 }
 
 // ── Deadline helper (ARCH-REVIEW-2 #6) ───────────────────────────────────────
@@ -331,12 +338,13 @@ async function readExtractionCache(
 ): Promise<ExtractedCandidate[] | null> {
   const { data } = await supabase
     .from("extraction_cache")
-    .select("extracted, hash_version")
+    .select("extracted, hash_version, model")
     .eq("content_hash", contentHash)
     .eq("hash_version", HASH_VERSION)
+    .eq("model", getExtractionModel())
     .maybeSingle();
 
-  if (!data?.extracted) return null;
+  if (!isCurrentExtractionCache(data)) return null;
 
   const e = data.extracted as Record<string, unknown>;
 
@@ -405,6 +413,7 @@ async function writeExtractionCache(
       hash_version: HASH_VERSION,
       source_url: sourceUrl,
       extracted: {
+        contract: extractionCacheContract(modelId),
         candidates: candidates.map((c) => ({
           name: c.name,
           city: c.city,
@@ -671,6 +680,7 @@ function callImportPlacesSearch(
 // Implementations live in _helpers.ts (no serve() call) so test files can
 // import them without triggering the HTTP server.
 import {
+  allowsCaptionPlacesFallback,
   attemptedExternalIdFromResolutionEvidence,
   buildCandidatePlacesQuery,
   buildGhostExternalId,
@@ -690,6 +700,8 @@ import {
   detectSourceTypeFromHost,
   evaluateLegacySaveSunset,
   exhaustedInlineRoute,
+  extractionFailureDecision,
+  extractOptionalVision,
   expectedImportOwnerDecision,
   filterUnauthorizedTableIds,
   type ImportPlaceSearchResult,
@@ -710,6 +722,7 @@ import {
   resolveImportPlaceSearch,
   resolveSpotsRateGate,
   routesToVideoText,
+  runAsyncImportExtraction,
   shouldEmitGhostCandidate,
   type SaveSpotPlacePayload,
   type SourceType,
@@ -1136,8 +1149,7 @@ async function handleVisionExtract(
   const imageHash = await hashImage(imageBytes);
 
   let extractedArr = await readExtractionCache(supabase, imageHash);
-  const modelId = Deno.env.get("EXTRACTION_MODEL") ??
-    "claude-haiku-4-5-20251001";
+  const modelId = getExtractionModel();
 
   if (!extractedArr) {
     const imageBase64 = btoa(String.fromCharCode(...imageBytes));
@@ -1413,8 +1425,7 @@ async function handleAsyncExtract(
 
   // Single-candidate for async path (unchanged behavior)
   let extracted: ExtractedCandidate | null = null;
-  const modelId = Deno.env.get("EXTRACTION_MODEL") ??
-    "claude-haiku-4-5-20251001";
+  const modelId = getExtractionModel();
 
   let realImageHash: string | null = null;
   let imageBytes: Uint8Array | null = null;
@@ -3092,12 +3103,12 @@ async function handleUrlResolve(
 
   // ── Step 2: cache check ───────────────────────────────────────────────────
   const contentHash = await hashTextSource(rawUrl, oEmbedCaption);
-  const modelId = Deno.env.get("EXTRACTION_MODEL") ??
-    "claude-haiku-4-5-20251001";
+  const modelId = getExtractionModel();
 
   let textCandidates: ExtractedCandidate[] = [];
   let visionCandidates: ExtractedCandidate[] = [];
   let fromCache = false;
+  let contentEvaluated = false;
 
   // Maps lists bypass the extraction cache entirely: lists are mutable (the
   // sharer adds spots), and the items are deterministic — nothing to cache.
@@ -3107,21 +3118,17 @@ async function handleUrlResolve(
   if (cached && cached.length > 0) {
     textCandidates = cached;
     fromCache = true;
+    contentEvaluated = true;
   }
 
   // ── Step 3: text-tier extraction ──────────────────────────────────────────
   if (!fromCache && oEmbedCaption && !deadline.aborted) {
-    try {
-      const extracted = await extractFromTextMulti(
-        oEmbedCaption,
-        deadline.stageSignal(5000),
-      );
-      textCandidates = extracted;
-    } catch (e: any) {
-      if (e?.name === "AbortError") {
-        // Budget exhausted — proceed with empty (degrade gracefully)
-      }
-    }
+    // Let failures propagate: they must not become caption-based Places matches.
+    textCandidates = await extractFromTextMulti(
+      oEmbedCaption,
+      deadline.stageSignal(5000),
+    );
+    contentEvaluated = true;
   }
 
   // ── Step 4: listicle detection + vision trigger ───────────────────────────
@@ -3148,17 +3155,13 @@ async function handleUrlResolve(
       deadline.stageSignal(2000),
     );
     if (resized && !deadline.aborted) {
-      try {
-        const vExtracted = await extractFromVisionMulti(
+      visionCandidates = await extractOptionalVision(textCandidates, () => extractFromVisionMulti(
           resized.base64,
           resized.mimeType,
           oEmbedCaption ?? undefined,
           deadline.stageSignal(2500),
-        );
-        visionCandidates = vExtracted;
-      } catch {
-        // Vision failed — text-tier results stand
-      }
+        ));
+      contentEvaluated = true;
     }
     // If resized is null (ARCH-REVIEW-2 #11): vision skipped entirely
   }
@@ -3292,8 +3295,9 @@ async function handleUrlResolve(
 
   // For non-Maps sources: resolve staged candidates in parallel
   if (staged.length === 0) {
-    // No candidates from model extraction — fall back to old direct Places search
-    if (!query) {
+    // An authoritative empty extraction must remain empty. Direct query search
+    // is only a recovery path when no model evaluated the supplied content.
+    if (!allowsCaptionPlacesFallback(query, contentEvaluated)) {
       return jsonResponse({
         data: {
           source_type: sourceType,
@@ -3709,8 +3713,7 @@ async function handleVideoText(
   const contentHash = Array.from(new Uint8Array(hashBuf))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  const modelId = Deno.env.get("EXTRACTION_MODEL") ??
-    "claude-haiku-4-5-20251001";
+  const modelId = getExtractionModel();
 
   let textCandidates = await readExtractionCache(supabase, contentHash);
   if (!textCandidates || textCandidates.length === 0) {
@@ -3729,8 +3732,6 @@ async function handleVideoText(
         effectiveCap,
         extractionContext,
       );
-    } catch {
-      textCandidates = [];
     } finally {
       clearTimeout(extractTimer);
     }
@@ -4010,16 +4011,24 @@ serve(async (req) => {
     }
     const jobOwnerId = jobRow.user_id as string;
 
-    return await handleAsyncExtract(
+    return await runAsyncImportExtraction(() => handleAsyncExtract(
       supabase,
       true,
       jobOwnerId,
-      body.job_id,
+      body.job_id!,
       supabaseUrl,
       supabaseAnonKey,
       `Bearer ${supabaseServiceKey}`,
       INTERNAL_CALL_SECRET,
-    );
+    ), async () => {
+      // This RPC atomically settles the job and its wishlist/table-share placeholders.
+      const { error } = await supabase.rpc("fn_complete_import_job", {
+        p_job_id: body.job_id,
+        p_status: "failed",
+        p_restaurant_id: null,
+      });
+      if (error) throw error;
+    }).catch((e) => extractionFailureResponse(e) ?? errorResponse("INTERNAL", "Import extraction failed", 500));
   }
 
   // ── Auth — all non-internal paths require a valid user JWT ────────────────
@@ -4159,6 +4168,8 @@ serve(async (req) => {
         "video_text",
       );
     } catch (e: any) {
+      const extractionFailure = extractionFailureResponse(e);
+      if (extractionFailure) return extractionFailure;
       console.error("resolve-url video-text error:", e);
       return errorResponse("INTERNAL", "Internal server error", 500);
     }
@@ -4249,7 +4260,7 @@ serve(async (req) => {
       supabaseUrl,
       supabaseAnonKey,
       authHeader,
-    );
+    ).catch((e) => extractionFailureResponse(e) ?? errorResponse("INTERNAL", "Import extraction failed", 500));
     return await attachImportResolutionIds(
       supabase,
       user.id,
@@ -4283,9 +4294,8 @@ serve(async (req) => {
       "url",
     );
   } catch (e: any) {
-    if (e?.name === "AbortError") {
-      return errorResponse("TIMEOUT", "Resolver timed out", 503);
-    }
+    const extractionFailure = extractionFailureResponse(e);
+    if (extractionFailure) return extractionFailure;
     console.error("resolve-url error:", e);
     reportError(e, { fn: "resolve-url" });
     return errorResponse("INTERNAL", "Internal server error", 500);

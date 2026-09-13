@@ -67,6 +67,8 @@ export interface TikTokPerception {
      * fused with the transcript — R6). Empty when the clip has no caption.
      */
     desc: string;
+    /** Photo-post heading, separate from the caption and creator share title. */
+    title?: string;
     /**
      * TICKET-164: TikTok's OWN ASR voiceover ALONE (the fast path sends this as
      * `extracted_text`). Empty when no subtitleInfos track was found.
@@ -79,7 +81,7 @@ export interface TikTokPerception {
     /**
      * TICKET-175: true when the RESOLVED page URL is a photo-mode post
      * (/photo/{id}). Photo posts have no video and no ASR — the queue skips the
-     * cheap tier + video ladder and resolves {url} (server thumbnail vision).
+     * cheap tier + video ladder and fuses title/caption with slide OCR.
      * URL-derived, never blob-shape-derived (the blob differs for photos).
      */
     isPhotoPost: boolean;
@@ -256,6 +258,9 @@ export async function fetchTikTokPerception(
             return {
                 ...photoMarker,
                 desc: typeof item.desc === 'string' ? item.desc.trim() : '',
+                title: typeof item.imagePost?.title === 'string'
+                    ? item.imagePost.title.trim().slice(0, 1000)
+                    : undefined,
                 slideUrls: extractSlideUrls(item),
             };
         }

@@ -150,3 +150,15 @@ Deno.test('every checked-in fixture parses and satisfies the schema', async () =
     assertEquals(names.includes('topjaw-san-sebastian-caption'), true);
     assertEquals(names.includes('instagram-caption-only'), true);
 });
+
+Deno.test('exact identity scoring rejects contaminated names while permitting explicit aliases', () => {
+    const fixture: Fixture = { ...BASE, exact_names: true, fail_on_extras: true,
+        expected: [{ name: 'Malaysian Deli' }, { name: 'Salvo', aliases: ['Salvo Bakery'] }],
+        optional: [], forbidden: [], min_recall: 1 };
+    assertEquals(scoreFixture(fixture, [candidate('Malaysian Deli'), candidate('Salvo Bakery')]).pass, true);
+    const contaminated = scoreFixture(fixture, [candidate('Spitfire Malaysian Deli'), candidate('Salvo Bakery')]);
+    assertEquals(contaminated.pass, false);
+    assertEquals(contaminated.misses, ['Malaysian Deli']);
+    assertEquals(contaminated.extras.map(c => c.name), ['Spitfire Malaysian Deli']);
+    assertEquals(scoreFixture(fixture, [candidate('Malaysian Deli')]).pass, false);
+});

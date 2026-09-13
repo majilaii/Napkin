@@ -49,7 +49,15 @@ describe('buildVideoTextResolveBody — channel bodies', () => {
     });
 });
 
-describe('buildVideoTextResolveBody — photo path stays byte-identical', () => {
+describe('buildVideoTextResolveBody — photo evidence', () => {
+    it('does not duplicate a fused caption or fabricate count with title-only evidence', () => {
+        const { body, sentVideoTextResolve } = build({
+            extractedText: '[title]\nKeiko Uchida\n[caption]\nJapan in London',
+            mergedDesc: 'Japan in London', photoPost: true,
+        });
+        expect(body).toEqual({ extracted_text: '[title]\nKeiko Uchida\n[caption]\nJapan in London' });
+        expect(sentVideoTextResolve).toBe(true);
+    });
     it('photo carousel body is extracted_text + photo context, with NO caption field', () => {
         const { body } = build({
             extractedText: '[slide 1 of 4]\nBrat, Shoreditch\n[caption]\nLondon faves',
@@ -66,7 +74,7 @@ describe('buildVideoTextResolveBody — photo path stays byte-identical', () => 
         });
     });
 
-    it('zero-slide photo post keeps the {url} tier (oEmbed + thumbnail vision)', () => {
+    it('photo post without any fused evidence keeps the existing fallback tier', () => {
         const { body, sentVideoTextResolve } = build({
             mergedDesc: 'my favourite spots in Tokyo',
             photoImportContext: null,

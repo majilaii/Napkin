@@ -15,5 +15,6 @@
       "name": "Posada Real Torre Berrueza"
     }
   ],
-  "forbidden": []
+  "forbidden": [],
+  "exact_names": true
 }

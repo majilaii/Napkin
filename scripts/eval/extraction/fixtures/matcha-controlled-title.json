@@ -1,0 +1,37 @@
+{
+  "name": "matcha-controlled-title",
+  "source_url": "",
+  "notes": "Controlled title augmentation using user-provided cafe identity. This is not the exact retrieved TikTok title; source link is pending.",
+  "fused_text": "[title]\nKeiko Uchida\n[slide 1 of 11]\nKan Marsuzaki\n1977 - present\nMashiko Disrict\nTea Bo wooden bo\nSmall Guinomi Can\n£ 980.00\nDreamiest Matcha shop in\nNottinghill\n[slide 2 of 11]\nsenna Kiln\nThe ceramics were actually\nart\n[slide 3 of 11]\nMarukyu Koyamaen\nAoarashi\n(40g) £ 27.00 Kinrin\n(20g) £ 35.00\nAoarashi (100g) £ 65.00 Unkaku\n(20g) £ 45.00\nYugen\n(20g) £ 25.00 Harukasumi* (20g) £ 43.00\nLow-caffeine (20g) £ 27.00 Choan\nWako\n(20g) £ 28.00 Tenju\n(20g) £ 78.00\n(20g) £ 180.00\nThey had a large selection of\nMarukuyu Koyamen (my fav)\nUNKAKE\nUNKAKU\n[slide 4 of 11]\nIppodo\nIkuyo no Mukashi\nKan no Shiro\nSayaka no Mukashi\nShoin no Mukashi\nUmmon no Mu\n£20.00\n0S 00\nIKUYO\nMatcha\nIPPODO TEA\nNet Wt. 20g 0.7oz.\n& ippodo matcha!\nKAN\nSAYAKA\nMateha\nSHOIN\n**\nNet WE\nUMMON\nMarukyu Koyamae\nAoarashi\ndoarashi\n(40g) g\n(100g)\nYugen\n(20g)\nLow-caffeine (20g)\nWako\n[slide 5 of 11]\nVWVH\nThey also do tea ceremonies\n[slide 6 of 11]\nSlack (W1c\nKan Matsuzaki\n[slide 7 of 11]\nTEA\nNIGHT BOOK\nAn Illustrated Guide to Japanese Traditional Architecture and Everyday Things\nJapanese Kitchen Utensils\nTHE YUKATA HANDBOOK\nMATSUO BASHO\nTHE NARROW ROAD TO THE DEEP NORTH\nGUIN CLASSICS\nThe Beauty of Everyday Things Soetsu Yanagi\nJUNICHIRO TANIZAKI IN PRAISE OF SHADOWS\nVINTAGE CL\nVINTAGE CLAS\nVINTAGE CLA\nPENGUIN CLASSICS\nThe Tales of Ise\n[slide 8 of 11]\nNishura EAST Tea Tin\n2 24.00\nLoved all of the details!\n·\n* tE\nShirahime\nSukiya\nwich tin\n£ 25.00 Shigaraki\nGenmaicha\n£ 24.00\nE 45.00 TEABAG\n1 10.00\nGENMAICHA\n[slide 9 of 11]\nJUNICHIRO TANIZAKI\nIN PRAISE OF\nSHADOWS\nPENGUIN\nCLASSICS\nMATSUO BASHÕ\nTHE NARROW ROAD TO THE DEEP NORTH\nAND OTHER TRAVEL SKETCHES\nKAKUZO OKAKURA\nTHE BOOK OF TEA\nS 1C S\nBASHO\nOn Love and Barley - Haiku of B\n[slide 10 of 11]\nI bought their own brand\nMatcha\nORGANIC\nMATCHA\n• wabisuke O\n[slide 11 of 11]\nSuch a beautiful shop\n[caption]\nA little corner of Japan in London",
+  "cap": 12,
+  "context": {
+    "source_kind": "photo",
+    "slide_count": 11
+  },
+  "expected": [
+    {
+      "name": "Keiko Uchida"
+    }
+  ],
+  "forbidden": [
+    {
+      "name": "Kan Matsuzaki",
+      "why": "Incidental entity or comparison"
+    },
+    {
+      "name": "Wabisuke",
+      "why": "Incidental entity or comparison"
+    },
+    {
+      "name": "Marukyu Koyamaen",
+      "why": "Incidental entity or comparison"
+    },
+    {
+      "name": "Ippodo",
+      "why": "Incidental entity or comparison"
+    }
+  ],
+  "fail_on_extras": true,
+  "exact_names": true,
+  "min_recall": 1
+}

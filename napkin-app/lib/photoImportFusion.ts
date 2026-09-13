@@ -19,8 +19,11 @@ export function capPhotoImportCandidates<T>(
 }
 
 /** A generic URL retry lacks photo scene-noise rules and may not bypass them. */
-export function allowsGenericUrlFallback(context: PhotoImportContext | null): boolean {
-    return context === null;
+export function allowsGenericUrlFallback(
+    context: PhotoImportContext | null,
+    hasPhotoEvidence = false,
+): boolean {
+    return context === null && !hasPhotoEvidence;
 }
 
 /**
@@ -31,6 +34,7 @@ export function allowsGenericUrlFallback(context: PhotoImportContext | null): bo
 export function fusePhotoSlideText(
     slides: ReadonlyArray<ReadonlyArray<string>>,
     caption: string | null | undefined,
+    title?: string | null,
 ): string {
     const total = slides.length;
     const sections = slides.map((lines, index) => {
@@ -39,6 +43,8 @@ export function fusePhotoSlideText(
             ? `[slide ${index + 1} of ${total}]\n${body}`
             : `[slide ${index + 1} of ${total}]`;
     });
+    const cleanTitle = title?.trim().slice(0, 1000) ?? '';
+    if (cleanTitle) sections.unshift(`[title]\n${cleanTitle}`);
     const cleanCaption = caption?.trim() ?? '';
     sections.push(cleanCaption ? `[caption]\n${cleanCaption}` : '[caption]');
     return sections.join('\n');

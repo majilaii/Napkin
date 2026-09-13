@@ -5,6 +5,7 @@ import { evaluateFastPath } from './importFastPath';
 import { buildVideoImportEvidence } from './videoImportEvidence';
 import { OCR_WALLCLOCK_BUDGET_MS } from './importBudgets';
 import { classifyImportFailure } from './importFailureCopy';
+import { fusePhotoSlideText, photoImportContextFromDiagnostics } from './photoImportFusion';
 
 export const SHEET_VIDEO_DOWNLOAD_MS = 30_000;
 export const SHEET_VIDEO_STT_MS = 30_000;
@@ -27,7 +28,7 @@ function assertActive(signal: AbortSignal): void {
     throw error;
 }
 
-/** The pasted-link path must inspect video when caption/ASR cannot identify it. */
+/** Preserve photo metadata; inspect video when caption/ASR cannot identify it. */
 export async function resolveTikTokVideo(
     url: string,
     signal: AbortSignal,
@@ -37,8 +38,22 @@ export async function resolveTikTokVideo(
     assertActive(signal);
     let page = await deps.perceive(url);
     assertActive(signal);
-    // Photo posts retain their established route; this ladder reads video.
-    if (!page || page.isPhotoPost) return null;
+    if (!page) return null;
+    if (page.isPhotoPost) {
+        const caption = captionOverride || page.desc;
+        if (!page.title?.trim() && !caption?.trim()) return null;
+        const context = photoImportContextFromDiagnostics({
+            photo_post: true, slide_count: page.slideUrls?.length,
+        });
+        // The sheet uses available metadata without downloading the carousel.
+        // Keep an empty result authoritative: null would trigger generic oEmbed.
+        const result = await deps.resolve({
+            extracted_text: fusePhotoSlideText([], caption, page.title),
+            ...context,
+        }, signal);
+        assertActive(signal);
+        return result;
+    }
     let caption = captionOverride || page.desc;
     let transcript = page.transcript;
     let cheap: ResolveUrlData | null = null;

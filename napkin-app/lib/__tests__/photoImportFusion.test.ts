@@ -6,6 +6,18 @@ import {
 } from '../photoImportFusion';
 
 describe('fusePhotoSlideText', () => {
+    it('puts the real title before packaging noise without merging slide boundaries', () => {
+        expect(fusePhotoSlideText([['Wabisuke'], ['Kan Matsuzaki']], 'Japan in London', ' Keiko Uchida ')).toBe(
+            '[title]\nKeiko Uchida\n[slide 1 of 2]\nWabisuke\n[slide 2 of 2]\nKan Matsuzaki\n[caption]\nJapan in London',
+        );
+    });
+
+    it('preserves bounded title and caption even without usable slides or OCR', () => {
+        expect(fusePhotoSlideText([], 'Japan in London', 'Keiko Uchida')).toBe(
+            '[title]\nKeiko Uchida\n[caption]\nJapan in London',
+        );
+        expect(fusePhotoSlideText([], '', 'x'.repeat(1500))).toBe(`[title]\n${'x'.repeat(1000)}\n[caption]`);
+    });
     it('keeps slide boundaries, repeated lines, and the caption explicit', () => {
         expect(
             fusePhotoSlideText(
@@ -89,6 +101,10 @@ describe('capPhotoImportCandidates', () => {
 });
 
 describe('allowsGenericUrlFallback', () => {
+    it('keeps title-only photo abstention authoritative without inventing slide count', () => {
+        expect(allowsGenericUrlFallback(null, true)).toBe(false);
+        expect(allowsGenericUrlFallback(null, false)).toBe(true);
+    });
     it('does not let a generic prompt bypass valid photo scene-noise rules', () => {
         expect(
             allowsGenericUrlFallback({
