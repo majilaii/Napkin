@@ -27,7 +27,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
     },
     {
         id: 'tables', label: 'Your people', title: 'A Table for your people.',
-        body: 'A private home for the people you eat with, the meals you share, and the places you all want to try.',
+        body: 'A private group for shared meals, trusted opinions, and places you all want to try.',
         detail: 'Your personal pins come together on the Table map. See where your tastes overlap, then keep everyone’s take on the meals that follow.',
         action: 'Explore Tables', route: '/(tabs)/tables', icon: 'restaurant-outline',
     },

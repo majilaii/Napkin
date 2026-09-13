@@ -18,7 +18,7 @@ export function OnboardingProgress({ step, palette, optional = false }: Props) {
             accessible
             accessibilityRole="progressbar"
             accessibilityLabel={optional ? 'Optional people suggestions' : 'Profile setup'}
-            accessibilityValue={{ min: 1, max: ONBOARDING_STEP_COUNT, now: current }}
+            accessibilityValue={{ min: 0, max: ONBOARDING_STEP_COUNT, now: current, text: `${current} of ${ONBOARDING_STEP_COUNT}` }}
         >
             <View style={styles.labels}>
                 <Text style={[styles.label, { color: palette.textSecondary }]}>

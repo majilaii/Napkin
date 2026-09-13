@@ -2,6 +2,8 @@
 const routeParams = { selected: 'table-b', section: 'activity' };
 const mockPush = jest.fn();
 let mockIsPersonal = false;
+let mockTablesState: 'content' | 'empty' | 'error' | 'loading' = 'content';
+const mockTablesRefetch = jest.fn();
 const mockUseTableWishlist = jest.fn();
 const mockUseTableMapPins = jest.fn();
 
@@ -46,9 +48,9 @@ jest.mock('@/hooks/use-color-scheme', () => ({ useColorScheme: () => 'light' }))
 jest.mock('@/providers/AuthProvider', () => ({
     useAuth: () => ({ user: { id: 'viewer' } }),
 }));
-// These route tests exercise a populated Table. Discovery has dedicated tests
-// and its bundled photo assets do not belong in the route harness.
-jest.mock('@/components/onboarding/TableIntroduction', () => ({ TableIntroduction: () => null }));
+// Keep the real introduction so its two callbacks exercise the route wiring;
+// the example photograph is covered by native visual verification.
+jest.mock('@/components/onboarding/GuideIllustration', () => ({ GuideIllustration: () => null }));
 jest.mock('@/components/onboarding/DiscoveryTip', () => ({ DiscoveryTip: () => null }));
 jest.mock('@/constants/flags', () => ({
     FRIEND_TEST: {
@@ -63,13 +65,13 @@ jest.mock('@/lib/track', () => ({ track: jest.fn() }));
 
 jest.mock('@/hooks/tables/useTables', () => ({
     useTables: () => ({
-        data: [
+        data: mockTablesState === 'error' || mockTablesState === 'loading' ? undefined : mockTablesState === 'empty' ? [] : [
             { tables: { id: 'table-a', name: 'Table A', owner_id: 'viewer', created_at: '2026-01-01', is_personal: false } },
             { tables: { id: 'table-b', name: 'Table B', owner_id: 'viewer', created_at: '2026-01-01', is_personal: mockIsPersonal } },
         ],
-        isLoading: false,
-        isError: false,
-        refetch: jest.fn(),
+        isLoading: mockTablesState === 'loading',
+        isError: mockTablesState === 'error',
+        refetch: mockTablesRefetch,
     }),
 }));
 jest.mock('@/hooks/notifications', () => ({ useUnreadCount: () => 0 }));
@@ -144,7 +146,17 @@ jest.mock('@/components/feed/ListAddLedgerLine', () => ({}));
 jest.mock('@/components/journal', () => ({ TableEntryCard: () => null }));
 jest.mock('@/components/suppers', () => ({ SupperCard: () => null, SupperNudgeBanner: () => null }));
 jest.mock('@/components/gatherings', () => ({ GatheringCard: () => null, UpcomingStrip: () => null }));
-jest.mock('@/components/ErrorState', () => ({ ErrorState: () => null }));
+jest.mock('@/components/ErrorState', () => {
+    const ReactModule = jest.requireActual('react');
+    const { Pressable, Text } = jest.requireMock('react-native');
+    return {
+        ErrorState: ({ onRetry }: { onRetry: () => void }) => ReactModule.createElement(
+            Pressable,
+            { onPress: onRetry, accessibilityLabel: 'Retry Tables' },
+            ReactModule.createElement(Text, null, 'Could not load Tables'),
+        ),
+    };
+});
 
 import React from 'react';
 import { fireEvent, render } from '@testing-library/react-native';
@@ -154,6 +166,7 @@ import TablesScreen from '../../../app/(tabs)/tables';
 describe('mounted Tables route arrival', () => {
     beforeEach(() => {
         mockIsPersonal = false;
+        mockTablesState = 'content';
     });
 
     it('consumes section=activity once, then keeps later pane switches', () => {
@@ -203,5 +216,33 @@ describe('mounted Tables route arrival', () => {
 
         expect(mockUseTableWishlist).not.toHaveBeenCalled();
         expect(mockUseTableMapPins).not.toHaveBeenCalled();
+    });
+
+    it('shows the Table introduction only for resolved empty membership and wires its navigation', () => {
+        mockTablesState = 'empty';
+        const screen = render(<TablesScreen />);
+        expect(screen.getByText('Start a Table')).toBeTruthy();
+        expect(screen.queryByText('Could not load Tables')).toBeNull();
+        fireEvent.press(screen.getByText('How Tables work'));
+        expect(mockPush).toHaveBeenCalledWith({ pathname: '/welcome', params: { topic: 'tables' } });
+        fireEvent.press(screen.getByText('Start a Table'));
+        expect(mockPush).toHaveBeenCalledWith('/create-table');
+    });
+
+    it('preserves cold error and retry rather than misrepresenting a failed membership query as no Tables', () => {
+        mockTablesState = 'error';
+        const screen = render(<TablesScreen />);
+        expect(screen.getByText('Could not load Tables')).toBeTruthy();
+        expect(screen.queryByText('Start a Table')).toBeNull();
+        fireEvent.press(screen.getByLabelText('Retry Tables'));
+        expect(mockTablesRefetch).toHaveBeenCalledTimes(1);
+        expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it('does not show the zero-Table introduction while membership is still loading', () => {
+        mockTablesState = 'loading';
+        const screen = render(<TablesScreen />);
+        expect(screen.queryByText('Start a Table')).toBeNull();
+        expect(screen.queryByText('Could not load Tables')).toBeNull();
     });
 });

@@ -15,9 +15,9 @@ const people = [
 export function GuideIllustration({ topic, palette }: { topic: DiscoveryTopic; palette: Palette }) {
     const social = topic === 'tables' || topic === 'friends';
     return (
-        <View style={[s.stage, { backgroundColor: palette.surfaceJournal }]}>
+        <View style={[s.stage, social && s.socialStage, { backgroundColor: palette.surfaceJournal }]}>
             <Text style={[Type.sectionKicker, s.example, { color: palette.textMuted }]}>Example</Text>
-            <View style={[s.note, Shadow.note, { backgroundColor: palette.card }]}>
+            <View style={[s.note, social && s.socialNote, Shadow.note, { backgroundColor: palette.card }]}>
                 {social ? (
                     <>
                         <View style={s.people}>
@@ -73,14 +73,16 @@ export function GuideIllustration({ topic, palette }: { topic: DiscoveryTopic; p
 
 const s = StyleSheet.create({
     stage: { borderRadius: Radius.xxl, padding: Spacing.lg, gap: Spacing.md },
+    socialStage: { padding: Spacing.md, gap: Spacing.sm },
     example: { textAlign: 'center' },
     note: { borderRadius: Radius.lg, padding: Spacing.md, gap: Spacing.md },
+    socialNote: { gap: Spacing.sm },
     photo: { width: '100%', height: 136, borderRadius: Radius.md },
     captionRow: { flexDirection: 'row', gap: Spacing.md, alignItems: 'center' },
     flex: { flex: 1 },
     people: { flexDirection: 'row', justifyContent: 'center', gap: Spacing.lg },
     person: { alignItems: 'center', gap: Spacing.sm },
-    avatar: { width: 48, height: 48, borderRadius: Radius.full },
+    avatar: { width: 40, height: 40, borderRadius: Radius.full },
     center: { textAlign: 'center' },
     rule: { height: StyleSheet.hairlineWidth },
     row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },

@@ -16,7 +16,7 @@ export default function WelcomeScreen() {
     const palette = Colors[useColorScheme() ?? 'light'];
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    const { user } = useAuth();
+    const { user, onboardedAt } = useAuth();
     const { intro, preview, topic } = useLocalSearchParams<{ intro?: string; preview?: string; topic?: string }>();
     const isIntro = intro === '1' || preview === '1';
     const [selected, setSelected] = useState<string | null>(() => isIntro ? 'journal' : findGuideChapter(topic)?.id ?? null);
@@ -25,8 +25,15 @@ export default function WelcomeScreen() {
     const index = GUIDE_CHAPTERS.findIndex((item) => item.id === selected);
 
     useEffect(() => {
-        if (intro === '1' && preview !== '1' && user?.id) void enableDiscoveryGuide(user.id);
-    }, [intro, preview, user?.id]);
+        setSelected(isIntro ? 'journal' : findGuideChapter(topic)?.id ?? null);
+        scroll.current?.scrollTo({ y: 0, animated: false });
+    }, [isIntro, topic]);
+
+    useEffect(() => {
+        if (intro === '1' && preview !== '1' && user?.id && typeof onboardedAt === 'string') {
+            void enableDiscoveryGuide(user.id);
+        }
+    }, [intro, preview, user?.id, onboardedAt]);
 
     const select = (id: string | null) => {
         setSelected(id);
@@ -60,7 +67,7 @@ export default function WelcomeScreen() {
                 {chapter ? (
                     <>
                         {isIntro ? (
-                            <View accessible style={s.progress} accessibilityRole="progressbar" accessibilityLabel="Introduction" accessibilityValue={{ min: 1, max: 3, now: index + 1 }}>
+                            <View accessible style={s.progress} accessibilityRole="progressbar" accessibilityLabel="Introduction" accessibilityValue={{ min: 0, max: 3, now: index + 1, text: `${index + 1} of 3` }}>
                                 {GUIDE_CHAPTERS.slice(0, 3).map((item, i) => <View key={item.id} style={[s.segment, { backgroundColor: i <= index ? palette.primary : palette.ruleInkSoft }]} />)}
                             </View>
                         ) : null}

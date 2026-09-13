@@ -143,6 +143,17 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('@/providers/AuthProvider', () => ({
     useAuth: () => ({ user: { id: 'viewer' } }),
 }));
+// Eligibility/persistence are tested with the real tip elsewhere. This marker
+// makes the route's scope/view/layer placement contract observable here.
+jest.mock('@/components/onboarding/DiscoveryTip', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ReactNative = require('react-native') as typeof import('react-native');
+    return {
+        DiscoveryTip: ({ topic }: { topic: string }) => (
+            <ReactNative.Text testID={`discovery-tip-${topic}`}>Discovery introduction</ReactNative.Text>
+        ),
+    };
+});
 jest.mock('@/hooks/useNearbyLocation', () => ({
     useNearbyLocation: () => ({
         coords: mockCoords,
@@ -826,6 +837,44 @@ describe('Places People-segment paid-call gate', () => {
             query: '',
             previousNonSearchSnap: null,
         }));
+    });
+
+    it.each([
+        { view: 'list', layer: 'pinned', scope: undefined, visible: true },
+        { view: 'map', layer: 'pinned', scope: undefined, visible: false },
+        { view: 'list', layer: 'all', scope: undefined, visible: false },
+        { view: 'list', layer: 'been', scope: undefined, visible: false },
+        { view: 'list', layer: 'pinned', scope: 'friends', visible: false },
+    ])('places guidance requires the personal pinned list: %j', async ({ visible, ...params }) => {
+        mockRouteParams = params;
+        mockCallEdgeFn.mockResolvedValue({ pins: [] });
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+        await waitFor(() => expect(screen.getByTestId(
+            params.view === 'map' ? 'wishlist-map' : 'places-city-ledger',
+        )).toBeTruthy());
+        expect(screen.queryByTestId('discovery-tip-places') !== null).toBe(visible);
+    });
+
+    it('does not insert personal onboarding into the locked Table pinned list', async () => {
+        mockRouteParams = { scope: 'table' };
+        mockCallEdgeFn.mockImplementation(async (name, options) => (
+            name === 'wishlist' && options?.action === 'list_table' ? [] : { pins: [] }
+        ) as never);
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen lockedScope={{ kind: 'table', tableId: 'table-a' }} />
+            </QueryClientProvider>,
+        );
+        fireEvent.press(screen.getByLabelText('pinned'));
+        fireEvent.press(screen.getByLabelText('list places'));
+        await waitFor(() => expect(screen.getByTestId('places-table-ledger')).toBeTruthy());
+        expect(screen.queryByTestId('discovery-tip-places')).toBeNull();
     });
 
     it('paginates the full browse ledger with an honest plus count until exhaustion', () => {

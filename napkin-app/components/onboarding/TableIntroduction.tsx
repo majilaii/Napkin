@@ -15,7 +15,7 @@ export function TableIntroduction({ palette, onCreate, onLearn }: {
     return (
         <ScrollView style={{ flex: 1, backgroundColor: palette.background }} contentContainerStyle={[s.content, { paddingTop: insets.top + Spacing.lg, paddingBottom: insets.bottom + 96 }]}>
             <Text style={[Type.sectionKicker, { color: palette.primary }]}>Tables</Text>
-            <Text accessibilityRole="header" style={[Type.displayLarge, s.title, { color: palette.text }]}>Good taste,\nin good company.</Text>
+            <Text accessibilityRole="header" style={[Type.displayLarge, s.title, { color: palette.text }]}>{'Good taste,\nin good company.'}</Text>
             <Text style={[Type.body, s.body, { color: palette.textSecondary }]}>A private space for your people to keep their meals and find the next place together.</Text>
             <GuideIllustration topic="tables" palette={palette} />
             <View style={s.benefits}>
