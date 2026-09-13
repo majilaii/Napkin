@@ -365,6 +365,11 @@ export function PlacesScreen({
     const searchMode = routeWantsSearch || screenState.previousNonSearchSnap !== null;
     const listMode = !searchMode && screenState.viewMode === 'list';
     const mapMode = !searchMode && !listMode;
+    const canOrderPinned = !searchMode
+        && activeSegment === 'places'
+        && activeScope.kind === 'you'
+        && screenState.layerFilter === 'pinned';
+    const recentlyAdded = canOrderPinned && screenState.pinnedOrder === 'recent';
     const initialQuery = queryForPlacesRouteArrival(
         screenState.query,
         incomingQ,
@@ -683,8 +688,9 @@ export function PlacesScreen({
         () => decorateAndSortRows(
             filteredRows,
             activeScope.kind === 'table' && !queryActive ? null : distanceOrigin,
+            recentlyAdded ? 'recent' : 'nearby',
         ),
-        [activeScope.kind, distanceOrigin, filteredRows, queryActive],
+        [activeScope.kind, distanceOrigin, filteredRows, queryActive, recentlyAdded],
     );
     const cityGroups = useMemo(
         () => groupRowsByCity(decoratedRows, { locality, distanceOrigin, homeCity }),
@@ -728,7 +734,7 @@ export function PlacesScreen({
             ? placesContentBranch
             : `${placesContentBranch}-${activeScope.kind === 'table'
                 ? `table-${activeScope.tableId}`
-                : activeScope.kind}-${screenState.layerFilter}`;
+                : activeScope.kind}-${screenState.layerFilter}-${recentlyAdded ? 'recent' : 'nearby'}`;
     const sheetContentKey = composePlacesContentKey({
         searchMode,
         segment: activeSegment,
@@ -928,6 +934,14 @@ export function PlacesScreen({
         });
     }, [patchScreenState, screenState.layerFilter]);
 
+    const handleRecentPress = useCallback(() => {
+        patchScreenState({
+            pinnedOrder: screenState.pinnedOrder === 'recent' ? 'nearby' : 'recent',
+            selectedPinId: null,
+            scrollOffset: 0,
+        });
+    }, [patchScreenState, screenState.pinnedOrder]);
+
     const handleCurrentLocation = useCallback(() => {
         setAutoLocality();
         if (permissionStatus === null || permissionStatus === 'undetermined') {
@@ -1008,7 +1022,7 @@ export function PlacesScreen({
                             ? 'RESULTS'
                             : tableBrowse
                               ? `${tableName} · ${screenState.layerFilter === 'been' ? 'been' : 'pinned'}`
-                              : 'NEARBY'}
+                              : recentlyAdded ? 'RECENTLY ADDED' : 'NEARBY'}
                     </Text>
                     <View style={styles.countActions}>
                         <Text style={[styles.placeCount, { color: palette.textMuted }]}>
@@ -1040,6 +1054,7 @@ export function PlacesScreen({
         palette.textMuted,
         placesHaveMore,
         queryActive,
+        recentlyAdded,
         searchMode,
         sharePinnedVisible,
         screenState.layerFilter,
@@ -1215,27 +1230,27 @@ export function PlacesScreen({
             );
         }
 
-        if (listMode && tableBrowse) {
+        if (listMode && (tableBrowse || recentlyAdded)) {
             return (
                 <Animated.FlatList
-                    testID="places-table-ledger"
+                    testID={recentlyAdded ? 'places-recent-ledger' : 'places-table-ledger'}
                     data={decoratedRows}
                     keyExtractor={({ row }) => row.id}
                     renderItem={renderBrowseRow}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode="on-drag"
+                    onEndReached={handlePlacesEndReached}
+                    onEndReachedThreshold={0.4}
                     contentContainerStyle={[
                         styles.cityLedgerContent,
                         { paddingBottom: listModeBottomPadding },
                     ]}
-                    ListHeaderComponent={failurePresentation.kind === 'inline'
-                        ? (
-                            <InlineErrorState
-                                onRetry={handleRetryFailure}
-                                message="couldn't refresh places"
-                            />
-                        )
-                        : null}
+                    ListHeaderComponent={(
+                        <>
+                            {recentlyAdded ? <DiscoveryTip topic="places" /> : null}
+                            {failurePresentation.kind === 'inline' ? <InlineErrorState onRetry={handleRetryFailure} message="couldn't refresh places" /> : null}
+                        </>
+                    )}
                     ListEmptyComponent={(
                         <View style={styles.emptyResults}>
                             <Text style={[styles.emptyCopy, { color: palette.textMuted }]}>
@@ -1243,6 +1258,9 @@ export function PlacesScreen({
                             </Text>
                         </View>
                     )}
+                    ListFooterComponent={paginatedBrowse && wishlistQuery.isFetchingNextPage
+                        ? <ActivityIndicator color={palette.primary} style={styles.pageLoader} />
+                        : null}
                 />
             );
         }
@@ -1549,6 +1567,15 @@ export function PlacesScreen({
                                 palette={palette}
                                 onPress={() => handleLayerPress('pinned')}
                             />
+                            {canOrderPinned ? (
+                                <LayerChip
+                                    label="recently added"
+                                    icon="time-outline"
+                                    active={recentlyAdded}
+                                    palette={palette}
+                                    onPress={handleRecentPress}
+                                />
+                            ) : null}
                             <LayerChip
                                 label="been"
                                 icon="checkmark-circle-outline"
@@ -1604,15 +1631,15 @@ export function PlacesScreen({
                             />
                         </View>
                     ) : null}
-                    {(tableBrowse || (searchMode && activeSegment === 'places' && queryActive)) ? (
+                    {(tableBrowse || recentlyAdded || (searchMode && activeSegment === 'places' && queryActive)) ? (
                         <View style={styles.sheetLedgerHeader}>
                             <Text style={[styles.kicker, { color: palette.primary }]}>
                                 {tableBrowse
                                     ? `${tableName} · ${screenState.layerFilter === 'been' ? 'been' : 'pinned'}`
-                                    : 'RESULTS'}
+                                    : recentlyAdded ? 'RECENTLY ADDED' : 'RESULTS'}
                             </Text>
                             <Text style={[styles.placeCount, { color: palette.textMuted }]}>
-                                {placesCountLabel(decoratedRows.length, false)}
+                                {placesCountLabel(decoratedRows.length, recentlyAdded && placesHaveMore)}
                             </Text>
                         </View>
                     ) : null}

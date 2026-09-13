@@ -50,7 +50,7 @@ export function PlacesRatingLabel({ row }: { row: PlacesDisplayRow }) {
 export function PlacesRow({ item, onPress, showThumbnail = false }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const meta = composeRowMeta(item.row, item.distanceLabel);
+    const meta = composeRowMeta(item.row, item.distanceLabel, item.addedAtLabel);
     const photo = useMemo(() => {
         if (!showThumbnail) return null;
         return resolveSourcedPhoto({

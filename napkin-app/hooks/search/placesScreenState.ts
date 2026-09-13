@@ -16,6 +16,7 @@ export interface PlacesScreenSnapshot {
     scrollOffset: number;
     activeSegment: SearchMode;
     layerFilter: PlacesLayerFilter;
+    pinnedOrder: PlacesPinnedOrder;
     scope: PlacesScope;
     viewMode: PlacesViewMode;
     region: Region | null;
@@ -24,6 +25,7 @@ export interface PlacesScreenSnapshot {
 }
 
 export type PlacesLayerFilter = 'all' | 'pinned' | 'been';
+export type PlacesPinnedOrder = 'nearby' | 'recent';
 
 const INITIAL_STATE: PlacesScreenSnapshot = Object.freeze({
     query: '',
@@ -32,6 +34,7 @@ const INITIAL_STATE: PlacesScreenSnapshot = Object.freeze({
     scrollOffset: 0,
     activeSegment: 'places',
     layerFilter: 'all',
+    pinnedOrder: 'nearby',
     scope: { kind: 'you' } as PlacesScope,
     viewMode: 'map',
     region: null,

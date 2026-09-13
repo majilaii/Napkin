@@ -13,6 +13,7 @@ describe('placesScreenState auth isolation', () => {
             scrollOffset: 88,
             activeSegment: 'lists',
             layerFilter: 'been',
+            pinnedOrder: 'recent',
             scope: { kind: 'friends' },
             viewMode: 'list',
             region: {
@@ -33,6 +34,7 @@ describe('placesScreenState auth isolation', () => {
             scrollOffset: 0,
             activeSegment: 'places',
             layerFilter: 'all',
+            pinnedOrder: 'nearby',
             scope: { kind: 'you' },
             viewMode: 'map',
             region: null,
@@ -159,6 +161,7 @@ describe('focused Places search transitions', () => {
         scrollOffset: 42,
         activeSegment: 'lists' as const,
         layerFilter: 'pinned' as const,
+        pinnedOrder: 'recent' as const,
         scope: { kind: 'you' } as const,
         viewMode: 'list' as const,
         region: {
@@ -190,6 +193,7 @@ describe('focused Places search transitions', () => {
             sheetSnap: HALF,
             activeSegment: 'lists',
             layerFilter: 'pinned',
+            pinnedOrder: 'recent',
             viewMode: 'map',
             region: base.region,
             previousNonSearchSnap: null,

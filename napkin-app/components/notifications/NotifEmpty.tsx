@@ -4,7 +4,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-import { Colors } from '@/constants/theme';
+import { Colors, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export function NotifEmpty() {
@@ -32,10 +32,10 @@ export function NotifEmpty() {
                 />
             </View>
             <Text style={[styles.title, { color: palette.text }]}>
-                Nothing yet.
+                Nothing new yet
             </Text>
             <Text style={[styles.body, { color: palette.textMuted }]}>
-                {'When your friends log a meal\nor pin a place — it lands here.'}
+                {'Imports and updates will appear here.'}
             </Text>
         </View>
     );
@@ -71,18 +71,11 @@ const styles = StyleSheet.create({
         borderRadius: 6,
     },
     title: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 22,
-        fontStyle: 'italic',
-        fontWeight: '500',
-        lineHeight: 28,
+        ...Type.headlineMedium,
     },
     body: {
         marginTop: 10,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12,
-        fontStyle: 'italic',
-        lineHeight: 19,
+        ...Type.body,
         textAlign: 'center',
         maxWidth: 240,
     },

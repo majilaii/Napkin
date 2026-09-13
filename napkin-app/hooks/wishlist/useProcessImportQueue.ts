@@ -44,6 +44,7 @@ import {
 } from '@/modules/media-extract';
 import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
 import { markImportCompleted } from '@/lib/importActivation';
+import { importNoticeUrl } from '@/lib/importNotificationNavigation';
 import {
     listPendingImports,
     listUnnotifiedImportFailures,
@@ -336,11 +337,17 @@ export function useProcessImportQueue() {
         try {
             if (m.localNotificationOutcome !== outcome) {
                 if (AppState.currentState === 'active') {
-                    toast.show(copy, { label: 'view', onPress: () => router.push('/import-progress') });
+                    toast.show(copy, {
+                        label: outcome === 'review' ? 'Review spots' : 'View import',
+                        onPress: () => {
+                            if (m.userId === activeUserIdRef.current) router.push(importNoticeUrl(m.jobId, outcome, m.userId) as any);
+                        },
+                    }, { title: 'Imports', icon: outcome === 'review' ? 'bookmarks-outline' : 'alert-circle-outline' });
                 } else {
                     await presentImportNotification({
                         title: copy,
-                        body: outcome === 'review' ? 'tap to confirm your import' : 'tap to try again',
+                        body: outcome === 'review' ? 'Review your spots in Napkin' : 'Open Napkin to try again',
+                        url: importNoticeUrl(m.jobId, outcome, m.userId),
                     });
                 }
                 requireActiveImportOwner(m.userId, activeUserIdRef.current);
@@ -634,13 +641,16 @@ export function useProcessImportQueue() {
                 if (!isV2 && AppState.currentState !== 'active') {
                     presentImportNotification({
                         title: `imported ${counts.imported} of ${doneJob.listCount}`,
-                        body: counts.needsLook > 0 ? 'tap to see what needs a look' : 'tap to review',
+                        body: counts.needsLook > 0 ? 'Open your import to see what needs a look' : 'Review your import in Napkin',
+                        url: importNoticeUrl(m.jobId, 'review', m.userId),
                     });
                 }
                 // Self-contained large-job toast (NOT the ≤20 truncationNote path).
                 const reviewAction = {
-                    label: 'review',
-                    onPress: () => router.push(`/import-digest?jobId=${m.jobId}` as any),
+                    label: 'View import',
+                    onPress: () => {
+                        if (m.userId === activeUserIdRef.current) router.push(importNoticeUrl(m.jobId, 'review', m.userId) as any);
+                    },
                 };
                 toast.show(
                     isV2 && counts.queued > 0
@@ -649,6 +659,7 @@ export function useProcessImportQueue() {
                         ? `imported ${counts.imported} of ${doneJob.listCount} · ${counts.needsLook} need a look`
                         : `imported ${counts.imported} of ${doneJob.listCount}`,
                     reviewAction,
+                    { title: 'Imports', icon: 'bookmarks-outline' },
                 );
 
                 if (userId) {
@@ -1779,7 +1790,9 @@ export function useProcessImportQueue() {
             // imports HUB (hierarchical back-nav is sacred — never deep-link
             // past the intermediate screen; the fresh batch is its top row).
             const reviewAction = accepted > 0
-                ? { label: 'review', onPress: () => router.push('/import-progress' as any) }
+                ? { label: queued > 0 ? 'View progress' : 'View spots', onPress: () => {
+                    if (m.userId === activeUserIdRef.current) router.push(importNoticeUrl(result?.job_id, 'saved', m.userId) as any);
+                } }
                 : undefined;
             // TICKET-151: when a Maps list was truncated (list_count > kept), say so
             // — "pinned 18 · first 20 of 117". Null for non-list / ≤20 imports, where
@@ -1813,7 +1826,7 @@ export function useProcessImportQueue() {
                 listNoun,
                 singleSpotName: spots.length === 1 ? spots[0].restaurant_name : null,
                 spotCount: spots.length,
-            }), reviewAction);
+            }), reviewAction, { title: 'Imports', icon: 'bookmarks-outline' });
             // TICKET-120: mirror the success to a local notification when backgrounded
             // (only on a fresh save — an already-pinned re-drain stays silent).
             // Foreground = toast-only.
@@ -1822,7 +1835,8 @@ export function useProcessImportQueue() {
                     title: listOnly
                         ? `saved ${ghost} to ${listNoun}`
                         : `pinned ${saved + ghost} ${saved + ghost === 1 ? 'spot' : 'spots'}`,
-                    body: 'tap to fix anything',
+                    body: 'View your imported spots in Napkin',
+                    url: importNoticeUrl(result?.job_id, 'saved', m.userId),
                 });
             }
 

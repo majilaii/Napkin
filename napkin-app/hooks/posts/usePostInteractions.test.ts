@@ -1,3 +1,4 @@
+jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 /**
  * Tests for useToggleReaction and useAddComment — TICKET-042.
  *

@@ -30,14 +30,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider, useAuth } from '@/providers/AuthProvider';
 import { ToastProvider } from '@/providers/ToastProvider';
+import { useNotificationNavigation } from '@/hooks/notifications/useNotificationNavigation';
 import { useProcessImportQueue } from '@/hooks/wishlist/useProcessImportQueue';
 import { useLargeImportKickoffTrigger } from '@/hooks/wishlist/useLargeImportKickoffTrigger';
 import { usePublishCollectionsSnapshot } from '@/hooks/wishlist/usePublishCollectionsSnapshot';
 import { NotifPermissionSheet } from '@/components/notifications';
 import {
-  configureNotifications,
-  addNotificationResponseListener,
-  getInitialNotificationUrl,
   onNotifPromptRequest,
 } from '@/lib/localNotify';
 import { Colors } from '@/constants/theme';
@@ -266,14 +264,6 @@ function RootLayoutNav() {
   // the cold-start last-response — to the imports hub. All calls degrade to no-ops
   // when expo-notifications is absent (Expo Go / web / unlinked).
   const [notifSheetVisible, setNotifSheetVisible] = useState(false);
-  useEffect(() => {
-    configureNotifications();
-    const unsub = addNotificationResponseListener((url) => router.push(url as any));
-    getInitialNotificationUrl().then((url) => {
-      if (url) router.push(url as any);
-    });
-    return unsub;
-  }, [router]);
 
   // The drain raises this when an import is in flight, permission isn't granted, and
   // the cadence gate allows — render the soft pre-permission sheet.
@@ -332,6 +322,13 @@ function RootLayoutNav() {
       router.replace('/places');
     }
   }, [session, isLoading, onboardedAt, previewOnLaunch, segments, router]);
+
+  useNotificationNavigation(
+    !isLoading && !!session && !!onboardedAt && previewOnLaunch !== undefined
+      && !['auth', 'onboarding', 'reset-password', 'import', 'handoff', 'join-table'].includes(segments[0] ?? '')
+      && (!previewOnLaunch || previewLaunchConsumed.current),
+    (url) => router.push(url as any),
+  );
 
   // TICKET-088: app_open on launch + every foreground (D1/D7/D30 cohorts).
   const userId = session?.user?.id;

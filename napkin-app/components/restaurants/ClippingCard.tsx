@@ -1,27 +1,15 @@
 /**
- * ClippingCard — one compact press-clipping on the restaurant page's ON SOCIALS
- * rail (TICKET-156). A saver's TikTok/Reel, attributed and tapping out to the
- * original video.
- *
- * Heirloom: ~104pt portrait card, cream matte (surfaceJournalLow), ambient shadow
- * only, Radius.md. A 3:4 thumbnail (durable Storage copy ONLY — never the rotting
- * provider CDN link) with a typographic fallback at the IDENTICAL footprint, so a
- * late thumbnail never reflows the rail.
- *
- * Rules (AC):
- *   - `video`-type is ALWAYS typographic + non-tappable (no creator, no URL) — no
- *     @handle row, glyph + attribution only.
- *   - Missing/failed/rotted thumbnail → typographic fallback at the same size.
- *   - Tap (url-bearing, non-video) → Linking.openURL in try/catch; a dead/private
- *     video shows a non-crashing alert. No pre-flight liveness check (scraping).
- *   - One composed accessibilityLabel; role 'link' when tappable, 'text' otherwise.
+ * A source note, complete without an image: platform, creator, saved attribution,
+ * and an explicit link to the original. Only the server's durable clip-thumbs
+ * projection may decorate it. A missing image never looks like missing content.
+ * Local video files remain informational; there is no durable playback URL.
  */
 import React, { useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, Radius, Shadow } from '@/constants/theme';
+import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { isInstagramSource } from '@/components/wishlist/importSourceLabel';
 
@@ -36,14 +24,29 @@ export interface ClippingCardData {
 
 type Glyph = React.ComponentProps<typeof Ionicons>['name'];
 
-const CARD_WIDTH = 104;
-const THUMB_HEIGHT = Math.round((CARD_WIDTH * 4) / 3); // 3:4 portrait
-
 function hostGlyph(source: ClippingCardData['source']): Glyph {
     if (source.type === 'tiktok') return 'logo-tiktok';
     if (source.type === 'web' && isInstagramSource(source as any)) return 'logo-instagram';
     if (source.type === 'video') return 'videocam-outline';
     return 'link-outline';
+}
+
+function platformLabel(source: ClippingCardData['source']): string {
+    if (source.type === 'tiktok') return 'TikTok';
+    if (isInstagramSource(source)) return 'Instagram';
+    if (source.type === 'video') return 'Imported video';
+    return 'Original source';
+}
+
+/** Only public web links can be opened. A video-file source never has a link. */
+function clipUrl(source: ClippingCardData['source']): string | null {
+    if (source.type === 'video' || !source.url?.trim()) return null;
+    try {
+        const parsed = new URL(source.url.trim());
+        return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -72,33 +75,36 @@ interface Props {
 export function ClippingCard({ clip }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
-    const [imgFailed, setImgFailed] = useState(false);
+    const [failedThumbUrl, setFailedThumbUrl] = useState<string | null>(null);
 
     const { saver, relationship, source, thumb_url, also_count } = clip;
 
     const isVideoType = source.type === 'video';
-    // video-type is ALWAYS typographic; a failed/absent thumb falls back too.
-    const showPhoto = !!thumb_url && !isVideoType && !imgFailed;
+    // Record the failed URL, so a later replacement gets a fresh image attempt.
+    const showPhoto = !!thumb_url && !isVideoType && failedThumbUrl !== thumb_url;
 
     const isSelf = relationship === 'self';
     const firstName = (saver.display_name ?? 'someone').trim().split(/\s+/)[0] || 'someone';
     const who = isSelf ? 'you' : firstName;
 
     // @handle row: only when a creator handle exists AND this isn't a video-type.
-    const handle = !isVideoType && source.author_handle ? source.author_handle : null;
+    const handle = !isVideoType ? source.author_handle?.trim().replace(/^@+/, '') || null : null;
 
     const dateLabel = clipDateLabel(clip.created_at);
     const glyph = hostGlyph(source);
+    const platform = platformLabel(source);
+    const title = handle ? `@${handle}` : platform;
 
-    const url = source.url;
-    const tappable = !!url && !isVideoType;
+    const url = clipUrl(source);
+    const tappable = !!url;
 
     // One composed a11y label: creator + attribution + action.
     const alsoText = also_count > 0 ? `, and ${also_count} ${also_count === 1 ? 'other' : 'others'}` : '';
     const a11yParts = [
+        platform,
         handle ? `@${handle}` : null,
         `clipped by ${who}${alsoText}${dateLabel ? `, ${dateLabel}` : ''}`,
-        tappable ? 'opens the video' : null,
+        tappable ? 'opens the original' : isVideoType ? 'no original link' : 'link unavailable',
     ].filter(Boolean) as string[];
     const accessibilityLabel = a11yParts.join('. ');
 
@@ -108,51 +114,52 @@ export function ClippingCard({ clip }: Props) {
             await Linking.openURL(url);
         } catch (err) {
             console.error('[ClippingCard] Linking.openURL failed', err);
-            Alert.alert("Couldn't open this clip", 'The video may have been removed. Try again later.');
+            Alert.alert("Couldn't open this clip", 'Try opening it again in a moment.');
         }
     };
 
     const body = (
         <>
-            {/* Media area — durable thumb, or cream + host glyph at identical size */}
-            <View style={[styles.media, { backgroundColor: palette.surfaceJournalLow }]}>
+            <View style={[styles.artwork, { backgroundColor: palette.surfaceJournalHi }]}>
                 {showPhoto ? (
                     <ExpoImage
                         source={{ uri: thumb_url as string }}
-                        style={styles.thumb}
+                        testID="clipping-thumbnail"
+                        style={StyleSheet.absoluteFillObject}
                         contentFit="cover"
                         recyclingKey={thumb_url}
                         transition={120}
-                        onError={() => setImgFailed(true)}
+                        onError={() => setFailedThumbUrl(thumb_url)}
                     />
                 ) : (
-                    <Ionicons name={glyph} size={26} color={palette.textMuted} />
+                    <Ionicons name={glyph} size={IconSize.lg} color={palette.textSecondary} />
                 )}
             </View>
 
-            {/* Caption block — same footprint in both states */}
             <View style={styles.caption}>
                 {handle ? (
-                    <View style={styles.handleRow}>
-                        <Ionicons name={glyph} size={11} color={palette.textMuted} />
-                        <Text style={[styles.handle, { color: palette.textSecondary }]} numberOfLines={1}>
-                            @{handle}
-                        </Text>
-                    </View>
+                    <Text style={[Type.sectionKicker, { color: palette.textMuted }]}>{platform}</Text>
                 ) : null}
-                <Text style={[styles.attribution, { color: palette.textMuted }]} numberOfLines={2}>
-                    clipped by <Text style={{ color: palette.textSecondary }}>{who}</Text>
+                <Text style={[Type.editorialBody, { color: palette.text }]} numberOfLines={1}>
+                    {title}
+                </Text>
+                <Text style={[Type.metadata, { color: palette.textMuted }]} numberOfLines={2}>
+                    clipped by {who}
                     {also_count > 0 ? ` +${also_count}` : ''}
                     {dateLabel ? ` · ${dateLabel}` : ''}
                 </Text>
+                <Text style={[Type.restaurantDetailAction, { color: tappable ? palette.primary : palette.textMuted }]}>
+                    {tappable ? 'Open original' : isVideoType ? 'No original link' : 'Link unavailable'}
+                </Text>
             </View>
+            {tappable ? <Ionicons name="open-outline" size={IconSize.sm} color={palette.primary} /> : null}
         </>
     );
 
     if (!tappable) {
         return (
             <View
-                style={[styles.card, { backgroundColor: palette.surfaceJournalLow }, Shadow.ambient]}
+                style={[styles.card, { backgroundColor: palette.surfaceJournalLow }]}
                 accessible
                 accessibilityRole="text"
                 accessibilityLabel={accessibilityLabel}
@@ -167,11 +174,9 @@ export function ClippingCard({ clip }: Props) {
             onPress={handlePress}
             accessibilityRole="link"
             accessibilityLabel={accessibilityLabel}
-            hitSlop={4}
             style={({ pressed }) => [
                 styles.card,
-                { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.7 : 1 },
-                Shadow.ambient,
+                { backgroundColor: palette.surfaceJournalLow, opacity: pressed ? 0.8 : 1 },
             ]}
         >
             {body}
@@ -181,39 +186,23 @@ export function ClippingCard({ clip }: Props) {
 
 const styles = StyleSheet.create({
     card: {
-        width: CARD_WIDTH,
-        borderRadius: Radius.md,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.restaurant.listChipHorizontal,
+        padding: Spacing.restaurant.cardHorizontal,
+        borderRadius: Radius.lg,
         overflow: 'hidden',
     },
-    media: {
-        width: CARD_WIDTH,
-        height: THUMB_HEIGHT,
+    artwork: {
+        width: Spacing.restaurant.clippingArtworkSize,
+        height: Spacing.restaurant.clippingArtworkSize,
+        borderRadius: Radius.compact,
+        overflow: 'hidden',
         alignItems: 'center',
         justifyContent: 'center',
     },
-    thumb: {
-        width: CARD_WIDTH,
-        height: THUMB_HEIGHT,
-    },
     caption: {
-        paddingHorizontal: 8,
-        paddingTop: 6,
-        paddingBottom: 9,
-        gap: 2,
-    },
-    handleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 3,
-    },
-    handle: {
-        fontFamily: 'Manrope_600SemiBold',
-        fontSize: 10.5,
-        flexShrink: 1,
-    },
-    attribution: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 10.5,
-        lineHeight: 14,
+        flex: 1,
+        gap: Spacing.xs,
     },
 });

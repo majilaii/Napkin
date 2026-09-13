@@ -877,6 +877,74 @@ describe('Places People-segment paid-call gate', () => {
         expect(screen.queryByTestId('discovery-tip-places')).toBeNull();
     });
 
+    it('shows recently added only for your pins, keeps facets and map/list in sync, and resumes the chosen order', () => {
+        mockRouteParams = {};
+        mockCoords = { latitude: 51.5, longitude: -0.1 };
+        mockWishlistState = {
+            ...mockWishlistState,
+            hasNextPage: true,
+            data: { pages: [{ data: [
+                { id: 'old', created_at: '2026-01-01T12:00:00Z', restaurant: {
+                    id: 'old', name: 'Older nearby', city: 'London', cuisine: 'British',
+                    lat: 51.5, lng: -0.1, price_level: 2,
+                } },
+                { id: 'new', created_at: '2026-09-13T12:00:00Z', restaurant: {
+                    id: 'new', name: 'New faraway', city: 'Paris', cuisine: 'French',
+                    lat: 48.86, lng: 2.35, price_level: 2,
+                } },
+            ] }] },
+        };
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        const screen = render(
+            <QueryClientProvider client={client}>
+                <PlacesScreen />
+            </QueryClientProvider>,
+        );
+        expect(screen.queryByLabelText('recently added')).toBeNull();
+        fireEvent.press(screen.getByLabelText('pinned'));
+        expect(screen.getByTestId('places-results').props.data[0].row.id).toBe('old');
+        fireEvent.press(screen.getByLabelText('recently added'));
+        expect(screen.getByLabelText('recently added').props.accessibilityState.selected).toBe(true);
+        expect(screen.getByText('RECENTLY ADDED')).toBeTruthy();
+        expect(screen.getByTestId('places-results').props.data.map(({ row }: { row: { id: string } }) => row.id))
+            .toEqual(['new', 'old']);
+        expect(screen.getByText('added 13 Sept 2026 · Paris')).toBeTruthy();
+        expect(screen.getByTestId('wishlist-map').props.items.map(({ id }: { id: string }) => id).sort())
+            .toEqual(['new', 'old']);
+
+        fireEvent.press(screen.getByLabelText('list places'));
+        expect(screen.queryByTestId('places-city-ledger')).toBeNull();
+        expect(screen.getByTestId('places-recent-ledger').props.data[0].row.id).toBe('new');
+        expect(screen.getByTestId('discovery-tip-places')).toBeTruthy();
+        expect(screen.getByText('2+ places')).toBeTruthy();
+        act(() => screen.getByTestId('places-recent-ledger').props.onEndReached());
+        expect(mockFetchNextPage).toHaveBeenCalledTimes(1);
+        act(() => screen.getByTestId('filter-sheet').props.cuisine.onSelect('British'));
+        expect(screen.getByTestId('places-recent-ledger').props.data.map(({ row }: { row: { id: string } }) => row.id))
+            .toEqual(['old']);
+        fireEvent.press(screen.getByLabelText('map places'));
+        expect(screen.queryByTestId('discovery-tip-places')).toBeNull();
+        expect(screen.getByTestId('wishlist-map').props.items.map(({ id }: { id: string }) => id))
+            .toEqual(['old']);
+        expect(screen.getByLabelText('recently added').props.accessibilityState.selected).toBe(true);
+
+        fireEvent.press(screen.getByLabelText('been'));
+        expect(screen.queryByLabelText('recently added')).toBeNull();
+        expect(screen.queryByText('RECENTLY ADDED')).toBeNull();
+        fireEvent.press(screen.getByLabelText('pinned'));
+        expect(screen.getByLabelText('recently added').props.accessibilityState.selected).toBe(true);
+        expect(screen.getByTestId('places-results').props.data[0].row.id).toBe('new');
+
+        // A different scope does not reinterpret its visits as recently added.
+        act(() => placesScreenState.patch('viewer', { scope: { kind: 'friends' } }));
+        expect(screen.queryByLabelText('recently added')).toBeNull();
+        expect(screen.queryByText('RECENTLY ADDED')).toBeNull();
+        act(() => placesScreenState.patch('viewer', { scope: { kind: 'you' } }));
+        expect(screen.getByLabelText('recently added').props.accessibilityState.selected).toBe(true);
+        fireEvent.press(screen.getByLabelText('recently added'));
+        expect(screen.getByTestId('places-results').props.data[0].row.id).toBe('old');
+    });
+
     it('paginates the full browse ledger with an honest plus count until exhaustion', () => {
         mockRouteParams = {};
         const firstPage = Array.from({ length: 40 }, (_, index) => ({

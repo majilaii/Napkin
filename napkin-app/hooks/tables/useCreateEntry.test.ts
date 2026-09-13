@@ -1,3 +1,4 @@
+jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 /**
  * Tests for useCreateEntry — TICKET-042 + TICKET-043.
  *

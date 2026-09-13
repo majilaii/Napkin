@@ -24,6 +24,9 @@ export type RestaurantPageRestaurant = {
     address: string | null;
     city: string | null;
     country: string | null;
+    /** Existing server coordinates; absent on older cached page payloads. */
+    lat?: number | null;
+    lng?: number | null;
     cuisine: string | null;
     price_level: number | null;
     photo_url: string | null;
@@ -380,6 +383,8 @@ export function restaurantFromPlace(
         address: place.formattedAddress ?? place.location?.address ?? null,
         city: place.city ?? place.location?.locality ?? null,
         country: place.country ?? place.location?.country ?? null,
+        lat: place.latitude ?? null,
+        lng: place.longitude ?? null,
         cuisine: place.cuisine ?? null,
         price_level: place.priceLevel ?? null,
         photo_url: photoUrl,

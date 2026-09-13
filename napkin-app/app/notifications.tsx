@@ -11,7 +11,7 @@
  *   Freshness = 2px terracotta spine + 2.5% tint wash.
  *   No blue dots, no "NEW" badges. Rhythm: Today / Yesterday / This week / Earlier.
  */
-import React, { useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useMemo, useCallback, useEffect } from 'react';
 import {
     ActivityIndicator,
     NativeScrollEvent,
@@ -23,6 +23,7 @@ import {
     View,
 } from 'react-native';
 import { Stack, useRouter, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing, Type } from '@/constants/theme';
@@ -51,6 +52,7 @@ import {
     I,
 } from '@/components/notifications';
 import { PINNED_PLACES_ROUTE } from '@/lib/handoffNavigation';
+import { importNoticeUrl } from '@/lib/importNotificationNavigation';
 
 const BUCKET_ORDER: NotifBucket[] = ['today', 'yesterday', 'thisWeek', 'earlier'];
 
@@ -64,6 +66,8 @@ export default function NotificationsScreen() {
     const {
         data,
         isLoading,
+        isError,
+        isFetchNextPageError,
         isFetchingNextPage,
         fetchNextPage,
         hasNextPage,
@@ -113,10 +117,10 @@ export default function NotificationsScreen() {
     // rendered when `total === 0`. Re-fires whenever a new page lands and
     // still has zero visible rows.
     useEffect(() => {
-        if (total === 0 && hasNextPage && !isFetchingNextPage && !isLoading) {
+        if (total === 0 && hasNextPage && !isFetchingNextPage && !isLoading && !isError) {
             fetchNextPage();
         }
-    }, [total, hasNextPage, isFetchingNextPage, isLoading, fetchNextPage]);
+    }, [total, hasNextPage, isFetchingNextPage, isLoading, isError, fetchNextPage]);
 
     // Infinite scroll: fetch next page when within 200px of the bottom.
     const handleScroll = useCallback(
@@ -173,12 +177,11 @@ export default function NotificationsScreen() {
                 <View style={styles.header}>
                     <Pressable
                         onPress={() => router.back()}
-                        hitSlop={12}
+                        accessibilityRole="button"
+                        accessibilityLabel="Back"
                         style={styles.headerSide}
                     >
-                        <Text style={[styles.back, { color: palette.textMuted }]}>
-                            {'‹'}
-                        </Text>
+                        <Ionicons name="chevron-back" size={24} color={palette.text} />
                     </Pressable>
                     <Text style={[styles.title, { color: palette.text }]}>
                         Notifications
@@ -186,7 +189,9 @@ export default function NotificationsScreen() {
                     <View style={[styles.headerSide, { alignItems: 'flex-end' }]}>
                         {hasUnread ? (
                             <Pressable
-                                hitSlop={8}
+                                accessibilityRole="button"
+                                disabled={markPending}
+                                style={{ minHeight: Spacing.hitTarget, justifyContent: 'center' }}
                                 onPress={() => markAllRead.mutate()}
                             >
                                 <Text style={[styles.action, { color: palette.textMuted }]}>
@@ -202,6 +207,15 @@ export default function NotificationsScreen() {
                     <View style={styles.center}>
                         <ActivityIndicator color={palette.primary} />
                     </View>
+                ) : total === 0 && isError ? (
+                    <View style={styles.center}>
+                        <Text style={[Type.body, { color: palette.textMuted }]}>{"Couldn't load notifications"}</Text>
+                        <Pressable onPress={() => refetch()} accessibilityRole="button" style={styles.retry}>
+                            <Text style={[Type.metadata, { color: palette.primary }]}>Try again</Text>
+                        </Pressable>
+                    </View>
+                ) : total === 0 && (hasNextPage || isFetchingNextPage) ? (
+                    <View style={styles.center}><ActivityIndicator color={palette.primary} /></View>
                 ) : total === 0 ? (
                     <NotifEmpty />
                 ) : (
@@ -234,11 +248,15 @@ export default function NotificationsScreen() {
                             <View style={styles.loadMore}>
                                 <ActivityIndicator size="small" color={palette.primary} />
                             </View>
-                        ) : (
+                        ) : isError ? (
+                            <Pressable onPress={() => isFetchNextPageError ? fetchNextPage() : refetch()} accessibilityRole="button" style={styles.retry}>
+                                <Text style={[Type.metadata, { color: palette.primary }]}>{"Couldn't refresh · Try again"}</Text>
+                            </Pressable>
+                        ) : !hasNextPage ? (
                             <Text style={[styles.terminus, { color: palette.textMuted }]}>
-                                — older —
+                                {"You're all caught up"}
                             </Text>
-                        )}
+                        ) : null}
                     </ScrollView>
                 )}
             </View>
@@ -246,7 +264,7 @@ export default function NotificationsScreen() {
     );
 }
 
-function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
+export function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
     switch (n.type) {
         case 'friend_logged':
             // Land on the entry via actor profile (entry-detail route not yet universal).
@@ -280,13 +298,7 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
             router.push({ pathname: '/supper/[id]', params: { id: n.supperId } });
             return;
         case 'import_done':
-            // saved → the batch detail (server job_id); review/failed → the hub.
-            // Hierarchical nav is sacred: never deep-link past /import-progress.
-            if (n.outcome === 'saved' && n.jobId) {
-                router.push({ pathname: '/imports/[jobId]', params: { jobId: n.jobId } });
-            } else {
-                router.push('/import-progress' as any);
-            }
+            router.push(importNoticeUrl(n.jobId, n.outcome) as any);
             return;
         case 'image_rejected':
             if (n.sinkKind === 'avatar') router.push('/settings/photo');
@@ -298,7 +310,7 @@ function handleTap(n: Notification, router: ReturnType<typeof useRouter>) {
     }
 }
 
-function NotificationRow({
+export function NotificationRow({
     notification: n,
     onPress,
     onRespond,
@@ -501,8 +513,7 @@ function NotificationRow({
                     title={
                         n.outcome === 'saved' ? (
                             <>
-                                {`${n.count} ${spotWord} pinned from `}
-                                <I>TikTok</I>
+                                {`${n.count} ${spotWord} pinned`}
                             </>
                         ) : n.outcome === 'review' ? (
                             `${n.count} ${spotWord} ready to review`
@@ -510,6 +521,7 @@ function NotificationRow({
                             'an import needs attention'
                         )
                     }
+                    actionLabel={n.outcome === 'review' ? 'Review spots' : n.outcome === 'saved' ? 'View spots' : 'View import'}
                     time={n.timeLabel}
                 />
             );
@@ -616,7 +628,9 @@ const styles = StyleSheet.create({
         paddingBottom: 12,
     },
     headerSide: {
-        width: 60,
+        width: 80,
+        minHeight: Spacing.hitTarget,
+        justifyContent: 'center',
     },
     back: {
         fontSize: 24,
@@ -628,9 +642,7 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     action: {
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 12,
-        letterSpacing: 0.3,
+        ...Type.metadata,
     },
     center: {
         flex: 1,
@@ -645,10 +657,9 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         paddingTop: 22,
         paddingBottom: 8,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontStyle: 'italic',
-        fontSize: 11,
+        ...Type.metadata,
     },
+    retry: { minHeight: Spacing.hitTarget, alignItems: 'center', justifyContent: 'center', padding: Spacing.sm },
     // Pending invite card: Accept over Decline, stacked so the title keeps width.
     inviteActions: {
         gap: 6,

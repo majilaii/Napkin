@@ -8,7 +8,8 @@
 import React, { type ReactNode } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 
-import { Colors, Spacing } from '@/constants/theme';
+import { Ionicons } from '@expo/vector-icons';
+import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export type NotifTone = 'fresh' | 'read';
@@ -22,6 +23,7 @@ interface Props {
     time: string;
     trailing?: ReactNode;
     onPress?: () => void;
+    actionLabel?: string;
 }
 
 export function NotifRow({
@@ -32,6 +34,7 @@ export function NotifRow({
     time,
     trailing,
     onPress,
+    actionLabel,
 }: Props) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
@@ -43,7 +46,7 @@ export function NotifRow({
                 styles.row,
                 {
                     borderBottomColor: palette.dividerSoft,
-                    backgroundColor: fresh ? palette.terracottaScrim : 'transparent',
+                    backgroundColor: fresh ? palette.card : 'transparent',
                 },
             ]}
         >
@@ -68,9 +71,13 @@ export function NotifRow({
                         {body}
                     </Text>
                 ) : null}
-                <Text style={[styles.time, { color: palette.textMuted }]}>
-                    {time}
-                </Text>
+                <View style={styles.meta}>
+                    <Text style={[styles.time, { color: palette.textMuted }]}>{time}</Text>
+                    {actionLabel && onPress ? <View style={styles.action}>
+                        <Text style={[Type.metadata, { color: palette.primary }]}>{actionLabel}</Text>
+                        <Ionicons name="arrow-forward-outline" size={IconSize.sm} color={palette.primary} />
+                    </View> : null}
+                </View>
             </View>
             {trailing ? <View style={styles.trailing}>{trailing}</View> : null}
         </View>
@@ -80,6 +87,7 @@ export function NotifRow({
 
     return (
         <Pressable
+            accessibilityRole="button"
             onPress={onPress}
             style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
         >
@@ -88,33 +96,32 @@ export function NotifRow({
     );
 }
 
-/** Inline italic-serif span for proper nouns (restaurant, Table, friend, city). */
+/** Proper names use the current upright editorial voice. */
 export function I({ children }: { children: ReactNode }) {
     return <Text style={inlineStyles.italic}>{children}</Text>;
 }
 
 const inlineStyles = StyleSheet.create({
     italic: {
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontStyle: 'italic',
-        fontWeight: '500',
+        ...Type.editorialBody,
     },
 });
 
 const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
-        gap: 12,
-        paddingVertical: 14,
-        paddingHorizontal: 22,
+        gap: Spacing.sm,
+        marginHorizontal: Spacing.md,
+        marginBottom: Spacing.sm,
+        borderRadius: Radius.lg,
+        padding: Spacing.md,
         position: 'relative',
-        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     spine: {
         position: 'absolute',
         left: 0,
-        top: 12,
-        bottom: 12,
+        top: Spacing.md,
+        bottom: Spacing.md,
         width: 2,
     },
     leading: {
@@ -125,25 +132,19 @@ const styles = StyleSheet.create({
         minWidth: 0,
     },
     title: {
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 13,
-        lineHeight: 19,
+        ...Type.body,
     },
     body: {
-        marginTop: 4,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 12,
-        lineHeight: 17,
-        fontStyle: 'italic',
+        marginTop: Spacing.xs,
+        ...Type.quote,
     },
     time: {
-        marginTop: 6,
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 10,
-        letterSpacing: 0.3,
+        ...Type.metadata,
     },
     trailing: {
         alignSelf: 'center',
         marginLeft: Spacing.sm,
     },
+    meta: { marginTop: Spacing.sm, gap: Spacing.xs },
+    action: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
 });
