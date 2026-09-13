@@ -27,7 +27,7 @@
  * Payload contract FROZEN (composer.test.ts must stay green).
  * Toast: "tried {name}" via useToast on success then router.back().
  */
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
     View,
     Text,
@@ -45,11 +45,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTables } from '@/hooks/tables/useTables';
-import { useCreateEntry } from '@/hooks/tables/useCreateEntry';
+import { useCreateEntry, type CreateEntryInput } from '@/hooks/tables/useCreateEntry';
 import { useUserProfile } from '@/hooks/users/useUserProfile';
 import {
     useAddSupperTake,
@@ -60,6 +60,10 @@ import {
 import { StitchConfirmSheet } from '@/components/suppers';
 import { useToast } from '@/providers/ToastProvider';
 import { queryKeys } from '@/lib/queryKeys';
+import { safeRandomUUID } from '@/lib/uuid';
+import { useVisitReviewDraft } from '@/hooks/restaurants/useVisitReviewDraft';
+import { useRestaurantVisitSelection } from '@/hooks/restaurants/useRestaurantVisitSelection';
+import { useRestaurantVisitMutations, patchRestaurantVisit, type SavedVisit } from '@/hooks/restaurants/useRestaurantVisitMutations';
 import { compressAndUpload, PhotoUploadError } from '@/lib/imageUpload';
 import { buildEntryPayload, toggleTableId } from '@/lib/composer';
 import type { ComposerBreakdown } from '@/lib/composer';
@@ -255,10 +259,12 @@ export default function LogMealScreen() {
     }, [toast, signOut, router]);
 
     // ── Parse route params ─────────────────────────────────────────────
-    const { restaurant: restaurantParam, initialTableId, pageId, supperTakeId } = useLocalSearchParams<{
+    const { restaurant: restaurantParam, initialTableId, pageId, supperTakeId, entryId } = useLocalSearchParams<{
         restaurant: string;
         initialTableId?: string;
         pageId?: string;
+        /** Exact existing check-in to enrich; never creates a new visit. */
+        entryId?: string;
         /** TICKET-082: present → "add your take" mode for an existing Supper. */
         supperTakeId?: string;
     }>();
@@ -266,7 +272,9 @@ export default function LogMealScreen() {
     // Reuses the whole logger (rating/note/photos/details) but routes the submit
     // through useAddSupperTake and hides share-to / companions / supper-opt-in
     // (those are inherited from the Supper, not re-chosen per take).
-    const isSupperTake = !!supperTakeId;
+    const isSupperTake = !!supperTakeId && !entryId;
+    const isVisitReview = !!entryId;
+    const maxPhotos = isVisitReview ? 10 : MAX_PHOTOS;
 
     const restaurant: LogSheetRestaurant = React.useMemo(() => {
         if (restaurantParam) {
@@ -281,6 +289,18 @@ export default function LogMealScreen() {
     const hasAnyTable = tableList.length > 0;
 
     const createEntry = useCreateEntry(user?.id, null);
+    const visitDraft = useVisitReviewDraft(user?.id, entryId);
+    const visitMutations = useRestaurantVisitMutations(user?.id, pageId ?? restaurant.id ?? '');
+    const visitSelection = useRestaurantVisitSelection(user?.id ?? '', pageId ?? restaurant.id ?? '');
+    const hydratedEntry = useRef<string | null>(null);
+    const [hydrated, setHydrated] = useState(false);
+    const [hasVisitDate, setHasVisitDate] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const savingRef = useRef(false);
+    const saveAttempt = useRef<CreateEntryInput | null>(null);
+    const createNonce = useRef<string | null>(null);
+    const hasUncertainAttempt = useRef(false);
+    const [retrySave, setRetrySave] = useState(false);
     const addSupperTake = useAddSupperTake();
     const attachTake = useAttachTakeToSupper();
 
@@ -314,6 +334,22 @@ export default function LogMealScreen() {
     const [breakdown, setBreakdown] = useState<ComposerBreakdown>(EMPTY_BREAKDOWN);
     const [showDetails, setShowDetails] = useState(false);
 
+    useEffect(() => {
+        const draft = visitDraft.data;
+        if (!entryId || !draft || hydratedEntry.current === entryId) return;
+        hydratedEntry.current = entryId;
+        setRating(draft.rating ?? 0);
+        setLiked(draft.liked);
+        setVisitedAt(draft.visited_at ? new Date(draft.visited_at) : new Date());
+        setHasVisitDate(!!draft.visited_at);
+        setNotes(draft.content ?? '');
+        setBreakdown({ vibe: draft.vibe_rating ?? 0, flavor: draft.flavor_rating ?? 0, service: draft.service_rating ?? 0, value: draft.value_rating ?? 0 });
+        setCompanions(draft.companions);
+        setSelectedTableIds(draft.table_ids);
+        setPhotos(draft.photos.map((p) => ({ id: p.id, localUri: p.url, publicUrl: p.url, uploading: false, error: null, uploadGen: 0 })));
+        setHydrated(true);
+    }, [entryId, visitDraft.data]);
+
     // TICKET-075: calendar day selection — preserves the time component, blocks future.
     const handleCalendarChange = useCallback(
         (event: DateTimePickerEvent, selected?: Date) => {
@@ -321,6 +357,7 @@ export default function LogMealScreen() {
             // wrapping modal on any Android result. iOS inline stays open until done.
             if (Platform.OS === 'android') setCalendarVisible(false);
             if (event.type === 'dismissed' || !selected) return;
+            setHasVisitDate(true);
             setVisitedAt((prev) => {
                 const next = new Date(selected);
                 next.setHours(prev.getHours(), prev.getMinutes(), prev.getSeconds(), prev.getMilliseconds());
@@ -378,7 +415,7 @@ export default function LogMealScreen() {
 
     const addPhotoSlot = useCallback((uri: string) => {
         setPhotos((prev) => {
-            if (prev.length >= MAX_PHOTOS) return prev;
+            if (prev.length >= maxPhotos) return prev;
             const slotId = `photo-${Date.now()}-${Math.random()}`;
             const newSlot: PhotoSlot = {
                 id: slotId,
@@ -391,11 +428,11 @@ export default function LogMealScreen() {
             setTimeout(() => startUploadForSlot(slotId, uri), 0);
             return [...prev, newSlot];
         });
-    }, [startUploadForSlot]);
+    }, [startUploadForSlot, maxPhotos]);
 
     const handleAddPhoto = useCallback(async () => {
         if (!user?.id) return;
-        const remaining = MAX_PHOTOS - photos.length;
+        const remaining = maxPhotos - photos.length;
         if (remaining <= 0) return;
 
         // SDK 54: the system library picker (PHPicker / Android Photo Picker) is
@@ -418,7 +455,7 @@ export default function LogMealScreen() {
         for (const asset of result.assets) {
             addPhotoSlot(asset.uri);
         }
-    }, [user?.id, photos.length, addPhotoSlot]);
+    }, [user?.id, photos.length, addPhotoSlot, maxPhotos]);
 
     const handleRemovePhoto = useCallback((slotId: string) => {
         const currentGen = uploadGenRefs.current.get(slotId) ?? 0;
@@ -459,13 +496,50 @@ export default function LogMealScreen() {
 
     // ── Submit ─────────────────────────────────────────────────────────
     const canSubmit =
-        rating > 0 &&
-        !createEntry.isPending &&
+        !!user?.id && (isVisitReview ? hydrated && visitDraft.data?.id === entryId : rating > 0) &&
+        !saving && !stitch &&
+        !createEntry.isPending && !visitMutations.save.isPending &&
         !addSupperTake.isPending &&
-        !photos.some((p) => p.uploading);
+        !photos.some((p) => p.uploading || p.error || !p.publicUrl);
 
     const handleSave = useCallback(async () => {
-        if (!canSubmit || !user?.id) return;
+        if (!canSubmit || !user?.id || savingRef.current) return;
+        savingRef.current = true;
+        setSaving(true);
+        const releaseSave = () => { savingRef.current = false; setSaving(false); };
+
+        if (entryId) {
+            const original = visitDraft.data;
+            if (!original || original.id !== entryId) { releaseSave(); return; }
+            const changedIds = (a: string[], b: string[]) => [...a].sort().join(',') !== [...b].sort().join(',');
+            try {
+                const result = await visitMutations.save.mutateAsync({ entry_id: entryId, patch: {
+                    rating: rating > 0 ? Math.round(rating * 2) / 2 : null,
+                    content: notes.trim() || null,
+                    visited_at: hasVisitDate ? visitedAt.toISOString() : null,
+                    ...(photos.map((p) => p.publicUrl).join('\n') !== original.photos.map((p) => p.url).join('\n')
+                        ? { photo_urls: photos.map((p) => p.publicUrl!) } : {}),
+                    liked,
+                    vibe_rating: breakdown.vibe || null,
+                    flavor_rating: breakdown.flavor || null,
+                    service_rating: breakdown.service || null,
+                    value_rating: breakdown.value || null,
+                    ...(changedIds(selectedTableIds, original.table_ids) ? { table_ids: selectedTableIds } : {}),
+                    ...(changedIds(companions.map((c) => c.user_id), original.companions.map((c) => c.user_id))
+                        ? { companion_ids: companions.map((c) => c.user_id) } : {}),
+                } });
+                visitSelection.selectVisit(result.entry.id);
+                const reviewed = result.entry.rating != null || !!result.entry.content?.trim() || result.entry.photos.length > 0 || !!result.entry.photo_url;
+                toast.show(reviewed ? 'Review saved' : 'Visit saved');
+                router.back();
+            } catch (err) {
+                releaseSave();
+                if ((err as any)?.cause?.code === 'session_expired' || (err as any)?.code === 'session_expired') {
+                    void handleSessionExpired();
+                } else Alert.alert('Couldn’t save your review', (err as Error)?.message ?? 'Please try again.');
+            }
+            return;
+        }
 
         // ── Supper-take mode: post the caller's own take, not a new log ──
         if (isSupperTake && supperTakeId) {
@@ -501,6 +575,7 @@ export default function LogMealScreen() {
                         router.back();
                     },
                     onError: (err) => {
+                        releaseSave();
                         const code = (err as any)?.cause?.code ?? (err as any)?.code;
                         if (code === 'session_expired') {
                             handleSessionExpired();
@@ -566,14 +641,28 @@ export default function LogMealScreen() {
             restaurantData = undefined;
         }
 
+        createNonce.current ??= safeRandomUUID();
+        saveAttempt.current ??= {
+            ...(restaurantData ? { restaurant: restaurantData } : {}),
+            ...(restaurant.id && !restaurantData ? { restaurant_id: restaurant.id } : {}),
+            ...payload,
+            client_nonce: createNonce.current,
+        };
         createEntry.mutate(
-            {
-                ...(restaurantData ? { restaurant: restaurantData } : {}),
-                ...(restaurant.id && !restaurantData ? { restaurant_id: restaurant.id } : {}),
-                ...payload,
-            } as any,
+            saveAttempt.current,
             {
                 onSuccess: (result) => {
+                    saveAttempt.current = null;
+                    createNonce.current = null;
+                    hasUncertainAttempt.current = false;
+                    setRetrySave(false);
+                    if (result.id && result.restaurant_id) {
+                        // Use the confirmed row, including on nonce retries. Never
+                        // portray the edited draft as the server's saved result.
+                        const confirmed = { ...result, photos: result.photos ?? [], is_bare: false } as SavedVisit;
+                        patchRestaurantVisit(qc, pageId ?? restaurant.id ?? '', confirmed, result.id, result.restaurant_id);
+                        visitSelection.selectVisit(result.id);
+                    }
                     // Invalidate the originating page's cache (pageId covers
                     // ghost first-logs where restaurant.id is undefined).
                     const invalidateId = pageId ?? restaurant.id;
@@ -585,7 +674,7 @@ export default function LogMealScreen() {
                             ),
                         });
                     }
-                    toast.show(`tried ${restaurant.name}`);
+                    toast.show('Meal logged');
                     // TICKET-159: a supper_suggestion holds the pop-back for the
                     // "add this to the table?" confirm; both answers land back.
                     const suggestion = (result as { supper_suggestion?: SupperSuggestion | null })
@@ -598,7 +687,22 @@ export default function LogMealScreen() {
                     router.back();
                 },
                 onError: (err) => {
+                    releaseSave();
                     const code = (err as any)?.cause?.code ?? (err as any)?.code;
+                    const status = (err as any)?.context?.status ?? (err as any)?.cause?.context?.status;
+                    const rejected = code === 'table_not_authorized' || [400, 403, 422].includes(status);
+                    if (!rejected) hasUncertainAttempt.current = true;
+                    if (rejected) {
+                        saveAttempt.current = null;
+                        // A rejected retry cannot disprove an earlier commit:
+                        // membership checks run before the server nonce lookup.
+                        if (!hasUncertainAttempt.current) createNonce.current = null;
+                        const offendingIds = (err as any)?.offendingIds;
+                        if (code === 'table_not_authorized' && Array.isArray(offendingIds)) {
+                            setSelectedTableIds((ids) => ids.filter((id) => !offendingIds.includes(id)));
+                        }
+                    }
+                    setRetrySave(!rejected);
                     if (code === 'session_expired') {
                         handleSessionExpired();
                         return;
@@ -630,13 +734,24 @@ export default function LogMealScreen() {
         toast,
         router,
         qc,
-        handleSessionExpired,
+        handleSessionExpired, entryId, visitDraft.data, visitMutations.save, visitSelection, hasVisitDate,
     ]);
 
     // ── Render ─────────────────────────────────────────────────────────
+    if (isVisitReview && !hydrated) return (
+        <View style={[styles.root, { backgroundColor: palette.background, padding: 24, paddingTop: insets.top + 24, gap: 20 }]}>
+            <Stack.Screen options={{ headerShown: false }} />
+            <Text style={[styles.restaurantName, { color: palette.text }]}>Add your review</Text>
+            {visitDraft.isError ? <>
+                <Text style={[Type.body, { color: palette.text }]}>Couldn’t load this visit.</Text>
+                <Pressable onPress={() => void visitDraft.refetch()} accessibilityRole="button"><Text style={[Type.body, { color: palette.primary }]}>Try again</Text></Pressable>
+            </> : <ActivityIndicator color={palette.primary} />}
+            <Pressable onPress={() => router.back()} accessibilityRole="button"><Text style={[Type.body, { color: palette.primary }]}>Close</Text></Pressable>
+        </View>
+    );
     return (
         <>
-            <Stack.Screen options={{ headerShown: false }} />
+            <Stack.Screen options={{ headerShown: false, gestureEnabled: !saving }} />
 
             {/*
              * Plain full-screen flex column — no maxHeight, no KAV at this level.
@@ -649,7 +764,7 @@ export default function LogMealScreen() {
                 <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                     <View style={styles.headerLeft}>
                         <Text style={[styles.kicker, { color: palette.textMuted }]}>
-                            {isSupperTake ? 'ADD YOUR TAKE' : 'LOG A MEAL'}
+                            {isSupperTake ? 'ADD YOUR TAKE' : isVisitReview ? 'REVIEW YOUR VISIT' : 'LOG A MEAL'}
                         </Text>
                         <Text
                             style={[styles.restaurantName, { color: palette.text }]}
@@ -660,6 +775,7 @@ export default function LogMealScreen() {
                     </View>
                     <Pressable
                         onPress={() => router.back()}
+                        disabled={saving}
                         hitSlop={12}
                         accessibilityLabel="close"
                     >
@@ -672,6 +788,7 @@ export default function LogMealScreen() {
                 {/* ── Scrollable body (flex: 1) ── */}
                 <ScrollView
                     style={styles.scroll}
+                    pointerEvents={saving || retrySave ? 'none' : 'auto'}
                     contentContainerStyle={styles.scrollContent}
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
@@ -683,7 +800,7 @@ export default function LogMealScreen() {
                             YOUR APPRAISAL
                         </Text>
                         <View style={styles.ratingRow}>
-                            <HalfStarRating value={rating} onChange={setRating} />
+                            <HalfStarRating value={rating} onChange={(value) => setRating(isVisitReview && value === rating ? 0 : value)} />
                             <Text
                                 style={[
                                     styles.ratingNumeral,
@@ -768,10 +885,10 @@ export default function LogMealScreen() {
                             onPress={() => setCalendarVisible(true)}
                             hitSlop={8}
                             accessibilityRole="button"
-                            accessibilityLabel={`when: ${formatWhenLabel(visitedAt)}. tap to change.`}
+                            accessibilityLabel={`when: ${hasVisitDate ? formatWhenLabel(visitedAt) : 'Add a date'}. tap to change.`}
                         >
                             <Text style={[styles.whenDate, { color: palette.text }]}>
-                                {formatWhenLabel(visitedAt)}
+                                {hasVisitDate ? formatWhenLabel(visitedAt) : 'Add a date'}
                             </Text>
                         </Pressable>
                     </View>
@@ -812,7 +929,7 @@ export default function LogMealScreen() {
                         </Text>
                         <PhotoMosaic
                             photos={photos}
-                            maxPhotos={MAX_PHOTOS}
+                            maxPhotos={maxPhotos}
                             onAdd={handleAddPhoto}
                             onRemove={handleRemovePhoto}
                             onRetry={handleRetryPhoto}
@@ -920,7 +1037,7 @@ export default function LogMealScreen() {
                                 public-eligible regardless of table selection (solo logs
                                 default 'friends' since 2026-07-22) — say so instead of
                                 gating. Only when the account is actually public. */}
-                            {isAccountPublic && (
+                            {isAccountPublic && (!isVisitReview || visitDraft.data?.visibility !== 'private') && (
                                 <Text style={[styles.publicNote, { color: palette.textMuted }]}>
                                     also appears on your public profile
                                 </Text>
@@ -931,7 +1048,7 @@ export default function LogMealScreen() {
                     {/* TICKET-217 P1-1: the SHARE TO card is hidden for no-table
                         users and supper takes, but those logs are public-eligible
                         too — the disclosure must not disappear with the card. */}
-                    {(isSupperTake || !hasAnyTable) && isAccountPublic && (
+                    {(isSupperTake || !hasAnyTable) && isAccountPublic && (!isVisitReview || visitDraft.data?.visibility !== 'private') && (
                         <Text style={[styles.publicNote, { color: palette.textMuted, textAlign: 'center' }]}>
                             also appears on your public profile
                         </Text>
@@ -951,10 +1068,11 @@ export default function LogMealScreen() {
                         },
                     ]}
                 >
+                    {hasUncertainAttempt.current ? <Text style={[styles.publicNote, { color: palette.text, marginBottom: 12 }]}>{retrySave ? 'Your draft is kept. Retry to confirm this meal was saved.' : 'We’ll check your earlier save when you try again.'}</Text> : null}
                     <Pressable
                         onPress={handleSave}
                         disabled={!canSubmit}
-                        accessibilityLabel="Save"
+                        accessibilityLabel={retrySave ? "Retry save" : isVisitReview ? "Save review" : "Save"}
                         accessibilityRole="button"
                         style={({ pressed }) => [
                             styles.saveBtn,
@@ -964,13 +1082,13 @@ export default function LogMealScreen() {
                                     : palette.surfaceContainerHigh,
                                 opacity: pressed
                                     ? 0.85
-                                    : createEntry.isPending || addSupperTake.isPending
+                                    : saving || createEntry.isPending || addSupperTake.isPending
                                     ? 0.65
                                     : 1,
                             },
                         ]}
                     >
-                        {createEntry.isPending || addSupperTake.isPending ? (
+                        {saving || createEntry.isPending || addSupperTake.isPending ? (
                             <ActivityIndicator color="#fffdf8" size="small" />
                         ) : (
                             <Text
@@ -981,7 +1099,7 @@ export default function LogMealScreen() {
                                     },
                                 ]}
                             >
-                                {isSupperTake ? 'ADD TAKE' : 'SAVE'}
+                                {retrySave ? 'RETRY SAVE' : isSupperTake ? 'ADD TAKE' : isVisitReview ? 'SAVE REVIEW' : 'SAVE MEAL'}
                             </Text>
                         )}
                     </Pressable>
