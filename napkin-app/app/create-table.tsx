@@ -1,28 +1,9 @@
 /**
- * Create Table — the "New table" editorial-masthead screen.
- * Implements the Claude Design "New Table" canvas, direction 2A
- * ("Editorial masthead", taken forward — handoff 2026-06-30).
- *
- * One calm column: kicker → big serif title → italic one-liner → hairline →
- * Name (underline field + helper) → Invite (you·founder chip, search
- * row, invite-by-link) → a confident terracotta "Create table" CTA.
- *
- * Backend: useCreateTable creates the table (creator auto-added as admin), then
- * each picked mutual gets a PENDING invitation via useAddMember (TICKET-133
- * consent gate — nobody is seated until they accept from their Activity inbox).
- * On success we land on the founded masthead via /(tabs)/tables?selected=<id>;
- * its roster reads from table_members, so it honestly shows the creator alone
- * until invites are accepted.
- *
- * Layout is keyboard-STABLE: one top-anchored ScrollView with iOS keyboard
- * insets (no KeyboardAvoidingView reflow) and constant border widths — focus
- * changes colour only, never width, so tapping a field never shifts layout.
- *
- * "Invite by link" is live: it creates the table (inviting any picked mutuals),
- * mints a real invite code, opens the native share sheet, then lands on the
- * founded masthead — the same destination as Create table.
+ * Create a Table, then send pending invitations to the selected mutual friends.
+ * Membership still starts only after each invitation is accepted. The link
+ * action creates the Table, mints a real invite, and opens the native share sheet.
+ * The form keeps both creation actions behind the same name and pending guards.
  */
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     View,
@@ -31,7 +12,9 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
-    Animated,
+    KeyboardAvoidingView,
+    Platform,
+    useWindowDimensions,
     ActivityIndicator,
     Alert,
     Share,
@@ -40,7 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
-import { Colors, IconSize, Spacing, Type } from '@/constants/theme';
+import { Colors, IconSize, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useToast } from '@/providers/ToastProvider';
@@ -53,12 +36,10 @@ import { Avatar } from '@/components/feed/Avatar';
 import {
     CREATE_TABLE_COPY,
     CREATE_TABLE_NAME_TYPE,
+    getCreateTableKeyboardOffset,
 } from '@/components/tables/createTablePresentation';
 
 type Palette = typeof Colors.light;
-
-// Horizontal gutter — matches the 28px canvas margin (not on the 4-pt token scale).
-const GUTTER = 28;
 
 interface PickedMember {
     user_id: string;
@@ -70,6 +51,8 @@ export default function CreateTableScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
+    const { height: windowHeight } = useWindowDimensions();
+    const [rootHeight, setRootHeight] = useState<number | null>(null);
     const router = useRouter();
     const { user } = useAuth();
 
@@ -103,7 +86,6 @@ export default function CreateTableScreen() {
     const canCreate = nameTrimmed.length > 0 && !creating;
     const pickedIds = useMemo(() => new Set(picked.map((p) => p.user_id)), [picked]);
     const searching = debouncedQuery.length > 0;
-    const nameActive = nameFocused || nameTrimmed.length > 0;
 
     const togglePick = useCallback((row: UserSearchResult) => {
         setPicked((prev) => {
@@ -192,113 +174,125 @@ export default function CreateTableScreen() {
         }
     }, [creating, nameTrimmed, runCreate, createInvite, router]);
 
-    // ── Render ───────────────────────────────────────────────────────────────
     return (
-        <View style={[styles.container, { backgroundColor: palette.background, paddingTop: 8 }]}>
-            {/* Drag handle */}
+        <KeyboardAvoidingView
+            style={[styles.container, { backgroundColor: palette.background }]}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? getCreateTableKeyboardOffset(windowHeight, rootHeight) : 0}
+            onLayout={(event) => setRootHeight(event.nativeEvent.layout.height)}
+        >
             <View style={styles.handleWrap}>
                 <View style={[styles.handle, { backgroundColor: palette.ruleInkSoft }]} />
             </View>
-
+            <View style={styles.header}>
+                <Pressable
+                    onPress={() => router.back()}
+                    disabled={creating}
+                    style={({ pressed }) => [styles.headerControl, { opacity: creating ? 0.5 : pressed ? 0.7 : 1 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Back"
+                    accessibilityState={{ disabled: creating }}
+                >
+                    <Ionicons name="arrow-back-outline" size={IconSize.lg} color={palette.text} />
+                </Pressable>
+                <Text style={[Type.headlineLarge, { color: palette.text }]}>Napkin</Text>
+                <View style={styles.headerControl} />
+            </View>
             <ScrollView
                 style={styles.flex}
                 contentContainerStyle={styles.scrollContent}
                 keyboardShouldPersistTaps="handled"
-                automaticallyAdjustKeyboardInsets
+                keyboardDismissMode="interactive"
+                automaticallyAdjustKeyboardInsets={false}
                 showsVerticalScrollIndicator={false}
             >
-                {/* Back */}
-                <Pressable
-                    onPress={() => router.back()}
-                    hitSlop={8}
-                    style={styles.backAction}
-                    accessibilityRole="button"
-                    accessibilityLabel="Back"
-                >
-                    <Ionicons name="chevron-back" size={IconSize.lg} color={palette.text} />
-                </Pressable>
+                <Text accessibilityRole="header" style={[Type.displayLarge, styles.title, { color: palette.text }]}>
+                    {CREATE_TABLE_COPY.title}
+                </Text>
+                <Text style={[Type.body, styles.description, { color: palette.textSecondary }]}>
+                    A private space for your people.
+                </Text>
 
-                {/* Name */}
-                <View style={styles.nameSection}>
-                    <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>Name</Text>
-                    <View
-                        style={[
-                            styles.nameUnderline,
-                            { borderBottomColor: nameActive ? palette.primary : palette.ruleInkSoft },
-                        ]}
-                    >
-                        <TextInput
-                            ref={nameInputRef}
-                            value={name}
-                            onChangeText={setName}
-                            onFocus={() => setNameFocused(true)}
-                            onBlur={() => setNameFocused(false)}
-                            placeholder="Sunday Roast Club"
-                            placeholderTextColor={palette.textMuted}
-                            style={[CREATE_TABLE_NAME_TYPE, styles.nameInput, { color: palette.text }]}
-                            selectionColor={palette.primary}
-                            returnKeyType="done"
-                            maxLength={60}
-                        />
-                    </View>
+                <View style={[styles.paper, Shadow.note, { backgroundColor: palette.surfaceNote }]}>
+                    <TextInput
+                        ref={nameInputRef}
+                        value={name}
+                        onChangeText={setName}
+                        onFocus={() => setNameFocused(true)}
+                        onBlur={() => setNameFocused(false)}
+                        placeholder={CREATE_TABLE_COPY.namePlaceholder}
+                        placeholderTextColor={palette.textMuted}
+                        accessibilityLabel="Table name"
+                        style={[CREATE_TABLE_NAME_TYPE, styles.nameInput, { color: palette.text, borderBottomColor: nameFocused ? palette.primary : palette.ruleInkSoft }]}
+                        selectionColor={palette.primary}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                        returnKeyType="done"
+                        maxLength={60}
+                        editable={!creating}
+                    />
                 </View>
 
-                {/* Invite */}
-                <View style={styles.inviteSection}>
-                    <View style={styles.inviteHeaderRow}>
-                        <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>
+                <View style={[styles.inviteSection, styles.paper, { backgroundColor: palette.surfaceJournalLow }]}>
+                    <View style={styles.inviteHeader}>
+                        <Text style={[Type.sectionTitle, styles.flex, { color: palette.text }]}>
                             {CREATE_TABLE_COPY.inviteLabel}
                         </Text>
+                        <Text style={[Type.metadata, { color: palette.textMuted }]}>
+                            {picked.length > 0 ? `${picked.length} selected` : 'Optional'}
+                        </Text>
                     </View>
-
-                    {/* you · founder + any added members */}
-                    <View style={styles.chipsRow}>
-                        <View style={[styles.chip, { backgroundColor: palette.secondaryContainer }]}>
-                            <Avatar name="You" url={null} size={28} palette={palette} />
-                            <Text style={[styles.chipName, { color: palette.text }]}>you</Text>
-                            <Text style={[styles.chipMeta, { color: palette.textMuted }]}>founder</Text>
+                    {picked.length > 0 ? (
+                        <View style={styles.chipsRow}>
+                            {picked.map((p) => (
+                                <Pressable
+                                    key={p.user_id}
+                                    onPress={() => removePick(p.user_id)}
+                                    disabled={creating}
+                                    style={({ pressed }) => [styles.chip, { backgroundColor: palette.surfaceNote, opacity: pressed ? 0.85 : 1 }]}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Remove ${p.display_name} from selection`}
+                                    accessibilityState={{ disabled: creating }}
+                                >
+                                    <Avatar name={p.display_name} url={p.avatar_url} size={Spacing.lg} palette={palette} />
+                                    <Text style={[Type.metadata, styles.chipName, { color: palette.text }]} numberOfLines={1}>
+                                        {p.display_name}
+                                    </Text>
+                                    <Ionicons name="close-outline" size={IconSize.md} color={palette.textMuted} />
+                                </Pressable>
+                            ))}
                         </View>
-                        {picked.map((p) => (
-                            <Pressable
-                                key={p.user_id}
-                                onPress={() => removePick(p.user_id)}
-                                style={[styles.chip, { backgroundColor: palette.surfaceJournal }]}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Remove ${p.display_name}`}
-                            >
-                                <Avatar name={p.display_name} url={p.avatar_url} size={28} palette={palette} />
-                                <Text style={[styles.chipName, { color: palette.text }]} numberOfLines={1}>
-                                    {p.display_name}
-                                </Text>
-                                <Ionicons name="close" size={14} color={palette.textMuted} />
-                            </Pressable>
-                        ))}
-                    </View>
-
-                    {/* Search row */}
-                    <View style={[styles.searchRow, { borderBottomColor: searchFocused ? palette.primary : palette.outlineVariant }]}>
-                        <Ionicons name="search" size={19} color={searchFocused ? palette.textSecondary : palette.textMuted} />
+                    ) : null}
+                    <View style={[styles.searchRow, { backgroundColor: palette.surfaceNote, borderBottomColor: searchFocused ? palette.primary : palette.ruleInkSoft }]}>
+                        <Ionicons name="search-outline" size={IconSize.lg} color={palette.textMuted} />
                         <TextInput
                             value={query}
                             onChangeText={setQuery}
                             onFocus={() => setSearchFocused(true)}
                             onBlur={() => setSearchFocused(false)}
-                            placeholder="Search friends by name…"
+                            placeholder="Search mutual friends"
                             placeholderTextColor={palette.textMuted}
-                            style={[styles.searchInput, { color: palette.text }]}
+                            accessibilityLabel="Search mutual friends"
+                            style={[Type.body, styles.searchInput, { color: palette.text }]}
                             selectionColor={palette.primary}
                             autoCapitalize="none"
                             autoCorrect={false}
                             returnKeyType="search"
+                            editable={!creating}
                         />
                         {query.length > 0 ? (
-                            <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel="Clear search">
-                                <Ionicons name="close-circle" size={18} color={palette.textMuted} />
+                            <Pressable
+                                onPress={() => setQuery('')}
+                                disabled={creating}
+                                style={styles.clearSearch}
+                                accessibilityRole="button"
+                                accessibilityLabel="Clear search"
+                                accessibilityState={{ disabled: creating }}
+                            >
+                                <Ionicons name="close-outline" size={IconSize.md} color={palette.textMuted} />
                             </Pressable>
                         ) : null}
                     </View>
-
-                    {/* Results while searching, else invite-by-link */}
                     {searching ? (
                         (results?.length ?? 0) > 0 ? (
                             <View style={styles.resultsWrap}>
@@ -307,234 +301,122 @@ export default function CreateTableScreen() {
                                         key={row.user_id}
                                         row={row}
                                         palette={palette}
-                                        added={pickedIds.has(row.user_id)}
+                                        selected={pickedIds.has(row.user_id)}
+                                        disabled={creating}
                                         onToggle={() => togglePick(row)}
                                     />
                                 ))}
                             </View>
                         ) : isFetching ? (
                             <View style={styles.centerBlock}>
-                                <ActivityIndicator color={palette.primary} />
+                                <ActivityIndicator color={palette.primary} accessibilityLabel="Searching friends" />
                             </View>
                         ) : (
-                            <View style={styles.centerBlock}>
-                                <Ionicons name="person-outline" size={32} color={palette.textMuted} style={{ opacity: 0.5 }} />
-                                <Text style={[Type.metadata, styles.emptyLine, { color: palette.textMuted }]}>
-                                    {CREATE_TABLE_COPY.emptyMutuals}
-                                </Text>
-                            </View>
+                            <Text style={[Type.metadata, styles.emptyLine, { color: palette.textMuted }]}>
+                                {CREATE_TABLE_COPY.emptyMutuals}
+                            </Text>
                         )
-                    ) : (
-                        <View style={styles.linkRow}>
-                            <Ionicons name="link-outline" size={19} color={palette.secondary} />
-                            <View style={styles.linkText}>
-                                <Text style={[styles.linkTitle, { color: palette.text }]}>Invite by link</Text>
-                            </View>
-                            <Pressable
-                                onPress={handleInviteByLink}
-                                disabled={creating}
-                                hitSlop={8}
-                                accessibilityRole="button"
-                                accessibilityLabel="Share invite link"
-                            >
-                                <Text style={[styles.copy, { color: palette.primary, opacity: creating ? 0.4 : 1 }]}>Share</Text>
-                            </Pressable>
-                        </View>
-                    )}
+                    ) : null}
+                    {picked.length > 0 ? (
+                        <Text style={[Type.metadata, styles.inviteNote, { color: palette.textSecondary }]}>
+                            Invitations go out when you create your Table.
+                        </Text>
+                    ) : null}
                 </View>
+
+                <Pressable
+                    onPress={handleInviteByLink}
+                    disabled={creating}
+                    style={({ pressed }) => [styles.linkAction, { opacity: creating ? 0.5 : pressed ? 0.85 : 1 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Create table and share invite link"
+                    accessibilityState={{ disabled: creating }}
+                >
+                    <Ionicons name="link-outline" size={IconSize.lg} color={palette.primary} />
+                    <Text style={[Type.body, { color: palette.primary }]}>Create &amp; share a link</Text>
+                </Pressable>
             </ScrollView>
 
-            {/* CTA */}
-            <View style={[styles.ctaBar, { backgroundColor: palette.background, paddingBottom: insets.bottom + 24 }]}>
+            <View style={[styles.ctaBar, { backgroundColor: palette.background, paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
                 <Pressable
                     onPress={handleCreate}
                     disabled={!canCreate}
-                    style={[
-                        styles.ctaBtn,
-                        { backgroundColor: palette.primary },
-                        canCreate ? styles.ctaBtnEnabled : styles.ctaBtnDisabled,
-                        canCreate ? { shadowColor: palette.primary } : null,
-                    ]}
+                    style={({ pressed }) => [styles.ctaBtn, { backgroundColor: palette.primary, opacity: !canCreate ? 0.5 : pressed ? 0.85 : 1 }]}
                     accessibilityRole="button"
-                    accessibilityState={{ disabled: !canCreate }}
+                    accessibilityState={{ disabled: !canCreate, busy: creating }}
                     accessibilityLabel="Create table"
                 >
-                    {creating ? (
-                        <View style={styles.ctaCreatingRow}>
-                            <Text style={styles.ctaText}>Setting the table</Text>
-                            <CreatingDots />
-                        </View>
-                    ) : (
-                        <Text style={styles.ctaText}>Create table</Text>
-                    )}
+                    {creating ? <ActivityIndicator color={palette.textInverse} /> : null}
+                    <Text style={[Type.titleMedium, { color: palette.textInverse }]}>
+                        {creating ? 'Creating Table…' : 'Create Table'}
+                    </Text>
                 </Pressable>
             </View>
-        </View>
+        </KeyboardAvoidingView>
     );
 }
 
-// ── ResultRow ────────────────────────────────────────────────────────────────
-
-function ResultRow({
-    row,
-    palette,
-    added,
-    onToggle,
-}: {
+function ResultRow({ row, palette, selected, disabled, onToggle }: {
     row: UserSearchResult;
     palette: Palette;
-    added: boolean;
+    selected: boolean;
+    disabled: boolean;
     onToggle: () => void;
 }) {
     const isMutual = row.is_mutual !== false;
-
     return (
         <View style={styles.resultRow}>
-            <Avatar name={row.display_name} url={row.avatar_url} size={40} palette={palette} />
+            <Avatar name={row.display_name} url={row.avatar_url} size={Spacing.hitTarget} palette={palette} />
             <View style={styles.resultText}>
-                <Text style={[styles.resultName, { color: isMutual ? palette.text : palette.textMuted }]} numberOfLines={1}>
-                    {row.display_name}
-                </Text>
-                {!isMutual ? (
-                    <Text style={[styles.resultSub, { color: palette.textMuted }]}>needs to follow you back</Text>
-                ) : null}
+                <Text style={[Type.titleMedium, { color: palette.text }]}>{row.display_name}</Text>
+                {!isMutual ? <Text style={[Type.metadata, { color: palette.textMuted }]}>Needs to follow you back</Text> : null}
             </View>
-
-            {!isMutual ? null : added ? (
-                <Pressable onPress={onToggle} style={styles.addedBtn} accessibilityRole="button" accessibilityLabel={`Remove ${row.display_name}`}>
-                    <Ionicons name="checkmark" size={13} color={palette.secondary} />
-                    <Text style={[styles.addedText, { color: palette.textMuted }]}>invited</Text>
-                </Pressable>
-            ) : (
+            {isMutual ? (
                 <Pressable
                     onPress={onToggle}
-                    style={[styles.addBtn, { backgroundColor: palette.secondaryContainer }]}
+                    disabled={disabled}
+                    style={({ pressed }) => [styles.selectButton, { backgroundColor: selected ? palette.surfaceJournal : palette.surfaceNote, opacity: disabled ? 0.5 : pressed ? 0.85 : 1 }]}
                     accessibilityRole="button"
-                    accessibilityLabel={`Invite ${row.display_name}`}
+                    accessibilityLabel={selected ? `Remove ${row.display_name} from selection` : `Select ${row.display_name}`}
+                    accessibilityState={{ selected, disabled }}
                 >
-                    <Ionicons name="add" size={14} color={palette.secondary} />
-                    <Text style={[styles.addText, { color: palette.secondary }]}>invite</Text>
+                    <Text style={[Type.metadata, { color: selected ? palette.textSecondary : palette.primary }]}>
+                        {selected ? 'Selected' : 'Select'}
+                    </Text>
                 </Pressable>
-            )}
+            ) : null}
         </View>
     );
 }
-
-// ── CreatingDots ──────────────────────────────────────────────────────────────
-
-function CreatingDots() {
-    const dots = useRef([new Animated.Value(0.28), new Animated.Value(0.28), new Animated.Value(0.28)]).current;
-
-    useEffect(() => {
-        const loops = dots.map((d, i) =>
-            Animated.loop(
-                Animated.sequence([
-                    Animated.delay(i * 180),
-                    Animated.timing(d, { toValue: 1, duration: 440, useNativeDriver: true }),
-                    Animated.timing(d, { toValue: 0.28, duration: 440, useNativeDriver: true }),
-                    Animated.delay((2 - i) * 180),
-                ]),
-            ),
-        );
-        loops.forEach((l) => l.start());
-        return () => loops.forEach((l) => l.stop());
-    }, [dots]);
-
-    return (
-        <View style={styles.dotsRow}>
-            {dots.map((d, i) => (
-                <Animated.View key={i} style={[styles.dot, { opacity: d }]} />
-            ))}
-        </View>
-    );
-}
-
-// ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
     flex: { flex: 1 },
-    scrollContent: { paddingHorizontal: GUTTER, paddingTop: 6, paddingBottom: 16 },
-
-    handleWrap: { alignItems: 'center', paddingTop: 9, paddingBottom: 2 },
-    handle: { width: 36, height: 5, borderRadius: 9999 },
-
-    backAction: {
-        width: Spacing.hitTarget,
-        minHeight: Spacing.hitTarget,
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-    },
-
-    // Shared field label
-    fieldLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 11,
-        letterSpacing: 1.6,
-        textTransform: 'uppercase',
-    },
-
-    // Name
-    nameSection: { paddingTop: 24 },
-    nameUnderline: { borderBottomWidth: 2, paddingBottom: 9, marginTop: 12 },
-    nameInput: {
-        padding: 0,
-    },
-    // Invite
-    inviteSection: { paddingTop: 28 },
-    inviteHeaderRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-
-    chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
-    chip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 9,
-        paddingVertical: 5,
-        paddingLeft: 5,
-        paddingRight: 14,
-        borderRadius: 9999,
-        maxWidth: 220,
-    },
-    chipName: { fontFamily: 'Manrope_600SemiBold', fontSize: 14, flexShrink: 1 },
-    chipMeta: { fontFamily: 'Manrope_400Regular', fontSize: 11.5 },
-
-    searchRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 11,
-        marginTop: 18,
-        paddingBottom: 10,
-        borderBottomWidth: 1,
-    },
-    searchInput: { flex: 1, fontFamily: 'Manrope_400Regular', fontSize: 15, padding: 0 },
-
-    // Results
-    resultsWrap: { marginTop: 4 },
-    resultRow: { flexDirection: 'row', alignItems: 'center', gap: 13, paddingVertical: 11 },
+    handleWrap: { alignItems: 'center', paddingTop: Spacing.md, paddingBottom: Spacing.sm },
+    handle: { width: Spacing.xl, height: Spacing.xs, borderRadius: Radius.full },
+    header: { paddingHorizontal: Spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    headerControl: { minWidth: Spacing.hitTarget, minHeight: Spacing.hitTarget, alignItems: 'center', justifyContent: 'center' },
+    scrollContent: { padding: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.xl },
+    title: { marginBottom: Spacing.md },
+    description: { marginBottom: Spacing.xl },
+    paper: { padding: Spacing.lg, borderRadius: Radius.xl },
+    nameInput: { minHeight: Spacing.xxl, paddingVertical: Spacing.sm, borderBottomWidth: 1 },
+    inviteSection: { marginTop: Spacing.lg },
+    inviteHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+    chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.md },
+    chip: { minHeight: Spacing.hitTarget, maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.sm, paddingVertical: Spacing.sm, borderRadius: Radius.full },
+    chipName: { flexShrink: 1 },
+    searchRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginTop: Spacing.md, paddingLeft: Spacing.md, borderRadius: Radius.md, borderBottomWidth: 1 },
+    searchInput: { flex: 1, minHeight: Spacing.hitTarget + Spacing.sm, paddingVertical: Spacing.sm },
+    clearSearch: { minWidth: Spacing.hitTarget, minHeight: Spacing.hitTarget, alignItems: 'center', justifyContent: 'center' },
+    resultsWrap: { marginTop: Spacing.md, gap: Spacing.md },
+    resultRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
     resultText: { flex: 1, minWidth: 0 },
-    resultName: { fontFamily: 'Manrope_600SemiBold', fontSize: 15 },
-    resultSub: { fontFamily: 'Manrope_500Medium', fontSize: 12, marginTop: 3 },
-    addBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999 },
-    addText: { fontFamily: 'Manrope_700Bold', fontSize: 12 },
-    addedBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 8, paddingHorizontal: 14 },
-    addedText: { fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
-
-    centerBlock: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 28 },
-    emptyLine: { textAlign: 'center', marginTop: Spacing.sm },
-
-    // Invite by link
-    linkRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 20 },
-    linkText: { flex: 1, minWidth: 0 },
-    linkTitle: { fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
-    copy: { fontFamily: 'Manrope_700Bold', fontSize: 11, letterSpacing: 0.6, textTransform: 'uppercase' },
-
-    // CTA
-    ctaBar: { paddingHorizontal: GUTTER, paddingTop: 10 },
-    ctaBtn: { width: '100%', paddingVertical: 16, borderRadius: 9999, alignItems: 'center', justifyContent: 'center' },
-    ctaBtnEnabled: { shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: 10 }, elevation: 6 },
-    ctaBtnDisabled: { opacity: 0.34 },
-    ctaText: { fontFamily: 'Manrope_600SemiBold', fontSize: 16, letterSpacing: 0.2, color: '#fff' },
-    ctaCreatingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    dotsRow: { flexDirection: 'row', gap: 4 },
-    dot: { width: 5, height: 5, borderRadius: 99, backgroundColor: '#fff' },
+    selectButton: { minHeight: Spacing.hitTarget, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.full },
+    centerBlock: { minHeight: Spacing.xxl, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.md },
+    emptyLine: { marginTop: Spacing.md },
+    inviteNote: { marginTop: Spacing.md },
+    linkAction: { minHeight: Spacing.hitTarget, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, marginTop: Spacing.md, paddingVertical: Spacing.sm },
+    ctaBar: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
+    ctaBtn: { minHeight: Spacing.hitTarget + Spacing.sm, padding: Spacing.md, borderRadius: Radius.full, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
 });

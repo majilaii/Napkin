@@ -4,6 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
 import type { DiscoveryTopic } from '@/lib/discoveryGuide';
 
+import { SharingPreview } from './ShareWalkthrough';
+
 type Palette = typeof Colors.light;
 const people = [
     { name: 'Clara', image: require('@/assets/guide/clara.jpg') },
@@ -13,6 +15,7 @@ const people = [
 
 /** Offline examples, never inserted into the viewer's real journal or Tables. */
 export function GuideIllustration({ topic, palette }: { topic: DiscoveryTopic; palette: Palette }) {
+    if (topic === 'sharing') return <SharingPreview palette={palette} />;
     const social = topic === 'tables' || topic === 'friends';
     return (
         <View style={[s.stage, social && s.socialStage, { backgroundColor: palette.surfaceJournal }]}>

@@ -21,6 +21,7 @@ jest.mock('react-native', () => {
         Text: host('Text'),
         Pressable: host('Pressable'),
         ScrollView: host('ScrollView'),
+        Modal: (props: Record<string, unknown>) => props.visible ? ReactModule.createElement('Modal', props, props.children) : null,
         Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios ?? options.default },
         StyleSheet: {
             create: (styles: unknown) => styles,
@@ -48,6 +49,7 @@ jest.mock('@/hooks/onboarding/useDiscoveryGuide', () => ({
     useDiscoveryGuide: (...args: unknown[]) => mockUseDiscoveryGuide(...args),
 }));
 jest.mock('@/components/onboarding/GuideIllustration', () => ({ GuideIllustration: () => null }));
+jest.mock('@/components/onboarding/ShareWalkthrough', () => ({ ShareWalkthrough: () => null }));
 jest.mock('@/hooks/users/useUserDiary', () => ({
     useUserDiary: () => ({ data: { pages: [] }, isLoading: false, error: null, hasNextPage: false }),
     groupDiaryByMonth: () => [],
@@ -55,6 +57,7 @@ jest.mock('@/hooks/users/useUserDiary', () => ({
 jest.mock('@/components/profile/DiaryRow', () => ({ DiaryRow: () => null }));
 
 import { fireEvent, render } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 import WelcomeScreen from '@/app/welcome';
 import DiaryScreen from '@/app/diary';
 import { Colors } from '@/constants/theme';
@@ -65,6 +68,7 @@ const PINNED_PLACES = '/(tabs)/places?view=list&layer=pinned';
 
 beforeEach(() => {
     jest.clearAllMocks();
+    Platform.OS = 'ios';
     mockUserId = 'guide-viewer';
     mockOnboardedAt = '2026-09-13T10:00:00Z';
     mockParams = {};
@@ -75,11 +79,11 @@ beforeEach(() => {
 });
 
 describe('first-run introduction navigation', () => {
-    it('teaches journal, pins and Tables in order, supports back, then opens the first-place destination', () => {
+    it('teaches journal, pins, sharing and Tables in order, supports back, then opens the first-place destination', () => {
         mockParams = { intro: '1' };
         const screen = render(<WelcomeScreen />);
         expect(screen.getByText('A journal of good meals.')).toBeTruthy();
-        expect(screen.getByRole('progressbar').props.accessibilityValue).toEqual({ min: 0, max: 3, now: 1, text: '1 of 3' });
+        expect(screen.getByRole('progressbar').props.accessibilityValue).toEqual({ min: 0, max: 4, now: 1, text: '1 of 4' });
         expect(screen.queryByLabelText('Back')).toBeNull();
 
         fireEvent.press(screen.getByText('Continue'));
@@ -89,8 +93,13 @@ describe('first-run introduction navigation', () => {
         expect(screen.getByText('A journal of good meals.')).toBeTruthy();
         fireEvent.press(screen.getByText('Continue'));
         fireEvent.press(screen.getByText('Continue'));
-        expect(screen.getByText('A Table for your people.')).toBeTruthy();
+        expect(screen.getByText('Turn clips into places.')).toBeTruthy();
         expect(screen.getByRole('progressbar').props.accessibilityValue.now).toBe(3);
+        expect(screen.getByText('Try the sharing demo')).toBeTruthy();
+        expect(screen.queryByText('Explore Tables')).toBeNull();
+        fireEvent.press(screen.getByText('Continue'));
+        expect(screen.getByText('A Table for your people.')).toBeTruthy();
+        expect(screen.getByRole('progressbar').props.accessibilityValue.now).toBe(4);
         expect(screen.queryByText('Continue')).toBeNull();
         expect(mockReplace).not.toHaveBeenCalled();
 
@@ -100,7 +109,7 @@ describe('first-run introduction navigation', () => {
         expect(mockBack).not.toHaveBeenCalled();
     });
 
-    it.each([0, 1, 2])('can skip after %i forward steps without opening an action screen', (steps) => {
+    it.each([0, 1, 2, 3])('can skip after %i forward steps without opening an action screen', (steps) => {
         mockParams = { intro: '1' };
         const screen = render(<WelcomeScreen />);
         for (let i = 0; i < steps; i++) fireEvent.press(screen.getByText('Continue'));
@@ -113,6 +122,7 @@ describe('first-run introduction navigation', () => {
     it('offers Tables as an optional terminal destination without creating a group', () => {
         mockParams = { intro: '1' };
         const screen = render(<WelcomeScreen />);
+        fireEvent.press(screen.getByText('Continue'));
         fireEvent.press(screen.getByText('Continue'));
         fireEvent.press(screen.getByText('Continue'));
         fireEvent.press(screen.getByText('Explore Tables'));
@@ -165,6 +175,75 @@ describe('first-run introduction navigation', () => {
         expect(mockEnableGuide).not.toHaveBeenCalled();
         expect(mockDismissTip).not.toHaveBeenCalled();
         expect(mockReplace).toHaveBeenCalledWith(PINNED_PLACES);
+    });
+});
+
+describe('Android guide availability', () => {
+    beforeEach(() => { Platform.OS = 'android'; });
+
+    it.each([{ intro: '1' }, { preview: '1' }])('teaches journal, places and Tables using the available chapters (%j)', (params) => {
+        mockParams = params;
+        const screen = render(<WelcomeScreen />);
+        expect(screen.getByRole('progressbar').props.accessibilityValue).toEqual({ min: 0, max: 3, now: 1, text: '1 of 3' });
+        fireEvent.press(screen.getByText('Continue'));
+        expect(screen.getByText('Keep your next good find.')).toBeTruthy();
+        fireEvent.press(screen.getByText('Continue'));
+        expect(screen.getByText('A Table for your people.')).toBeTruthy();
+        expect(screen.getByRole('progressbar').props.accessibilityValue).toEqual({ min: 0, max: 3, now: 3, text: '3 of 3' });
+        expect(screen.queryByText('Continue')).toBeNull();
+        expect(screen.queryByText('Try the sharing demo')).toBeNull();
+        expect(screen.queryByText('Turn clips into places.')).toBeNull();
+        fireEvent.press(screen.getByLabelText('Back'));
+        expect(screen.getByText('Keep your next good find.')).toBeTruthy();
+        expect(screen.getByRole('progressbar').props.accessibilityValue.now).toBe(2);
+        fireEvent.press(screen.getByText('Continue'));
+        fireEvent.press(screen.getByText('Find my first place'));
+        expect(mockReplace).toHaveBeenCalledWith(PINNED_PLACES);
+        expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it.each([0, 1, 2])('can skip any available introduction chapter (%s)', (steps) => {
+        mockParams = { intro: '1' };
+        const screen = render(<WelcomeScreen />);
+        for (let index = 0; index < steps; index++) fireEvent.press(screen.getByText('Continue'));
+        fireEvent.press(screen.getByLabelText('Skip introduction'));
+        expect(mockReplace).toHaveBeenCalledWith(PINNED_PLACES);
+        expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it('offers Tables at the Android terminal chapter', () => {
+        mockParams = { intro: '1' };
+        const screen = render(<WelcomeScreen />);
+        fireEvent.press(screen.getByText('Continue'));
+        fireEvent.press(screen.getByText('Continue'));
+        fireEvent.press(screen.getByText('Explore Tables'));
+        expect(mockReplace).toHaveBeenCalledWith('/(tabs)/tables');
+        expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it.each([{}, { topic: 'sharing' }])('omits sharing from the directory and treats an unavailable topic as the index (%j)', (params) => {
+        mockParams = params;
+        const screen = render(<WelcomeScreen />);
+        expect(screen.getByRole('header', { name: 'Make yourself at home.' })).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'From your feed' })).toBeNull();
+        expect(screen.queryByText('Turn clips into places.')).toBeNull();
+        expect(screen.queryByText('Try the sharing demo')).toBeNull();
+        fireEvent.press(screen.getByRole('button', { name: 'Your people' }));
+        expect(screen.getByText('A Table for your people.')).toBeTruthy();
+        fireEvent.press(screen.getByLabelText('Back'));
+        fireEvent.press(screen.getByLabelText('Close guide'));
+        expect(mockBack).toHaveBeenCalledTimes(1);
+        expect(mockEnableGuide).not.toHaveBeenCalled();
+    });
+
+    it('returns to the index when a mounted Android guide receives a sharing deep link', () => {
+        mockParams = { topic: 'tables' };
+        const screen = render(<WelcomeScreen />);
+        mockParams = { topic: 'sharing' };
+        screen.rerender(<WelcomeScreen />);
+        expect(screen.getByRole('header', { name: 'Make yourself at home.' })).toBeTruthy();
+        expect(screen.queryByText('Try the sharing demo')).toBeNull();
+        expect(mockEnableGuide).not.toHaveBeenCalled();
     });
 });
 
@@ -240,6 +319,7 @@ describe('replayable guide navigation', () => {
     it.each([
         ['journal', 'Find a place', '/(tabs)/places'],
         ['places', 'Open Places', PINNED_PLACES],
+        ['sharing', 'Open Places', PINNED_PLACES],
         ['tables', 'Explore Tables', '/(tabs)/tables'],
         ['lists', 'Open lists', '/lists'],
         ['friends', 'Find people', '/(tabs)/places?mode=people'],

@@ -10,6 +10,7 @@ import { dismissDiscoveryTip, type DiscoveryTopic } from '@/lib/discoveryGuide';
 import { findGuideChapter } from './guideContent';
 
 const tips: Record<DiscoveryTopic, { title: string; body: string }> = {
+    sharing: { title: 'From your feed to your map', body: 'Share a TikTok or Reel to Napkin, then review the places in your clip tray.' },
     places: { title: 'Keep a place for later', body: 'Tap a restaurant’s heart to pin it. Your clips land here too.' },
     journal: { title: 'Your meals, remembered', body: 'Check in or write a review from a restaurant page.' },
     tables: { title: 'Where your tastes meet', body: 'On the map brings together places your Table wants to try.' },

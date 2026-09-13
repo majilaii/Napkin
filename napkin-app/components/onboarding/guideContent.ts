@@ -9,7 +9,7 @@ export interface GuideChapter {
     detail: string;
     action: string;
     route: Href;
-    icon: 'book-outline' | 'bookmark-outline' | 'restaurant-outline' | 'albums-outline' | 'people-outline';
+    icon: 'book-outline' | 'bookmark-outline' | 'restaurant-outline' | 'albums-outline' | 'people-outline' | 'share-outline';
 }
 
 export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
@@ -21,9 +21,15 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
     },
     {
         id: 'places', label: 'Your next meal', title: 'Keep your next good find.',
-        body: 'Pin places you want to try. Bring in a restaurant link, video, or screenshot from the clip tray.',
+        body: 'Pin places you want to try. Find them again on your map or in your saved places.',
         detail: 'Search in Places, then tap the heart to pin a restaurant. Switch between your map and list to find it again.',
         action: 'Open Places', route: '/(tabs)/places?view=list&layer=pinned', icon: 'bookmark-outline',
+    },
+    {
+        id: 'sharing', label: 'From your feed', title: 'Turn clips into places.',
+        body: 'Find a restaurant on TikTok or Instagram? Share it to Napkin, review the places, and keep your picks on the map.',
+        detail: 'Tap Share in TikTok or Instagram, then choose Napkin. If you don’t see it, look under More. Add for review, then open Napkin’s clip tray in Places to check and save the restaurants.',
+        action: 'Open Places', route: '/(tabs)/places?view=list&layer=pinned', icon: 'share-outline',
     },
     {
         id: 'tables', label: 'Your people', title: 'A Table for your people.',
@@ -48,3 +54,6 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
 export function findGuideChapter(topic: unknown): GuideChapter | undefined {
     return GUIDE_CHAPTERS.find((chapter) => chapter.id === topic);
 }
+
+/** Keep the first-run selection explicit as the replayable guide grows. */
+export const INTRO_CHAPTERS = GUIDE_CHAPTERS.filter((chapter) => ['journal', 'places', 'sharing', 'tables'].includes(chapter.id));

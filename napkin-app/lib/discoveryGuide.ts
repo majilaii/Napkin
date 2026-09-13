@@ -1,7 +1,7 @@
 /** Optional, user-scoped feature tips. Profile onboarding remains server-owned. */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const DISCOVERY_TOPICS = ['places', 'tables', 'journal', 'friends', 'lists'] as const;
+export const DISCOVERY_TOPICS = ['places', 'tables', 'journal', 'friends', 'lists', 'sharing'] as const;
 export type DiscoveryTopic = typeof DISCOVERY_TOPICS[number];
 
 export interface DiscoveryGuideState {
