@@ -15,7 +15,7 @@ jest.mock('@/hooks/restaurants/useRestaurantVisitMutations', () => ({ useRestaur
 
 import React from 'react';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
-import { Image } from 'react-native';
+import { Image, Text } from 'react-native';
 import { Colors } from '@/constants/theme';
 import { useRestaurantVisitMutations } from '@/hooks/restaurants/useRestaurantVisitMutations';
 import type { SelfLogRow } from '@/hooks/restaurants/useRestaurantPage';
@@ -72,6 +72,15 @@ it('offers check-in and direct meal logging before the first visit', () => {
     expect(props.onReview).not.toHaveBeenCalled();
 });
 
+it.each([{ visits: [] }, { visits: [row('visit', '2026-09-01')] }])('shows regular status independently of personal visits (%o)', ({ visits }) => {
+    const screen = render(<RestaurantVisitActions {...props} visits={visits}
+        regularStatus={<Text>Clara · The regular</Text>} />);
+    expect(screen.getByText('Clara · The regular')).toBeTruthy();
+    expectStableActions(screen);
+    expect(record).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+});
+
 it('blocks double taps and retries the same nonce before allowing a distinct repeat visit', async () => {
     let reject!: (e: Error) => void;
     record.mockImplementationOnce(() => new Promise((_, no) => { reject = no; }));
@@ -114,7 +123,7 @@ it('adds a review to the exact older check-in selected from history and retains 
     expectStableActions(screen);
     fireEvent.press(screen.getByLabelText('Visit history, 2 visits'));
     fireEvent.press(screen.getByLabelText(/^Visit 1, no review,/));
-    expect(screen.queryByText('Your visits')).toBeNull();
+    expect(screen.queryByLabelText('Close visit sheet')).toBeNull();
     expectStableActions(screen);
     screen.rerender(<RestaurantVisitActions {...props} visits={[{ ...older }, { ...newer }]} />);
     fireEvent.press(screen.getByText('Add review'));

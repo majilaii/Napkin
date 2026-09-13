@@ -2,10 +2,9 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { Colors, IconSize, Spacing, Type } from '@/constants/theme';
+import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
 import type { RegularDetail } from '@/hooks/restaurants/useRestaurantPage';
 import { Avatar } from '@/components/feed/Avatar';
-import { SectionHeading } from './RestaurantPageV3';
 
 type Props = {
     detail: RegularDetail | null | undefined;
@@ -56,11 +55,12 @@ export function RestaurantRegularRow({ detail, onPress, palette }: Props) {
             <View style={styles.body}>
                 <View style={styles.nameLine}>
                     <Ionicons name="ribbon-outline" size={IconSize.sm} color={palette.amberBright} />
-                    <Text style={[Type.feedNoteRestaurant, styles.name, { color: palette.text }]} numberOfLines={1}>
+                    <Text style={[Type.caption, styles.name, { color: palette.text }]}>
                         {name}
                     </Text>
+                    <Text style={[Type.metadata, { color: palette.textMuted }]}>· The regular</Text>
                 </View>
-                <Text style={[Type.metadata, styles.standing, { color: palette.textMuted }]} numberOfLines={1}>
+                <Text style={[Type.metadata, styles.standing, { color: palette.textMuted }]}>
                     {regularStandingCopy(detail)}
                 </Text>
             </View>
@@ -70,8 +70,7 @@ export function RestaurantRegularRow({ detail, onPress, palette }: Props) {
         </View>
     );
     return (
-        <View style={styles.section}>
-            <SectionHeading label="THE REGULAR" palette={palette} />
+        <View style={[styles.section, { backgroundColor: palette.surfaceJournal }]} testID="restaurant-regular-status">
             {canOpen ? (
                 <Pressable
                     onPress={() => onPress(detail.user_id)}
@@ -92,8 +91,8 @@ export function RestaurantRegularRow({ detail, onPress, palette }: Props) {
 
 const styles = StyleSheet.create({
     section: {
-        paddingHorizontal: Spacing.restaurant.pageGutter,
-        marginTop: Spacing.restaurant.sectionGap,
+        padding: Spacing.sm,
+        borderRadius: Radius.md,
     },
     row: {
         minHeight: Spacing.restaurant.quietActionHeight,
@@ -105,6 +104,7 @@ const styles = StyleSheet.create({
     nameLine: {
         flexDirection: 'row',
         alignItems: 'center',
+        flexWrap: 'wrap',
         gap: Spacing.xs,
     },
     name: { flexShrink: 1 },

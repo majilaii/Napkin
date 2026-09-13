@@ -30,3 +30,5 @@ export {
     RestaurantDetails,
     SectionHeading,
 } from './RestaurantPageV3';
+
+export { RestaurantOverview } from './RestaurantOverview';
