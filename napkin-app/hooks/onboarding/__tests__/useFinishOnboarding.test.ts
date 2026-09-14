@@ -121,9 +121,15 @@ describe('useFinishOnboarding', () => {
     // server as NULL — fn_complete_onboarding leaves profiles.display_name alone
     // on NULL and RAISES invalid_display_name on a non-null blank. Asserting the
     // old hardcoded 'New User' would re-plant the placeholder from the client.
-    it('sends display_name NULL when the name step was skipped and metadata has none', () => {
+    it('sends display_name NULL when the name step was skipped and nothing is derivable', () => {
         jest.mocked(useAuth).mockReturnValue({
-            user: { id: 'onboarding-user', user_metadata: {} },
+            // A Hide My Email relay: no metadata name and nothing derivable, so the
+            // trigger's placeholder is deliberately left in place.
+            user: {
+                id: 'onboarding-user',
+                email: 'x7k2m9p4qr@privaterelay.appleid.com',
+                user_metadata: {},
+            },
             onboardedAt: null,
         } as unknown as ReturnType<typeof useAuth>);
         jest.mocked(useOnboardingDraft).mockReturnValue({
@@ -136,6 +142,55 @@ describe('useFinishOnboarding', () => {
 
         expect(mutate).toHaveBeenCalledWith(
             { display_name: null, home_city: null, avatar_url: null },
+            expect.any(Object),
+        );
+    });
+
+    // Without this the user finishes setup named 'New User' — the literal
+    // placeholder handle_new_user writes — which then renders as their name and
+    // as a "NU" avatar monogram everywhere.
+    it('derives a name from the email when the optional step was skipped', () => {
+        jest.mocked(useAuth).mockReturnValue({
+            user: {
+                id: 'onboarding-user',
+                email: 'ada.lovelace@example.com',
+                user_metadata: {},
+            },
+            onboardedAt: null,
+        } as unknown as ReturnType<typeof useAuth>);
+        jest.mocked(useOnboardingDraft).mockReturnValue({
+            draft: { display_name: '', home_city: null, avatar_url: null },
+            patch: jest.fn(),
+        });
+        const { result } = renderHook(() => useFinishOnboarding());
+
+        act(() => result.current.finish());
+
+        expect(mutate).toHaveBeenCalledWith(
+            expect.objectContaining({ display_name: 'Ada Lovelace' }),
+            expect.any(Object),
+        );
+    });
+
+    it('prefers a real provider name over the email-derived one', () => {
+        jest.mocked(useAuth).mockReturnValue({
+            user: {
+                id: 'onboarding-user',
+                email: 'ada.lovelace@example.com',
+                user_metadata: { full_name: 'Grace Hopper' },
+            },
+            onboardedAt: null,
+        } as unknown as ReturnType<typeof useAuth>);
+        jest.mocked(useOnboardingDraft).mockReturnValue({
+            draft: { display_name: '', home_city: null, avatar_url: null },
+            patch: jest.fn(),
+        });
+        const { result } = renderHook(() => useFinishOnboarding());
+
+        act(() => result.current.finish());
+
+        expect(mutate).toHaveBeenCalledWith(
+            expect.objectContaining({ display_name: 'Grace Hopper' }),
             expect.any(Object),
         );
     });

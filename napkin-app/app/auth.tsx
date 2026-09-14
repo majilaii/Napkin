@@ -93,12 +93,19 @@ function resumeAfterAuth(
  * down to 'New User'. The name can therefore only be captured client-side, here.
  *
  * Two sinks, deliberately redundant:
- *   1. `updateUser` — the SERVER sink. Writes full_name into raw_user_meta_data,
- *      which survives reinstall. It does NOT reach profiles.display_name (the
+ *   1. `pendingIdentity` — the LOCAL sink, and the one onboarding actually reads.
+ *      `stash()` sets its in-memory memo synchronously before its first await, so
+ *      the name is already readable by the time this returns.
+ *   2. `updateUser` — the SERVER sink. Writes full_name into raw_user_meta_data so
+ *      the name survives a reinstall. It does NOT reach profiles.display_name (the
  *      trigger is INSERT-only); onboarding's complete_onboarding does that.
- *   2. `pendingIdentity` — the SYNCHRONOUS local sink. RootLayoutNav redirects to
- *      /onboarding the instant the session flips, which races the updateUser
- *      round-trip, and offline that round-trip may never land at all.
+ *
+ * The server sink is deliberately NOT awaited. `signInWithIdToken` notifies
+ * SIGNED_IN before it resolves, so AuthProvider's onboarded_at read — the one that
+ * drives RootLayoutNav's redirect — is already in flight. Awaiting an unbounded
+ * network write here would race that redirect and could fire resumeAfterAuth's
+ * `router.replace` after the user had already been moved into onboarding, yanking
+ * them out mid-step. It would also hold `loading` true across the whole round-trip.
  *
  * Never throws: losing the name costs a prefill, never the sign-in.
  */
@@ -114,11 +121,13 @@ async function persistProviderIdentity(
         // Memo write already happened synchronously inside stash().
     }
     if (!credential.fullName) return;
-    try {
-        await supabase.auth.updateUser({ data: { full_name: credential.fullName } });
-    } catch {
-        // Offline or transient — the stash still carries the name into onboarding.
-    }
+    // Fire-and-forget; see above. updateUser resolves {error} rather than throwing,
+    // so swallow both shapes.
+    void supabase.auth
+        .updateUser({ data: { full_name: credential.fullName } })
+        .catch(() => {
+            // Offline or transient — the stash still carries the name into onboarding.
+        });
 }
 
 // Supabase auth auto-refresh when foregrounded. Registered once at module load.

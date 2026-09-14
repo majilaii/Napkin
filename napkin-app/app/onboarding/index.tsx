@@ -24,6 +24,12 @@
  * fn_complete_onboarding leaves profiles.display_name untouched on NULL and
  * RAISES invalid_display_name on a non-null blank.
  *
+ * Do NOT pass SetupFrame's `optional` prop here. It is not a generic "this step
+ * may be skipped" flag — OnboardingProgress uses it as the follows-step COPY
+ * switch, and it relabels the header "People you know / Optional". The city step
+ * is skippable too and likewise does not pass it; a skippable step signals
+ * itself with "Maybe later", which is all this one needs.
+ *
  * Name stays in the setup draft until final, atomic completion.
  */
 import React, { useEffect, useState } from 'react';
@@ -58,6 +64,14 @@ export default function OnboardingNameScreen() {
         router.push('/onboarding/photo');
     };
 
+    // Distinct from `next`: Maybe later DISCARDS whatever is in the field. Sharing
+    // next's handler would quietly save a half-typed name the user just declined
+    // to give, which is the opposite of what the control says.
+    const skip = () => {
+        patch({ display_name: '' });
+        router.push('/onboarding/photo');
+    };
+
     // `undefined` = still resolving; `string` = skipping. Either way, do not
     // flash a form asking for something we are about to fill in ourselves.
     if (provided !== null) return null;
@@ -66,7 +80,6 @@ export default function OnboardingNameScreen() {
         <SetupFrame
             palette={palette}
             step={1}
-            optional
             footer={
                 <>
                     <Pressable
@@ -80,7 +93,7 @@ export default function OnboardingNameScreen() {
                         <Text style={[s.primaryBtnText, { color: palette.textInverse }]}>Continue</Text>
                     </Pressable>
                     <Pressable
-                        onPress={next}
+                        onPress={skip}
                         style={s.skipButton}
                         accessibilityRole="button"
                         accessibilityLabel="Skip your name"

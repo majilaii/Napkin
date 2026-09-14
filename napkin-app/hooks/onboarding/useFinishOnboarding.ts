@@ -9,7 +9,11 @@ import { useCallback } from 'react';
 import { useRouter } from 'expo-router';
 
 import { useCompleteOnboarding } from '@/hooks/onboarding/useCompleteOnboarding';
-import { displayNameForCompletion, resolveProvidedName } from '@/lib/onboardingName';
+import {
+    deriveNameFromEmail,
+    displayNameForCompletion,
+    resolveProvidedName,
+} from '@/lib/onboardingName';
 import { getPreviewOnboardingOnLaunchCached } from '@/lib/devPrefs';
 import { useAuth } from '@/providers/AuthProvider';
 import { type OnboardingDraft, useOnboardingDraft } from '@/app/onboarding/OnboardingDraftContext';
@@ -46,7 +50,12 @@ export function useFinishOnboarding() {
             displayNameForCompletion(finalDraft.display_name) ??
             resolveProvidedName({
                 userMetadata: user?.user_metadata as Record<string, unknown> | undefined,
-            });
+            }) ??
+            // Nothing typed and no provider name: derive something readable from the
+            // email rather than leaving the trigger's 'New User' placeholder to be
+            // rendered as this person's name. Declines (-> null, placeholder kept)
+            // for Hide My Email relays and identifier-shaped addresses.
+            deriveNameFromEmail(user?.email);
         mutate(
             {
                 display_name,
@@ -63,7 +72,7 @@ export function useFinishOnboarding() {
                 onSuccess: () => router.replace('/welcome?intro=1'),
             },
         );
-    }, [draft, isPending, mutate, onboardedAt, router, user?.user_metadata]);
+    }, [draft, isPending, mutate, onboardedAt, router, user?.email, user?.user_metadata]);
 
     return {
         finish,
