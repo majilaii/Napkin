@@ -8,7 +8,6 @@
  * means the onboarding name step must NOT be shown.
  */
 import {
-    deriveNameFromEmail,
     displayNameForCompletion,
     resolveProvidedName,
     MAX_DISPLAY_NAME,
@@ -86,43 +85,5 @@ describe('displayNameForCompletion', () => {
     it('trims and caps a real name', () => {
         expect(displayNameForCompletion('  Ada  ')).toBe('Ada');
         expect(displayNameForCompletion('y'.repeat(200))).toHaveLength(MAX_DISPLAY_NAME);
-    });
-});
-
-describe('deriveNameFromEmail', () => {
-    it('reads a name out of an ordinary address', () => {
-        expect(deriveNameFromEmail('ada@example.com')).toBe('Ada');
-        expect(deriveNameFromEmail('ada.lovelace@example.com')).toBe('Ada Lovelace');
-        expect(deriveNameFromEmail('ada_lovelace@example.com')).toBe('Ada Lovelace');
-        expect(deriveNameFromEmail('ada-lovelace@example.com')).toBe('Ada Lovelace');
-        expect(deriveNameFromEmail('ADA.LOVELACE@example.com')).toBe('Ada Lovelace');
-    });
-
-    it('drops a +tag', () => {
-        expect(deriveNameFromEmail('jacky+napkinreview@example.com')).toBe('Jacky');
-    });
-
-    it('declines a Hide My Email relay rather than inventing a name from a token', () => {
-        expect(deriveNameFromEmail('x7k2m9p4qr@privaterelay.appleid.com')).toBeNull();
-        expect(deriveNameFromEmail('X7K2M9P4QR@PrivateRelay.AppleID.com')).toBeNull();
-    });
-
-    it('declines identifier-shaped addresses', () => {
-        expect(deriveNameFromEmail('user123@example.com')).toBeNull();
-        expect(deriveNameFromEmail('ada.2nd@example.com')).toBeNull();
-        expect(deriveNameFromEmail('a@example.com')).toBeNull();
-    });
-
-    it('declines anything that is not an address', () => {
-        expect(deriveNameFromEmail(null)).toBeNull();
-        expect(deriveNameFromEmail(undefined)).toBeNull();
-        expect(deriveNameFromEmail('')).toBeNull();
-        expect(deriveNameFromEmail('no-at-sign')).toBeNull();
-        expect(deriveNameFromEmail('@example.com')).toBeNull();
-        expect(deriveNameFromEmail('ada@')).toBeNull();
-    });
-
-    it('caps at the server limit', () => {
-        expect(deriveNameFromEmail(`${'z'.repeat(200)}@example.com`)).toHaveLength(MAX_DISPLAY_NAME);
     });
 });

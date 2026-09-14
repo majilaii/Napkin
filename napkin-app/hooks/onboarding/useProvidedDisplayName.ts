@@ -29,8 +29,15 @@ export function useProvidedDisplayName(): string | null | undefined {
     const userId = user?.id;
     const metadata = user?.user_metadata as Record<string, unknown> | undefined;
 
-    /** Resolved from the AsyncStorage fallback; undefined until that read lands. */
-    const [stored, setStored] = useState<string | null | undefined>(undefined);
+    /**
+     * Resolved from the AsyncStorage fallback; undefined until that read lands.
+     *
+     * KEYED BY USER. A bare value would survive an auth-identity change and hand
+     * the incoming user the previous one's name for the render or two before the
+     * new read resolves — and the name step patches whatever it is given straight
+     * into the onboarding draft. Same rule as every other user-private store here.
+     */
+    const [stored, setStored] = useState<{ userId: string; name: string | null } | null>(null);
 
     // Cheap (in-memory memo + a couple of property reads), so recompute rather
     // than snapshot — a snapshot would go stale when the session refreshes and
@@ -48,12 +55,13 @@ export function useProvidedDisplayName(): string | null | undefined {
         (async () => {
             const stashed = await pendingIdentity.peek(userId);
             if (cancelled) return;
-            setStored(
-                resolveProvidedName({
+            setStored({
+                userId,
+                name: resolveProvidedName({
                     stashedFullName: stashed?.fullName,
                     userMetadata: metadata,
                 }),
-            );
+            });
         })();
         return () => {
             cancelled = true;
@@ -68,5 +76,7 @@ export function useProvidedDisplayName(): string | null | undefined {
     if (immediate) return immediate;
     if (isLoading) return undefined;
     if (!userId) return null;
-    return stored;
+    // A result belonging to a previous account is not an answer for this one.
+    if (stored?.userId !== userId) return undefined;
+    return stored.name;
 }

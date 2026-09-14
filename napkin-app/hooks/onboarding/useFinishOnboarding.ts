@@ -9,11 +9,7 @@ import { useCallback } from 'react';
 import { useRouter } from 'expo-router';
 
 import { useCompleteOnboarding } from '@/hooks/onboarding/useCompleteOnboarding';
-import {
-    deriveNameFromEmail,
-    displayNameForCompletion,
-    resolveProvidedName,
-} from '@/lib/onboardingName';
+import { displayNameForCompletion, resolveProvidedName } from '@/lib/onboardingName';
 import { getPreviewOnboardingOnLaunchCached } from '@/lib/devPrefs';
 import { useAuth } from '@/providers/AuthProvider';
 import { type OnboardingDraft, useOnboardingDraft } from '@/app/onboarding/OnboardingDraftContext';
@@ -42,7 +38,12 @@ export function useFinishOnboarding() {
         const finalDraft = { ...draft, ...overrides };
         // NULL, never 'New User'. The name step is optional (App Store
         // Guideline 5.1.1(x) — see app/onboarding/index.tsx), so a user can
-        // legitimately arrive here without one. fn_complete_onboarding leaves
+        // legitimately arrive here without one.
+        //
+        // Do NOT fill the gap by deriving a name from the login email. This same
+        // action stamps account_privacy='public', so that would publish an
+        // identity the user had just declined to give — worse than the
+        // placeholder it would replace. Provider-confirmed identity only. fn_complete_onboarding leaves
         // profiles.display_name untouched on NULL and RAISES on a non-null
         // blank, so null is the correct "nothing to write" signal; hardcoding
         // the trigger's placeholder here would just re-assert it client-side.
@@ -50,12 +51,7 @@ export function useFinishOnboarding() {
             displayNameForCompletion(finalDraft.display_name) ??
             resolveProvidedName({
                 userMetadata: user?.user_metadata as Record<string, unknown> | undefined,
-            }) ??
-            // Nothing typed and no provider name: derive something readable from the
-            // email rather than leaving the trigger's 'New User' placeholder to be
-            // rendered as this person's name. Declines (-> null, placeholder kept)
-            // for Hide My Email relays and identifier-shaped addresses.
-            deriveNameFromEmail(user?.email);
+            });
         mutate(
             {
                 display_name,
@@ -72,7 +68,7 @@ export function useFinishOnboarding() {
                 onSuccess: () => router.replace('/welcome?intro=1'),
             },
         );
-    }, [draft, isPending, mutate, onboardedAt, router, user?.email, user?.user_metadata]);
+    }, [draft, isPending, mutate, onboardedAt, router, user?.user_metadata]);
 
     return {
         finish,

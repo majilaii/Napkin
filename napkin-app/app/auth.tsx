@@ -92,15 +92,15 @@ function resumeAfterAuth(
  * reading only token metadata — so for Apple it always coalesces display_name
  * down to 'New User'. The name can therefore only be captured client-side, here.
  *
- * Two sinks, deliberately redundant:
+ * Two sinks, deliberately redundant, and NEITHER is awaited — see below:
  *   1. `pendingIdentity` — the LOCAL sink, and the one onboarding actually reads.
  *      `stash()` sets its in-memory memo synchronously before its first await, so
- *      the name is already readable by the time this returns.
+ *      the name is already readable the instant the call is made.
  *   2. `updateUser` — the SERVER sink. Writes full_name into raw_user_meta_data so
  *      the name survives a reinstall. It does NOT reach profiles.display_name (the
  *      trigger is INSERT-only); onboarding's complete_onboarding does that.
  *
- * The server sink is deliberately NOT awaited. `signInWithIdToken` notifies
+ * Neither write is awaited. `signInWithIdToken` notifies
  * SIGNED_IN before it resolves, so AuthProvider's onboarded_at read — the one that
  * drives RootLayoutNav's redirect — is already in flight. Awaiting an unbounded
  * network write here would race that redirect and could fire resumeAfterAuth's
@@ -115,11 +115,14 @@ async function persistProviderIdentity(
 ): Promise<void> {
     if (!user?.id) return;
     if (!credential.fullName && !credential.email) return;
-    try {
-        await pendingIdentity.stash(user.id, credential);
-    } catch {
-        // Memo write already happened synchronously inside stash().
-    }
+    // Not awaited: stash() sets its in-memory memo synchronously BEFORE its first
+    // await, so the name is already readable the moment this line runs. Awaiting
+    // the AsyncStorage write behind it would only delay resumeAfterAuth and hold
+    // `loading` true — the same race the server sink was moved out of.
+    void pendingIdentity.stash(user.id, credential).catch(() => {
+        // The memo already carries this app session; only the cold-restart
+        // recovery path is lost, which updateUser below covers.
+    });
     if (!credential.fullName) return;
     // Fire-and-forget; see above. updateUser resolves {error} rather than throwing,
     // so swallow both shapes.

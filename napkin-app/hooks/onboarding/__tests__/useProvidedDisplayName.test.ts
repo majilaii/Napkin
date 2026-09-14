@@ -16,6 +16,8 @@ import { useAuth } from '@/providers/AuthProvider';
 import { clear, stash } from '@/lib/pendingIdentity';
 import { useProvidedDisplayName } from '../useProvidedDisplayName';
 
+/** Mirrors the KEY in lib/pendingIdentity — the cross-account test seeds it directly. */
+const STORAGE_KEY = 'napkin.pendingIdentity';
 const USER = 'user-aaa';
 
 // `id` is explicitly nullable: passing `undefined` would hit the default and
@@ -74,6 +76,36 @@ describe('useProvidedDisplayName', () => {
         await stash('somebody-else', { fullName: 'Somebody Else', email: null });
         mockUser({});
         const { result } = renderHook(() => useProvidedDisplayName());
+        await waitFor(() => expect(result.current).toBeNull());
+    });
+
+    // Per-user cache isolation: a resolved name is an answer for ONE account. The
+    // name step patches whatever this hook returns straight into the onboarding
+    // draft, so handing the incoming user the previous one's name — even for a
+    // render or two — would write it to their profile.
+    //
+    // The first account's name MUST come from the AsyncStorage path: a name in
+    // user_metadata resolves synchronously through `immediate` and never
+    // populates the cached state this guards. Seeding storage directly keeps the
+    // memo cold so the async read is the one that answers.
+    it('never hands a new account the previous account\u2019s resolved name', async () => {
+        await AsyncStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({
+                userId: 'user-aaa',
+                fullName: 'Ada Lovelace',
+                email: null,
+                stashedAt: Date.now(),
+            }),
+        );
+        mockUser({}, 'user-aaa');
+        const { result, rerender } = renderHook(() => useProvidedDisplayName());
+        await waitFor(() => expect(result.current).toBe('Ada Lovelace'));
+
+        // Auth identity changes. The new user has no name anywhere.
+        mockUser({}, 'user-bbb');
+        rerender(undefined);
+        expect(result.current).toBeUndefined(); // never 'Ada Lovelace'
         await waitFor(() => expect(result.current).toBeNull());
     });
 
