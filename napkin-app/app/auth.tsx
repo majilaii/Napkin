@@ -37,6 +37,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import * as postAuthResume from '@/lib/postAuthResume';
 import { appleIdToken, googleIdToken, OAuthCancelledError } from '@/lib/oauth';
+import * as pendingIdentity from '@/lib/pendingIdentity';
+import { AppleSignInButton } from '@/components/auth/AppleSignInButton';
 import { LEGAL_URLS } from '@/constants/links';
 
 /**
@@ -77,6 +79,58 @@ function resumeAfterAuth(
         return true; // RootLayoutNav redirect now harmless — segments[0] === 'join-table'
     }
     return false; // No pending stash — RootLayoutNav handles the redirect.
+}
+
+/**
+ * Persist the one-shot identity a provider just handed us (TICKET-246).
+ *
+ * Apple returns the user's name exactly once — on the first authorization for
+ * this Apple ID + app — and it arrives out-of-band in the native credential, not
+ * in the identity token. `signInWithIdToken` has no parameter that seeds user
+ * metadata (SignInWithIdTokenCredentials is provider/token/access_token/nonce/
+ * captchaToken only), and `handle_new_user` fires AFTER INSERT on auth.users
+ * reading only token metadata — so for Apple it always coalesces display_name
+ * down to 'New User'. The name can therefore only be captured client-side, here.
+ *
+ * Two sinks, deliberately redundant, and NEITHER is awaited — see below:
+ *   1. `pendingIdentity` — the LOCAL sink, and the one onboarding actually reads.
+ *      `stash()` sets its in-memory memo synchronously before its first await, so
+ *      the name is already readable the instant the call is made.
+ *   2. `updateUser` — the SERVER sink. Writes full_name into raw_user_meta_data so
+ *      the name survives a reinstall. It does NOT reach profiles.display_name (the
+ *      trigger is INSERT-only); onboarding's complete_onboarding does that.
+ *
+ * Neither write is awaited. `signInWithIdToken` notifies
+ * SIGNED_IN before it resolves, so AuthProvider's onboarded_at read — the one that
+ * drives RootLayoutNav's redirect — is already in flight. Awaiting an unbounded
+ * network write here would race that redirect and could fire resumeAfterAuth's
+ * `router.replace` after the user had already been moved into onboarding, yanking
+ * them out mid-step. It would also hold `loading` true across the whole round-trip.
+ *
+ * Never throws: losing the name costs a prefill, never the sign-in.
+ */
+async function persistProviderIdentity(
+    user: { id: string } | null | undefined,
+    credential: { fullName: string | null; email: string | null },
+): Promise<void> {
+    if (!user?.id) return;
+    if (!credential.fullName && !credential.email) return;
+    // Not awaited: stash() sets its in-memory memo synchronously BEFORE its first
+    // await, so the name is already readable the moment this line runs. Awaiting
+    // the AsyncStorage write behind it would only delay resumeAfterAuth and hold
+    // `loading` true — the same race the server sink was moved out of.
+    void pendingIdentity.stash(user.id, credential).catch(() => {
+        // The memo already carries this app session; only the cold-restart
+        // recovery path is lost, which updateUser below covers.
+    });
+    if (!credential.fullName) return;
+    // Fire-and-forget; see above. updateUser resolves {error} rather than throwing,
+    // so swallow both shapes.
+    void supabase.auth
+        .updateUser({ data: { full_name: credential.fullName } })
+        .catch(() => {
+            // Offline or transient — the stash still carries the name into onboarding.
+        });
 }
 
 // Supabase auth auto-refresh when foregrounded. Registered once at module load.
@@ -205,22 +259,33 @@ export default function AuthScreen() {
             // bound, `loading` stays true and every button on the screen is
             // disabled forever. Generous limit: a human typing an Apple ID
             // password legitimately takes a while.
-            const token = await withAuthTimeout(
+            // Apple hands back fullName/email ONLY on the first authorization
+            // for this Apple ID + app, out-of-band (they are not in the identity
+            // JWT), and never again. Keep the WHOLE credential — discarding the
+            // name here is what made onboarding re-ask for it and drew the
+            // Guideline 4 rejection of 2026-09-14.
+            const credential = await withAuthTimeout(
                 provider === 'apple'
-                    ? appleIdToken().then((c) => c.identityToken)
-                    : googleIdToken(),
+                    ? appleIdToken()
+                    : googleIdToken().then((identityToken) => ({
+                          identityToken,
+                          fullName: null,
+                          email: null,
+                      })),
                 90_000,
             );
+            const token = credential.identityToken;
             // Consume BEFORE signIn so the resume replace beats RootLayoutNav's
             // session-flip redirect; re-stash on failure (mirrors the password path).
             winner = await postAuthResume.consumeWinner();
-            const { error } = await withAuthTimeout(
+            const { data, error } = await withAuthTimeout(
                 supabase.auth.signInWithIdToken({ provider, token }),
             );
             if (error) {
                 if (winner) await postAuthResume.restashWinner(winner);
                 Alert.alert("Couldn't sign in", error.message);
             } else {
+                await persistProviderIdentity(data.user, credential);
                 resumeAfterAuth(winner, router);
             }
         } catch (err) {
@@ -418,19 +483,15 @@ export default function AuthScreen() {
                         </View>
 
                         {/* Apple Authentication is iOS-only. Android shows
-                            email + Google without a dead native affordance. */}
+                            email + Google without a dead native affordance.
+                            Apple's OWN button component — a custom one is against
+                            the App Store Guidelines (see AppleSignInButton). */}
                         {Platform.OS === 'ios' ? (
-                            <Pressable
+                            <AppleSignInButton
                                 onPress={() => signInWithProvider('apple')}
                                 disabled={loading}
-                                style={({ pressed }) => [
-                                    styles.oauthBtn,
-                                    { backgroundColor: '#000000', opacity: pressed || loading ? 0.85 : 1 },
-                                ]}
-                            >
-                                <Ionicons name="logo-apple" size={18} color="#ffffff" style={styles.oauthIcon} />
-                                <Text style={[Type.label, { color: '#ffffff' }]}>Continue with Apple</Text>
-                            </Pressable>
+                                style={styles.appleBtn}
+                            />
                         ) : null}
 
                         {/* Google — light surface, hairline warm rule. */}
@@ -550,6 +611,11 @@ const styles = StyleSheet.create({
     orRule: {
         flex: 1,
         height: StyleSheet.hairlineWidth,
+    },
+    // Apple's native button carries its own colours, type and logo; only the
+    // outer spacing is ours (cornerRadius/height live in AppleSignInButton).
+    appleBtn: {
+        marginTop: Spacing.lg,
     },
     oauthBtn: {
         marginTop: Spacing.lg,

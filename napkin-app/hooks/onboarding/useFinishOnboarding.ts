@@ -9,6 +9,7 @@ import { useCallback } from 'react';
 import { useRouter } from 'expo-router';
 
 import { useCompleteOnboarding } from '@/hooks/onboarding/useCompleteOnboarding';
+import { displayNameForCompletion, resolveProvidedName } from '@/lib/onboardingName';
 import { getPreviewOnboardingOnLaunchCached } from '@/lib/devPrefs';
 import { useAuth } from '@/providers/AuthProvider';
 import { type OnboardingDraft, useOnboardingDraft } from '@/app/onboarding/OnboardingDraftContext';
@@ -35,10 +36,22 @@ export function useFinishOnboarding() {
         // City can patch and finish in the same event. Merge its submitted value
         // synchronously so React's next context render cannot lose that final edit.
         const finalDraft = { ...draft, ...overrides };
+        // NULL, never 'New User'. The name step is optional (App Store
+        // Guideline 5.1.1(x) — see app/onboarding/index.tsx), so a user can
+        // legitimately arrive here without one.
+        //
+        // Do NOT fill the gap by deriving a name from the login email. This same
+        // action stamps account_privacy='public', so that would publish an
+        // identity the user had just declined to give — worse than the
+        // placeholder it would replace. Provider-confirmed identity only. fn_complete_onboarding leaves
+        // profiles.display_name untouched on NULL and RAISES on a non-null
+        // blank, so null is the correct "nothing to write" signal; hardcoding
+        // the trigger's placeholder here would just re-assert it client-side.
         const display_name =
-            (finalDraft.display_name && finalDraft.display_name.trim()) ||
-            (user?.user_metadata?.display_name as string | undefined) ||
-            'New User';
+            displayNameForCompletion(finalDraft.display_name) ??
+            resolveProvidedName({
+                userMetadata: user?.user_metadata as Record<string, unknown> | undefined,
+            });
         mutate(
             {
                 display_name,
@@ -55,7 +68,7 @@ export function useFinishOnboarding() {
                 onSuccess: () => router.replace('/welcome?intro=1'),
             },
         );
-    }, [draft, isPending, mutate, onboardedAt, router, user?.user_metadata?.display_name]);
+    }, [draft, isPending, mutate, onboardedAt, router, user?.user_metadata]);
 
     return {
         finish,

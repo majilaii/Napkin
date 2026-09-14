@@ -8,6 +8,10 @@
  * NO SKIP — founder call 2026-07-25: faces are what make the app feel alive, so
  * nobody reaches the feed without one.
  *
+ * Back is conditional: when a provider already supplied the name, S1 skips itself
+ * with `router.replace`, which leaves this screen alone in the onboarding stack.
+ * SetupFrame renders a spacer instead of a dead arrow when `onBack` is undefined.
+ *
  * History worth keeping: Skip existed because the Vision moderation credential
  * was never provisioned, so `action=moderate` 503'd (`VISION_UNAVAILABLE`) on
  * EVERY upload and a mandatory avatar hard-walled signup for everyone (#318).
@@ -89,7 +93,7 @@ export default function OnboardingPhotoScreen() {
         <SetupFrame
             palette={palette}
             step={2}
-            onBack={() => router.back()}
+            onBack={router.canGoBack() ? () => router.back() : undefined}
             backDisabled={uploading}
             footer={
                 <Pressable

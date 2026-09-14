@@ -2,6 +2,10 @@ import React from 'react';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
 const mockPush = jest.fn();
+const mockBack = jest.fn();
+// S1 skips itself with router.replace when a provider already supplied the name,
+// which leaves this screen alone in the stack — so the back control is gated.
+const mockCanGoBack = jest.fn(() => true);
 const mockPatch = jest.fn();
 const mockAlert = jest.fn();
 const mockChooseAvatarAsset = jest.fn();
@@ -41,7 +45,7 @@ jest.mock('react-native', () => {
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 jest.mock('expo-router', () => ({
-    useRouter: () => ({ push: mockPush }),
+    useRouter: () => ({ push: mockPush, back: mockBack, canGoBack: mockCanGoBack }),
     Stack: { Screen: () => null },
 }));
 jest.mock('react-native-safe-area-context', () => ({
@@ -145,5 +149,20 @@ describe('mandatory onboarding photo', () => {
             expect(mockAlert).toHaveBeenCalledWith("That photo can't be used", 'Choose another photo.');
         });
         expect(mockPatch).not.toHaveBeenCalled();
+    });
+
+    it('offers Back only when there is a screen to go back to', () => {
+        // Normal path: the name step pushed, so Back returns to it.
+        mockCanGoBack.mockReturnValue(true);
+        const withBack = render(<OnboardingPhotoScreen />);
+        fireEvent.press(withBack.getByLabelText('Back'));
+        expect(mockBack).toHaveBeenCalled();
+        withBack.unmount();
+
+        // Provider-name path: the name step used router.replace, so this screen is
+        // alone in the onboarding stack and a Back arrow would be dead.
+        mockCanGoBack.mockReturnValue(false);
+        const withoutBack = render(<OnboardingPhotoScreen />);
+        expect(withoutBack.queryByLabelText('Back')).toBeNull();
     });
 });

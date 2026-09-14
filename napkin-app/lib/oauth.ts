@@ -23,17 +23,28 @@ export interface AppleCredential {
     /** The JWT to verify against Supabase's Apple provider. */
     identityToken: string;
     /**
-     * Full name — Apple returns it ONLY on the first authorization and only when
-     * the name scope is requested. Absent on re-auth. auth.tsx does not depend on
-     * it (the trigger falls to 'New User' and onboarding captures the name), but
-     * it is threaded through in case a future name round-trip wants it.
+     * Full name — Apple returns it ONLY on the FIRST authorization for this Apple
+     * ID + app, and never again (the user must revoke the app under Settings →
+     * Apple ID → Sign in with Apple to reset that). It is therefore a one-shot
+     * value that auth.tsx MUST capture and persist on the spot.
+     *
+     * App Store Guideline 4 (rejection 2026-09-14): this used to be discarded, so
+     * onboarding asked the user to type a name Apple had already provided. Never
+     * drop it again — see lib/pendingIdentity.ts.
      */
     fullName: string | null;
+    /**
+     * Email from the credential. Present on the first authorization; null on
+     * re-auth (the identity token still carries the `email` claim, which is what
+     * Supabase puts on auth.users). May be an @privaterelay.appleid.com address.
+     */
+    email: string | null;
 }
 
 /**
  * Run the native Sign in with Apple sheet (FULL_NAME + EMAIL scopes) and return
- * the identity token + parsed name. Throws OAuthCancelledError on user cancel.
+ * the identity token + parsed name + email. Throws OAuthCancelledError on user
+ * cancel. Callers must persist `fullName` — Apple only ever sends it once.
  */
 export async function appleIdToken(): Promise<AppleCredential> {
     // Lazy require — a mis-linked native lib throws HERE, not at auth.tsx load
@@ -62,7 +73,11 @@ export async function appleIdToken(): Promise<AppleCredential> {
         );
         const fullName = parts.length > 0 ? parts.join(' ') : null;
 
-        return { identityToken: credential.identityToken, fullName };
+        return {
+            identityToken: credential.identityToken,
+            fullName,
+            email: credential.email?.trim() || null,
+        };
     } catch (err) {
         // ERR_REQUEST_CANCELED = user dismissed the sheet.
         if (
