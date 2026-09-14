@@ -116,6 +116,70 @@ describe('useFinishOnboarding', () => {
         );
     });
 
+    // App Store Guideline 4 (2026-09-14): the name step is optional now, so a
+    // user can finish onboarding without ever supplying one. That must reach the
+    // server as NULL — fn_complete_onboarding leaves profiles.display_name alone
+    // on NULL and RAISES invalid_display_name on a non-null blank. Asserting the
+    // old hardcoded 'New User' would re-plant the placeholder from the client.
+    it('sends display_name NULL when the name step was skipped and metadata has none', () => {
+        jest.mocked(useAuth).mockReturnValue({
+            user: { id: 'onboarding-user', user_metadata: {} },
+            onboardedAt: null,
+        } as unknown as ReturnType<typeof useAuth>);
+        jest.mocked(useOnboardingDraft).mockReturnValue({
+            draft: { display_name: '', home_city: null, avatar_url: null },
+            patch: jest.fn(),
+        });
+        const { result } = renderHook(() => useFinishOnboarding());
+
+        act(() => result.current.finish());
+
+        expect(mutate).toHaveBeenCalledWith(
+            { display_name: null, home_city: null, avatar_url: null },
+            expect.any(Object),
+        );
+    });
+
+    it("ignores the trigger's 'New User' placeholder in metadata", () => {
+        jest.mocked(useAuth).mockReturnValue({
+            user: { id: 'onboarding-user', user_metadata: { display_name: 'New User' } },
+            onboardedAt: null,
+        } as unknown as ReturnType<typeof useAuth>);
+        jest.mocked(useOnboardingDraft).mockReturnValue({
+            draft: { display_name: '   ', home_city: null, avatar_url: null },
+            patch: jest.fn(),
+        });
+        const { result } = renderHook(() => useFinishOnboarding());
+
+        act(() => result.current.finish());
+
+        expect(mutate).toHaveBeenCalledWith(
+            expect.objectContaining({ display_name: null }),
+            expect.any(Object),
+        );
+    });
+
+    // Apple's name reaches this path through user_metadata.full_name, which
+    // auth.tsx writes back with updateUser after the native credential hands it over.
+    it('uses the Apple name written into metadata as full_name', () => {
+        jest.mocked(useAuth).mockReturnValue({
+            user: { id: 'onboarding-user', user_metadata: { full_name: 'Ada Lovelace' } },
+            onboardedAt: null,
+        } as unknown as ReturnType<typeof useAuth>);
+        jest.mocked(useOnboardingDraft).mockReturnValue({
+            draft: { display_name: '', home_city: null, avatar_url: null },
+            patch: jest.fn(),
+        });
+        const { result } = renderHook(() => useFinishOnboarding());
+
+        act(() => result.current.finish());
+
+        expect(mutate).toHaveBeenCalledWith(
+            expect.objectContaining({ display_name: 'Ada Lovelace' }),
+            expect.any(Object),
+        );
+    });
+
     it('skips the mutation for an onboarded preview run', () => {
         jest.mocked(useAuth).mockReturnValue({
             user: { id: 'onboarding-user' },

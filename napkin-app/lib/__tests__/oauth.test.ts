@@ -37,19 +37,47 @@ describe('appleIdToken', () => {
         mockAppleSignIn.mockResolvedValue({
             identityToken: 'apple.jwt.token',
             fullName: { givenName: 'Ada', familyName: 'Lovelace' },
+            email: 'ada@example.com',
         });
         const cred = await appleIdToken();
         expect(cred.identityToken).toBe('apple.jwt.token');
         expect(cred.fullName).toBe('Ada Lovelace');
+        expect(cred.email).toBe('ada@example.com');
     });
 
-    it('yields fullName null on re-auth (Apple omits the name)', async () => {
+    // App Store Guideline 4 (2026-09-14): the name Apple supplies here is the
+    // ONLY copy that ever exists, so the credential must carry it to the caller.
+    it('carries a Hide My Email private-relay address through untouched', async () => {
+        mockAppleSignIn.mockResolvedValue({
+            identityToken: 'apple.jwt.token',
+            fullName: { givenName: 'Ada', familyName: null },
+            email: 'x7k2m9p4qr@privaterelay.appleid.com',
+        });
+        const cred = await appleIdToken();
+        expect(cred.email).toBe('x7k2m9p4qr@privaterelay.appleid.com');
+    });
+
+    it('reports a missing email as null rather than an empty string', async () => {
         mockAppleSignIn.mockResolvedValue({
             identityToken: 'apple.jwt.token',
             fullName: null,
+            email: '   ',
+        });
+        await expect(appleIdToken()).resolves.toMatchObject({ email: null });
+    });
+
+    // The App Review reviewer's Apple ID has already authorized this app, so this
+    // — not the first-authorization case — is the path review actually exercises.
+    // Nothing downstream may hard-block on it.
+    it('yields fullName AND email null on re-auth (Apple omits both)', async () => {
+        mockAppleSignIn.mockResolvedValue({
+            identityToken: 'apple.jwt.token',
+            fullName: null,
+            email: null,
         });
         const cred = await appleIdToken();
         expect(cred.fullName).toBeNull();
+        expect(cred.email).toBeNull();
     });
 
     it('uses only the present name part (given OR family)', async () => {

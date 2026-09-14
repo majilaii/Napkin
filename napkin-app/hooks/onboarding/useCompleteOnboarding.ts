@@ -12,7 +12,12 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useAuth } from '@/providers/AuthProvider';
 
 export interface CompleteOnboardingInput {
-    display_name: string;
+    /**
+     * NULL when the (optional) name step was skipped — fn_complete_onboarding
+     * then leaves profiles.display_name untouched. Never send '': the RPC
+     * raises invalid_display_name on a non-null blank.
+     */
+    display_name: string | null;
     /** Free-text home city; null/empty when skipped. */
     home_city?: string | null;
     /** Uploaded avatar public URL; null when the photo step was skipped (TICKET-126). */
