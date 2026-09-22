@@ -10,10 +10,13 @@
  *   - verified, non-tombstoned restaurants (an explicit column allowlist)
  *   - public-eligible reviews (is_entry_publicly_eligible: public account,
  *     visibility <> 'private', rated, a real note) via service_role-only RPCs
+ *   - public lists of public accounts, never Table or private lists, with their
+ *     verified entries only (fn_guest_public_list, fn_restaurant_featured_lists
+ *     with a NULL viewer)
  *
- * What it never reads: tables, table_members, wishlist_items, follows,
- * blocked_users, private entries, self history. Everything a guest sees here
- * is already visible to any signed-in stranger.
+ * What it never reads: Table rosters or Table content, wishlists, follows,
+ * blocked_users, private entries or private lists, self history. Everything a
+ * guest sees here is already visible to any signed-in stranger.
  *
  * Cost control: every call is rate-limited per client IP through the existing
  * check_and_increment_rate_limit bucket, keyed by a daily-salted SHA-256 of the
@@ -23,8 +26,9 @@
  * Actions (POST, JSON body; `action` may also ride the query string):
  *   { action: 'search', q }                 → { data: { rows: GuestRestaurantRow[] } }
  *   { action: 'recent' }                    → { data: { rows: GuestRestaurantRow[] } }
- *   { action: 'page', restaurant_id }       → { data: { restaurant, reviews, reviews_total } }
+ *   { action: 'page', restaurant_id }       → { data: { restaurant, reviews, reviews_total, featured_lists } }
  *   { action: 'reviews', restaurant_id, cursor?, limit? } → { data: Page<PublicReviewCard> }
+ *   { action: 'list', list_id }             → { data: ListDetailData } for a public list, else 404
  */
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
@@ -57,6 +61,7 @@ const GUEST_RATE_MAX = 240;
 const GUEST_RATE_WINDOW_SECONDS = 3600;
 
 const MAX_RESTAURANT_ID_LENGTH = 512;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function json(body: unknown, status = 200) {
@@ -114,6 +119,31 @@ async function loadGuestReviews(supabase: any, restaurantId: string, limit: numb
         calibration: null,
         is_followee: false,
     }));
+}
+
+// Public lists that contain a restaurant. fn_restaurant_featured_lists with a
+// NULL viewer admits only public, non-Table lists owned by public accounts.
+// deno-lint-ignore no-explicit-any
+async function guestFeaturedLists(supabase: any, restaurantId: string) {
+    const { data, error } = await supabase.rpc('fn_restaurant_featured_lists', {
+        p_viewer: null,
+        p_restaurant_id: restaurantId,
+        p_limit: 3,
+    });
+    if (error) throw error;
+    // deno-lint-ignore no-explicit-any
+    const raw = (data ?? []) as any[];
+    return {
+        rows: raw.map((row) => ({
+            id: row.id as string,
+            title: row.title as string,
+            emoji: (row.emoji as string | null) ?? null,
+            entry_count: Number(row.entry_count ?? 0),
+            owner_display_name: (row.owner_display_name as string | null) ?? null,
+            owner_username: (row.owner_username as string | null) ?? null,
+        })),
+        total: raw.length > 0 ? Number(raw[0].total_count ?? 0) : 0,
+    };
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────────
@@ -239,9 +269,10 @@ serve(async (req) => {
             if (error) throw error;
             if (!restaurant) return fail('NOT_FOUND', 'restaurant not found', 404);
 
-            const [reviews, counts] = await Promise.all([
+            const [reviews, counts, featuredLists] = await Promise.all([
                 loadGuestReviews(supabase, resolvedId, PAGE_PREVIEW_REVIEWS, null),
                 reviewCounts(supabase, [resolvedId]),
+                guestFeaturedLists(supabase, resolvedId),
             ]);
             return json({
                 data: {
@@ -249,6 +280,28 @@ serve(async (req) => {
                     restaurant: guestSafePhoto(restaurant as unknown as Record<string, unknown>),
                     reviews,
                     reviews_total: counts.get(resolvedId) ?? 0,
+                    featured_lists: featuredLists,
+                },
+            });
+        }
+
+        // ── list: one public list, read-only ───────────────────────────────
+        if (action === 'list') {
+            const listId = typeof body?.list_id === 'string' ? body.list_id.trim() : '';
+            if (!UUID_RE.test(listId)) return fail('NOT_FOUND', 'list not found', 404);
+            const { data: detail, error } = await supabase.rpc('fn_guest_public_list', {
+                p_list_id: listId,
+            });
+            if (error) throw error;
+            // NULL covers private, Table, private-account and missing lists alike,
+            // so a guest cannot tell a private list from one that does not exist.
+            if (!detail) return fail('NOT_FOUND', 'list not found', 404);
+            return json({
+                data: {
+                    ...(detail as Record<string, unknown>),
+                    save_count: Number((detail as { save_count?: unknown }).save_count ?? 0),
+                    viewer_has_saved: false,
+                    can_save: false,
                 },
             });
         }
