@@ -82,6 +82,7 @@ import {
 import { findBookingUrl } from '@/lib/reserveLink';
 import { resolveMastheadPhotos } from '@/lib/restaurantPhoto';
 import { restaurantDirectionsUrl } from '@/lib/restaurantLocation';
+import { GuestRestaurantScreen } from '@/components/guest/GuestRestaurantScreen';
 
 function placePayloadToWishlistPayload(place: any): RestaurantPayload {
     return {
@@ -130,7 +131,7 @@ function quietOpen(url: string) {
     void Linking.openURL(url).catch(() => undefined);
 }
 
-export default function RestaurantScreen() {
+function SignedInRestaurantScreen() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
@@ -657,3 +658,14 @@ const styles = StyleSheet.create({
         marginTop: Spacing.restaurant.sectionGap,
     },
 });
+
+/** TICKET-247: signed-out viewers get the read-only guest page for the same id. */
+export default function RestaurantScreen() {
+    const { user } = useAuth();
+    const { id, placeId } = useLocalSearchParams<{ id?: string; placeId?: string }>();
+    if (!user) {
+        const restaurantId = id ?? placeId ?? null;
+        return restaurantId ? <GuestRestaurantScreen restaurantId={restaurantId} /> : null;
+    }
+    return <SignedInRestaurantScreen />;
+}

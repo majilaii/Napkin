@@ -9,7 +9,7 @@ Code-traceable operating map for agents driving the Expo app. Route inventory is
 1. Use an iOS Simulator with the Napkin development client (`com.majilaii.dining-journal-app`). The bundle identifier is declared in `napkin-app/app.config.ts`.
 2. In `napkin-app/`, run `npm start` to start Metro for an already-installed development client (`napkin-app/package.json`).
 3. If the development client is absent or native code/patches changed, run `npm run ios` for a fresh native build (`napkin-app/package.json`). `postinstall` applies `patch-package`, so install dependencies before judging native-patch behavior.
-4. Let `app/_layout.tsx::AuthGate` choose auth, onboarding, or the signed-in shell. `/` itself redirects to `/(tabs)/places` (`app/index.tsx`).
+4. Let the root gate (`hooks/auth/useLaunchRouting.ts`, called from `app/_layout.tsx::RootLayoutNav`) choose auth, onboarding, the signed-in shell, or (since 22 September 2026) the guest shell: with no session and guest mode on (`lib/guestMode.ts`, entered from `/auth` "Look around"), `lib/guestRoutes.ts::resolveSignedOutRedirect` allows only `(tabs)`, `restaurant`, `auth` and `reset-password`; anything else replaces to `/auth`. Once signed in, an `/auth` that sits over a live stack goes back one level (a new account instead dismisses that stack and opens onboarding); a lone-root `/auth` replaces to Places. `/` itself redirects to `/(tabs)/places` (`app/index.tsx`).
 5. Navigate to every changed state, not merely every changed route. Capture a screenshot of each loading, content, empty, error, permission, privacy, and modal state affected by the change.
 6. For a first-screen touch check, tap controls near the bottom of the first native screen mounted after launch; see TICKET-212 in section 5.
 
@@ -52,11 +52,23 @@ Notation: `EF` = Supabase Edge Function; `RPC` = PostgREST function. Table names
 | `/search` | `napkin-app/app/(tabs)/search.tsx` | param-preserving `Redirect` (`q`, `mode`) to `/(tabs)/places` | — | — |
 | `/tables` | `napkin-app/app/(tabs)/tables.tsx` | `useTables`, `useTableActivity`, `useTableAtlas`, `useTableMembers`, `useTableTopFour`, `TableLedgerModule` → `useLedger` | `table-management`, `table-activity`, `table-atlas`, `user-profile?action=ledger` | `tables`, `table_members`, `entries`, `entry_photos`, `restaurants`, `profiles`, `suppers`, `supper_members`, `gatherings`, `gathering_rsvps`, `table_shares`, `wishlist_items`, `user_top_4`, `blocked_users`, legacy `table_nights` |
 
+### Guest browse (22 September 2026, TICKET-247, App Store 5.1.1(v))
+
+With no session and guest mode on, the same routes render guest screens; every hook above stays unmounted (the tab files and `app/restaurant/[id].tsx` branch on `useAuth().user` before mounting the signed-in body).
+
+| Route (guest) | Component file | Feeding hook(s) / client | EF / RPC | Backing tables |
+|---|---|---|---|---|
+| `/feed`, `/tables`, `/profile` | `components/guest/GuestPlate.tsx` | none | none | none. One kicker, one line, `Sign in` → `/auth`, `Create an account` → `/auth?mode=sign-up` |
+| `/places` | `components/guest/GuestPlacesScreen.tsx` | `hooks/guest/usePublicBrowse.ts::useGuestSearch` (≥ 2 chars), `useGuestRecent` (zero query) | `public-browse` `search` / `recent`; RPC `fn_guest_recent_restaurants`, `fn_guest_public_review_counts` | `restaurants` (verified, not tombstoned, allowlisted columns), `entries` + `profiles` only through `is_entry_publicly_eligible` |
+| `/restaurant/[id]` | `components/guest/GuestRestaurantScreen.tsx` (reuses `RestaurantTop`, `RestaurantOverview`, `RestaurantDetails`, the review quote cards) | `useGuestRestaurantPage`, `useGuestReviews` (keyset paged) | `public-browse` `page` / `reviews`; RPC `get_public_reviews_page_guest`, `fn_guest_public_review_counts` | `restaurants`, `entries`, `profiles`, `entry_photos` (public-eligible rows only) |
+
+`public-browse` never calls `auth.getUser`; it is rate-limited per daily-salted client-IP hash through `check_and_increment_rate_limit` (bucket `guest_browse`, 240/h) and makes no Google call. Google-backed `places-search` remains an account feature (owner-bound spend, resolutions, budgets).
+
 ### Auth and onboarding
 
 | Route | Component file | Feeding hook(s) / client | EF / RPC | Backing tables |
 |---|---|---|---|---|
-| `/auth` | `napkin-app/app/auth.tsx`; `components/auth/AppleSignInButton.tsx` | `useAuth`; Supabase Auth password/OAuth clients; `lib/oauth.ts`; `lib/pendingIdentity.ts` | Supabase Auth (`signInWithIdToken`, then `updateUser` to persist the provider name) | Auth identities; `auth.users.raw_user_meta_data.full_name`; profile gate is later in `providers/AuthProvider.tsx` |
+| `/auth` | `napkin-app/app/auth.tsx`; `components/auth/AppleSignInButton.tsx` | `useAuth` (incl. `isGuest`, `enterGuestMode`); Supabase Auth password/OAuth clients; `lib/oauth.ts`; `lib/pendingIdentity.ts`; `lib/guestMode.ts` | Supabase Auth (`signInWithIdToken`, then `updateUser` to persist the provider name); no network for the guest doorway | Auth identities; `auth.users.raw_user_meta_data.full_name`; profile gate is later in `providers/AuthProvider.tsx`; guest flag in AsyncStorage `napkin.guest.v1`. Accepts `?mode=sign-up`. Top-right "Look around" (hidden for a guest, while a share resume is pending, and while an auth call runs) enters guest mode and replaces to `/(tabs)/places`; when opened by a guest a top-left "not now" chevron goes back |
 | `/reset-password` | `napkin-app/app/reset-password.tsx` | Supabase Auth session and password update | Supabase Auth | Auth identities |
 | `/onboarding` | `napkin-app/app/onboarding/index.tsx` | `OnboardingDraftContext`, `hooks/onboarding/useProvidedDisplayName`, `lib/onboardingName.ts`, `lib/pendingIdentity.ts`, auth metadata | none until final completion | Auth identity metadata is read only; draft is local React state. The step renders ONLY when no provider supplied a name |
 | `/onboarding/photo` | `napkin-app/app/onboarding/photo.tsx` | draft context, image staging/moderation helpers | `moderate-image`; object upload | profile-image staging/storage objects |
@@ -374,6 +386,16 @@ Source: `app/(tabs)/places.tsx`, `app/places-scope.tsx`, `components/places/Plac
 - `TableIntroduction` replaces zero-Table dead-end copy with a labelled example, three benefits and existing creation/guide navigation. A failed Table query still renders retry rather than this intended-empty state.
 - Local enable/dismiss controls are SAFE (device preference only); guide/back/skip/feature links navigate only. Start a Table opens the existing composer; its final submit remains LIVE-WRITE and must never be exercised against production during verification. Photo and follow controls retain their existing LIVE-WRITE restrictions.
 
+### Guest surfaces (22 September 2026)
+
+Source: `components/guest/GuestPlate.tsx`, `components/guest/GuestPlacesScreen.tsx`, `components/guest/GuestRestaurantScreen.tsx`, `components/guest/GuestSignInBand.tsx`, `hooks/guest/usePublicBrowse.ts`, `lib/guestMode.ts`, `lib/guestRoutes.ts`, `app/auth.tsx`, `app/_layout.tsx`.
+
+- **Auth doorway:** `LOOK AROUND` sits in the top-right corner (terracotta label, visible without scrolling on every device), hidden for a guest, while a share or handoff resume is pending (an account is needed to save it) and while an auth call is loading. A guest arriving at `/auth` from a gated tap sees a top-left `not now` chevron; back returns one level (or replaces to Places when there is no history).
+- **Plates:** FEED / TABLE / PROFILE render the kicker, one line (`friends' meals, once you're in.` / `a private table for your crew.` / `your journal, lists and taste.`), the terracotta `Sign in` pill and the quiet `Create an account`. Nothing else; the floating nav stays.
+- **Guest Places:** `Places` title, quiet `sign in` pill, underline search. Zero query shows `RECENTLY REVIEWED` rows (intended-empty: `nothing reviewed yet.`); one character shows `type one more letter`; two or more characters search the catalogue (loading spinner without data, intended-empty `nothing on napkin by that name yet.`, cold failure `ErrorState` with retry). Rows: Places thumbnail only when the photo is a credited Places photo, else a sand typographic plate; name, `cuisine · city`, Google value `· google`, public review count. The sign-in band closes the zero-query list.
+- **Guest restaurant page:** masthead (credited Places hero or typographic), overview line with the public review count (no Napkin average), sign-in band, `Reviews` quote cards paged with `more ·`, a `see something wrong? report` mail line (`SUPPORT_EMAIL`; the body names the restaurant and asks which review), then Details (address/directions, hours, phone, website, Google). Tapping a review opens a native sheet: `Report review` (mail naming that review's id and author), `Sign in`, `Cancel`. The pin affordance opens `/auth`. Loading without data = spinner; failure without data = back chevron + `could not load this restaurant.` with retry; unknown/unverified id = the same error shell (server 404).
+- **Gate:** any other route while guest replaces to `/auth` (`resolveSignedOutRedirect`, fail-closed). Sign-in clears guest mode; sign-out clears it too, so an account never signs out into guest mode.
+
 ## 4. Write paths
 
 `SAFE` means self-scoped and reversible or device-local. `NEVER` means irreversible, shared, sends/notifies another person, changes moderation/visibility, or deletes. **Live verification remains read-only for both labels.** Read-only navigation controls are omitted unless they request an OS permission or launch outbound contact.
@@ -382,7 +404,9 @@ Source: `app/(tabs)/places.tsx`, `app/places-scope.tsx`, `components/places/Plac
 |---|---|---|---|
 | Auth: sign in / OAuth | Supabase Auth via `providers/AuthProvider.tsx`, `app/auth.tsx` | valid credentials/provider result; timeout/error stays on auth | SAFE (session-scoped) |
 | Auth: sign up, password-reset email | Supabase Auth | valid email/password; rate/provider errors | NEVER — creates identity or sends email |
-| Auth: sign out | `AuthProvider.signOut`; clears session/query state | authenticated session | SAFE |
+| Auth: sign out | `AuthProvider.signOut`; clears session/query state and the guest flag | authenticated session | SAFE |
+| Auth: enter / leave guest mode | `AuthProvider.enterGuestMode` / `exitGuestMode` → AsyncStorage `napkin.guest.v1` | no session; any delivered session clears it | SAFE (device-local flag, no network) |
+| Guest: report a review | review tap → `Report review`, or the page `report` line → `Linking.openURL(mailto:SUPPORT_EMAIL)` from `GuestRestaurantScreen` | none (mail app composes; nothing is sent by the app) | SAFE unless the mail is sent |
 | Entry: create log/note, upload photos | `useCreateEntry` → EF `entry`; RPC `fn_create_entry_with_tables`; storage/RPC photo append | auth, restaurant/note contract, rating when required, uploads settled, selected Table memberships; missing visibility derives `'table'` with any Table id and `'friends'` otherwise | NEVER — creates visible/shared content |
 | Entry: edit, merge restaurant, attach to Supper | EF `entry` update/merge/attach actions | author; target/membership/restaurant compatibility; valid Supper | NEVER — changes shared content |
 | Entry: tag companions | `CompanionPickerSheet` → EF `entry` create/`update-companions`; EF `user-profile` search/recent actions | author; not a mutual follow / blocked → dropped server-side | NEVER — grants entry access and may notify |
@@ -477,13 +501,22 @@ All recipes are read-only unless they explicitly say **fixture/test only**. Pref
 
 ### First run / onboarding
 
-1. In an isolated test or disposable local Supabase fixture, authenticate a user whose `profiles.onboarded_at` is null (`providers/AuthProvider.tsx`, `app/_layout.tsx::AuthGate`).
+1. In an isolated test or disposable local Supabase fixture, authenticate a user whose `profiles.onboarded_at` is null (`providers/AuthProvider.tsx`, `hooks/auth/useLaunchRouting.ts`).
 2. Cold-launch. The gate routes to `/onboarding`; advance through photo and city/follows using mocked Edge Function results.
 3. Capture the name step in both of its forms — skipped entirely when a provider supplied a name (stash a `pendingIdentity` entry or a `user_metadata.full_name` for the fixture user and confirm the stack opens on photo), and rendered `Optional` with Continue enabled on an empty field plus `Maybe later` when it did not — then the mandatory photo (empty, uploading, approved, rejected/unavailable), city (local suggestions, no matches, keyboard), optional follows (loading, candidates, failure rollback), and completion pending/error/retry states. City suggestions are local; only co-diner/completion calls have network failures. All remote writes use isolated fixtures.
 4. Successful real completion alone opens `/welcome?intro=1`; onboarded preview opens `/welcome?preview=1` without enabling tips or completing the profile again. Capture journal → places → sharing → Table chapters, back/skip, terminal Places and optional Tables destinations. New accounts must not be able to reach the welcome before profile completion, and import/handoff/join-table resume priority remains unchanged.
 5. Settings → A guide to Napkin opens the five-chapter directory. Capture every chapter, invalid-topic fallback, close/back hierarchy, privacy doorway and feature destinations. All preview cards are clearly labelled Example and use local bundled assets.
 6. Enable discovery only for a local fixture viewer: capture Places personal pinned list, Feed, active Table, own Diary and Lists tips; dismiss each, remount and confirm it stays absent. Verify a different/signed-out/existing-not-enabled account sees no tip. Tips never overlay the map or show on another person's Diary. Storage failures do not block navigation or lose session dismissals.
 7. Capture zero-Table introduction and its Start a Table/How Tables work navigation without submitting creation; keep loading and cold error/retry separate from intended-empty. Verify comfortable scrolling on a small iPhone, keyboard-safe setup footer, large text and dark mode.
+
+### Guest browse (signed out)
+
+1. Sign out (or use a fresh install). On `/auth` tap `Look around` (top right). This writes only the device flag; no account is created. Capture `/auth` with the doorway visible.
+2. Places lands on the guest screen: capture zero query (RECENTLY REVIEWED or `nothing reviewed yet.`), one character, a query with results, a query with none.
+3. Open a row: capture the guest restaurant page (masthead, overview, sign-in band, reviews with `more ·` when the fixture has more than 30 public reviews, report line, details). Tap the pin control: `/auth` opens with the `not now` chevron; tap it to return.
+4. Tap FEED, TABLE, PROFILE: capture each plate. Tap `Create an account`: `/auth` opens in sign-up mode.
+5. Deep-link `napkin://settings` (or any non-guest route) while guest: it replaces to `/auth`. Failure states: put the device offline and pull Places to capture the cold `ErrorState`; open `/restaurant/<random-uuid>` to capture the not-found shell.
+6. Sign in with the review identity from `/auth`: guest mode clears and the signed-in shell routes as before. Sign out again: `/auth`, not the guest shell.
 
 ### Empty journal
 
