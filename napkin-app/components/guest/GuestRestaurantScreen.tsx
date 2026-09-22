@@ -9,7 +9,6 @@ import React, { useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    Linking,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -18,14 +17,12 @@ import {
     View,
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import * as Clipboard from 'expo-clipboard';
 import { StatusBar } from 'expo-status-bar';
 import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
-import { LEGAL_URLS, SUPPORT_EMAIL } from '@/constants/links';
 import { ErrorState } from '@/components/ErrorState';
 import {
     FeaturedListsSection,
@@ -46,60 +43,9 @@ import { buildRestaurantMeta, buildRestaurantPhotoMeta } from '@/lib/restaurantP
 import { resolveMastheadPhotos } from '@/lib/restaurantPhoto';
 import { restaurantDirectionsUrl } from '@/lib/restaurantLocation';
 import { GuestSignInBand } from './GuestSignInBand';
+import { sendReport } from './guestReport';
 
 const NO_CLIPPINGS = { clippings: [], settled: true } as const;
-
-type ReportRestaurant = { id: string; name: string };
-type ReportReview = { entry_id: string; display_name: string };
-
-/** The reference a moderator needs: which restaurant, and which review if known. */
-export function reportReference(restaurant: ReportRestaurant, review?: ReportReview): string {
-    const lines = [`Restaurant: ${restaurant.name} (${restaurant.id})`];
-    lines.push(review ? `Review: ${review.entry_id} by ${review.display_name}` : 'Which review:');
-    return lines.join('\n');
-}
-
-/**
- * Guideline 1.2 for signed-out readers: a mail to support that names exactly
- * what is being reported. With a review, its id and author; without one (the
- * page-level line), the restaurant, and the reader says which review.
- */
-export function reportMailto(restaurant: ReportRestaurant, review?: ReportReview): string {
-    const subject = encodeURIComponent('Report a review on Napkin');
-    const body = `${reportReference(restaurant, review)}\n\nWhat is wrong:`;
-    return `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${encodeURIComponent(body)}`;
-}
-
-/**
- * Open the report mail. When no mail app can take it (Linking rejects; common
- * on review devices), never fail silently: show the address and reference with
- * a copy action and the public support page instead.
- */
-export function sendReport(restaurant: ReportRestaurant, review?: ReportReview): void {
-    const reference = reportReference(restaurant, review);
-    Linking.openURL(reportMailto(restaurant, review)).catch(() => {
-        Alert.alert(
-            'Report review',
-            `Email ${SUPPORT_EMAIL} with this reference.\n\n${reference}`,
-            [
-                {
-                    text: 'Copy details',
-                    onPress: () => {
-                        void Clipboard.setStringAsync(`To: ${SUPPORT_EMAIL}\n${reference}`)
-                            .catch(() => undefined);
-                    },
-                },
-                {
-                    text: 'Support page',
-                    onPress: () => {
-                        void Linking.openURL(LEGAL_URLS.support).catch(() => undefined);
-                    },
-                },
-                { text: 'Close', style: 'cancel' },
-            ],
-        );
-    });
-}
 
 export function GuestRestaurantScreen({ restaurantId }: { restaurantId: string }) {
     const scheme = useColorScheme() ?? 'light';
@@ -217,7 +163,7 @@ export function GuestRestaurantScreen({ restaurantId }: { restaurantId: string }
                                             onPress={() => Alert.alert(review.display_name, undefined, [
                                                 {
                                                     text: 'Report review',
-                                                    onPress: () => sendReport(restaurant, review),
+                                                    onPress: () => sendReport({ kind: 'review', restaurant, review }),
                                                 },
                                                 { text: 'Sign in', onPress: () => router.push('/auth') },
                                                 { text: 'Cancel', style: 'cancel' },
@@ -244,7 +190,7 @@ export function GuestRestaurantScreen({ restaurantId }: { restaurantId: string }
                                         <Text
                                             accessibilityRole="link"
                                             accessibilityLabel="report a review"
-                                            onPress={() => sendReport(restaurant)}
+                                            onPress={() => sendReport({ kind: 'review', restaurant })}
                                             style={[styles.reportLink, { color: palette.textSecondary }]}
                                         >
                                             report

@@ -32,6 +32,7 @@ import {
 } from '@/components/lists/listHeaderUtils';
 import { GuestPlaceRow } from './GuestPlaceRow';
 import { GuestSignInBand } from './GuestSignInBand';
+import { sendReport } from './guestReport';
 
 type Palette = typeof Colors.light;
 
@@ -206,7 +207,27 @@ export function GuestListScreen({ listId }: { listId: string }) {
                         no spots here yet.
                     </Text>
                 )}
-                ListFooterComponent={<GuestSignInBand />}
+                ListFooterComponent={(
+                    <View>
+                        {/* Guideline 1.2: the title, description and notes are user content. */}
+                        <Text style={[Type.metadata, styles.report, { color: palette.textMuted }]}>
+                            see something wrong?{' '}
+                            <Text
+                                accessibilityRole="link"
+                                accessibilityLabel="report this list"
+                                onPress={() => sendReport({
+                                    kind: 'list',
+                                    list: { id: list.id, title: list.title },
+                                    ownerName: owner.display_name ?? (owner.username ? `@${owner.username}` : null),
+                                })}
+                                style={[styles.reportLink, { color: palette.textSecondary }]}
+                            >
+                                report
+                            </Text>
+                        </Text>
+                        <GuestSignInBand />
+                    </View>
+                )}
             />
         </View>
     );
@@ -253,4 +274,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: Spacing.restaurant.pageGutter,
         paddingVertical: Spacing.lg,
     },
+    report: {
+        paddingHorizontal: Spacing.restaurant.pageGutter,
+        paddingTop: Spacing.lg,
+    },
+    reportLink: { textDecorationLine: 'underline' },
 });

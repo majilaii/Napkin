@@ -62,7 +62,8 @@ import type {
     PublicReviewCard,
     RestaurantPageRestaurant,
 } from '@/hooks/restaurants/useRestaurantPage';
-import { GuestRestaurantScreen, sendReport } from '../GuestRestaurantScreen';
+import { GuestRestaurantScreen } from '../GuestRestaurantScreen';
+import { sendReport } from '../guestReport';
 import { LEGAL_URLS, SUPPORT_EMAIL } from '@/constants/links';
 
 const restaurant: RestaurantPageRestaurant = {
@@ -195,7 +196,11 @@ describe('GuestRestaurantScreen', () => {
 
     it('never dead-ends a report when no mail app can open it', async () => {
         mockOpenURL.mockRejectedValueOnce(new Error('No app to handle mailto'));
-        sendReport({ id: 'restaurant-1', name: 'Kiln' }, { entry_id: 'entry-1', display_name: 'Clara' });
+        sendReport({
+            kind: 'review',
+            restaurant: { id: 'restaurant-1', name: 'Kiln' },
+            review: { entry_id: 'entry-1', display_name: 'Clara' },
+        });
         await new Promise((resolve) => setImmediate(resolve));
 
         expect(mockAlert).toHaveBeenCalledTimes(1);
@@ -218,7 +223,7 @@ describe('GuestRestaurantScreen', () => {
     });
 
     it('shows no fallback when the mail opens', async () => {
-        sendReport({ id: 'restaurant-1', name: 'Kiln' });
+        sendReport({ kind: 'review', restaurant: { id: 'restaurant-1', name: 'Kiln' } });
         await new Promise((resolve) => setImmediate(resolve));
         expect(mockOpenURL).toHaveBeenCalledTimes(1);
         expect(mockAlert).not.toHaveBeenCalled();

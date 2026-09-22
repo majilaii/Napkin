@@ -3,6 +3,9 @@ const mockPush = jest.fn();
 const mockBack = jest.fn();
 const mockReplace = jest.fn();
 const mockUseGuestList = jest.fn();
+const mockOpenURL = jest.fn((_url: string) => Promise.resolve());
+const mockAlert = jest.fn();
+const mockSetString = jest.fn((_text: string) => Promise.resolve(true));
 
 jest.mock('react-native', () => {
     const ReactModule = jest.requireActual('react');
@@ -29,7 +32,9 @@ jest.mock('react-native', () => {
     );
     return {
         ActivityIndicator: host('ActivityIndicator'),
+        Alert: { alert: (...args: unknown[]) => mockAlert(...args) },
         FlatList,
+        Linking: { openURL: (url: string) => mockOpenURL(url) },
         Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios ?? options.default },
         Pressable: host('Pressable'),
         StyleSheet: {
@@ -50,6 +55,7 @@ jest.mock('expo-router', () => ({
     useRouter: () => ({ push: mockPush, back: mockBack, replace: mockReplace, canGoBack: () => true }),
 }));
 jest.mock('expo-image', () => ({ Image: 'ExpoImage' }));
+jest.mock('expo-clipboard', () => ({ setStringAsync: (text: string) => mockSetString(text) }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('@/hooks/use-color-scheme', () => ({ useColorScheme: () => 'light' }));
@@ -160,6 +166,36 @@ describe('GuestListScreen', () => {
         const screen = render(<GuestListScreen listId="list-1" />);
         expect(screen.queryByText('1')).toBeNull();
         expect(screen.getByText('no spots here yet.')).toBeTruthy();
+    });
+
+    it('lets a guest report the list: mail names it, and no mail app falls back to copy details', async () => {
+        mockUseGuestList.mockReturnValue(ok(detail([entry('r1', 'Padella', 'order the pici', 0)])));
+        const screen = render(<GuestListScreen listId="list-1" />);
+
+        fireEvent.press(screen.getByLabelText('report this list'));
+        const url = decodeURIComponent(mockOpenURL.mock.calls[0][0]);
+        expect(url.startsWith('mailto:')).toBe(true);
+        expect(url).toContain('Report a list on Napkin');
+        expect(url).toContain('List: Pasta in London (list-1) by Clara');
+
+        mockOpenURL.mockRejectedValueOnce(new Error('No app to handle mailto'));
+        fireEvent.press(screen.getByLabelText('report this list'));
+        await new Promise((resolve) => setImmediate(resolve));
+        const [title, message, buttons] = mockAlert.mock.calls[0] as [
+            string,
+            string,
+            { text: string; onPress?: () => void }[],
+        ];
+        expect(title).toBe('Report list');
+        expect(message).toContain('List: Pasta in London (list-1) by Clara');
+        buttons[0].onPress?.();
+        expect(mockSetString.mock.calls[0][0]).toContain('List: Pasta in London (list-1) by Clara');
+    });
+
+    it('keeps the report line on an empty list (its title and description are still content)', () => {
+        mockUseGuestList.mockReturnValue(ok(detail([], false)));
+        const screen = render(<GuestListScreen listId="list-1" />);
+        expect(screen.getByLabelText('report this list')).toBeTruthy();
     });
 
     it('treats a private, Table or missing list as not found, with no retry', () => {
