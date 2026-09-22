@@ -161,4 +161,140 @@ BEGIN
 END;
 $$;
 
+-- ── Public lists (20260922150000_guest_public_lists) ─────────────────────────
+-- R5: verified, but its photo is a member's own ('user'), which a guest must not get.
+-- R1 gets a credited Places photo, which a guest may get.
+INSERT INTO public.restaurants (id, name, city, cuisine, verification, photo_url, photo_source)
+VALUES ('247eeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'Guest Member Photo Cafe', 'London', 'Cafe', 'verified',
+        'https://example.invalid/entry-photos/member/meal.jpg', 'user')
+ON CONFLICT (id) DO NOTHING;
+UPDATE public.restaurants
+SET photo_url = 'https://example.invalid/restaurant-photos/trattoria.jpg',
+    photo_source = 'places',
+    places_photo_attribution_html = '<a href="https://maps.example">A. Author</a>'
+WHERE id = '247aaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+INSERT INTO public.tables (id, owner_id, name)
+VALUES ('247f0000-0000-4000-8000-0000000000f0', '24700000-0000-4000-8000-00000000000a', 'Guest spec Table')
+ON CONFLICT (id) DO NOTHING;
+
+-- L1 public ranked (public owner); L2 private; L4 public but private owner;
+-- L5 public unranked. L3 is a Table list forced public with the coercion
+-- trigger off, to prove the guest read refuses Table lists on its own.
+INSERT INTO public.lists (id, owner_id, title, ranked, privacy, table_id, created_at, updated_at)
+VALUES
+    ('24710000-0000-4000-8000-000000000001', '24700000-0000-4000-8000-00000000000a', 'Guest spec ranked', true,  'public',  NULL,
+     '2026-09-01T00:00:00Z', '2026-09-10T00:00:00Z'),
+    ('24710000-0000-4000-8000-000000000002', '24700000-0000-4000-8000-00000000000a', 'Guest spec private', false, 'private', NULL,
+     '2026-09-01T00:00:00Z', '2026-09-11T00:00:00Z'),
+    ('24710000-0000-4000-8000-000000000004', '24700000-0000-4000-8000-00000000000b', 'Guest spec private owner', false, 'public', NULL,
+     '2026-09-01T00:00:00Z', '2026-09-12T00:00:00Z'),
+    ('24710000-0000-4000-8000-000000000005', '24700000-0000-4000-8000-00000000000a', 'Guest spec unranked', false, 'public', NULL,
+     '2026-09-01T00:00:00Z', '2026-09-09T00:00:00Z');
+ALTER TABLE public.lists DISABLE TRIGGER lists_force_table_private;
+INSERT INTO public.lists (id, owner_id, title, ranked, privacy, table_id, created_at, updated_at)
+VALUES ('24710000-0000-4000-8000-000000000003', '24700000-0000-4000-8000-00000000000a', 'Guest spec Table list', false, 'public',
+        '247f0000-0000-4000-8000-0000000000f0', '2026-09-01T00:00:00Z', '2026-09-13T00:00:00Z');
+
+-- The trigger stays off until the entries are in: an entry insert can touch its
+-- parent list, and that UPDATE would coerce L3 back to private.
+INSERT INTO public.list_entries (id, list_id, restaurant_id, note, position, created_at)
+VALUES
+    -- L1 ranked: R5 (pos 0), R2 unverified (pos 1), R1 (pos 2), R3 tombstone (pos 3)
+    ('24720000-0000-4000-8000-000000000015', '24710000-0000-4000-8000-000000000001', '247eeeee-eeee-4eee-8eee-eeeeeeeeeeee', NULL, 0, '2026-09-02T00:00:00Z'),
+    ('24720000-0000-4000-8000-000000000012', '24710000-0000-4000-8000-000000000001', '247bbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'a friend''s flat', 1, '2026-09-03T00:00:00Z'),
+    ('24720000-0000-4000-8000-000000000011', '24710000-0000-4000-8000-000000000001', '247aaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'order the pici', 2, '2026-09-04T00:00:00Z'),
+    ('24720000-0000-4000-8000-000000000013', '24710000-0000-4000-8000-000000000001', '247ccccc-cccc-4ccc-8ccc-cccccccccccc', NULL, 3, '2026-09-05T00:00:00Z'),
+    -- L2, L3, L4 each contain R1 so the featured-lists band can be checked.
+    ('24720000-0000-4000-8000-000000000021', '24710000-0000-4000-8000-000000000002', '247aaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 0, '2026-09-04T00:00:00Z'),
+    ('24720000-0000-4000-8000-000000000031', '24710000-0000-4000-8000-000000000003', '247aaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 0, '2026-09-04T00:00:00Z'),
+    ('24720000-0000-4000-8000-000000000041', '24710000-0000-4000-8000-000000000004', '247aaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 0, '2026-09-04T00:00:00Z'),
+    -- L5 unranked: newest first means R4 then R1.
+    ('24720000-0000-4000-8000-000000000051', '24710000-0000-4000-8000-000000000005', '247aaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NULL, 0, '2026-09-04T00:00:00Z'),
+    ('24720000-0000-4000-8000-000000000054', '24710000-0000-4000-8000-000000000005', '247ddddd-dddd-4ddd-8ddd-dddddddddddd', NULL, 0, '2026-09-06T00:00:00Z');
+
+ALTER TABLE public.lists ENABLE TRIGGER lists_force_table_private;
+
+INSERT INTO public.list_saves (list_id, user_id)
+VALUES ('24710000-0000-4000-8000-000000000001', '24700000-0000-4000-8000-00000000000b');
+
+DO $$
+DECLARE
+    v_r1 uuid := '247aaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    v_l1 jsonb;
+    v_l5 jsonb;
+    v_ids text[];
+    v_restaurant_keys text[];
+    v_featured uuid[];
+BEGIN
+    ASSERT NOT pg_catalog.has_function_privilege('anon', 'public.fn_guest_public_list(uuid)', 'execute'),
+        'FAIL: anon must not execute fn_guest_public_list';
+    ASSERT NOT pg_catalog.has_function_privilege('authenticated', 'public.fn_guest_public_list(uuid)', 'execute'),
+        'FAIL: authenticated must not execute fn_guest_public_list';
+    ASSERT pg_catalog.has_function_privilege('service_role', 'public.fn_guest_public_list(uuid)', 'execute'),
+        'FAIL: service_role must execute fn_guest_public_list';
+
+    ASSERT EXISTS (
+        SELECT 1 FROM public.lists
+        WHERE id = '24710000-0000-4000-8000-000000000003' AND privacy = 'public' AND table_id IS NOT NULL
+    ), 'SETUP: the Table-list fixture must stay public, or it cannot prove the table_id guard';
+
+    -- Only a public, non-Table list of a public account is readable.
+    ASSERT public.fn_guest_public_list('24710000-0000-4000-8000-000000000002') IS NULL,
+        'FAIL: a private list leaked to a guest';
+    ASSERT public.fn_guest_public_list('24710000-0000-4000-8000-000000000003') IS NULL,
+        'FAIL: a Table list leaked to a guest';
+    ASSERT public.fn_guest_public_list('24710000-0000-4000-8000-000000000004') IS NULL,
+        'FAIL: a private account''s public list leaked to a guest';
+    ASSERT public.fn_guest_public_list('24710000-0000-4000-8000-0000000000ff') IS NULL,
+        'FAIL: a missing list must read as NULL';
+
+    v_l1 := public.fn_guest_public_list('24710000-0000-4000-8000-000000000001');
+    ASSERT v_l1 IS NOT NULL, 'FAIL: the public list must be readable';
+    ASSERT v_l1->'list'->>'title' = 'Guest spec ranked', 'FAIL: list header';
+    ASSERT v_l1->'list'->'table_id' = 'null'::jsonb, 'FAIL: table_id must be JSON null';
+    ASSERT v_l1->'owner_profile'->>'account_privacy' = 'public', 'FAIL: owner profile';
+    ASSERT (v_l1->>'save_count')::integer = 1,
+        pg_catalog.format('FAIL: save_count, got %s', v_l1->>'save_count');
+
+    -- Ranked order, verified and live entries only.
+    SELECT pg_catalog.array_agg(e->>'id' ORDER BY ord) INTO v_ids
+    FROM pg_catalog.jsonb_array_elements(v_l1->'entries') WITH ORDINALITY AS t(e, ord);
+    ASSERT v_ids = ARRAY['24720000-0000-4000-8000-000000000015', '24720000-0000-4000-8000-000000000011'],
+        pg_catalog.format('FAIL: ranked guest entries (unverified and tombstoned excluded), got %s', v_ids);
+
+    -- Photos: the member photo is dropped, the credited Places photo survives.
+    ASSERT v_l1->'entries'->0->'restaurant'->'photo_url' = 'null'::jsonb,
+        'FAIL: a member photo reached a guest through a list';
+    ASSERT v_l1->'entries'->1->'restaurant'->>'photo_url' = 'https://example.invalid/restaurant-photos/trattoria.jpg',
+        'FAIL: the Places photo must survive';
+    ASSERT v_l1->'entries'->1->>'note' = 'order the pici', 'FAIL: entry note';
+
+    -- No owner-only restaurant fields ride along.
+    SELECT pg_catalog.array_agg(k ORDER BY k) INTO v_restaurant_keys
+    FROM pg_catalog.jsonb_object_keys(v_l1->'entries'->0->'restaurant') AS k;
+    ASSERT NOT ('created_by' = ANY (v_restaurant_keys))
+        AND NOT ('merged_into' = ANY (v_restaurant_keys))
+        AND NOT ('completeness_version' = ANY (v_restaurant_keys)),
+        pg_catalog.format('FAIL: owner-only restaurant fields leaked: %s', v_restaurant_keys);
+
+    -- Unranked lists read newest first.
+    v_l5 := public.fn_guest_public_list('24710000-0000-4000-8000-000000000005');
+    SELECT pg_catalog.array_agg(e->>'id' ORDER BY ord) INTO v_ids
+    FROM pg_catalog.jsonb_array_elements(v_l5->'entries') WITH ORDINALITY AS t(e, ord);
+    ASSERT v_ids = ARRAY['24720000-0000-4000-8000-000000000054', '24720000-0000-4000-8000-000000000051'],
+        pg_catalog.format('FAIL: unranked guest entries must be newest first, got %s', v_ids);
+
+    -- The restaurant-page band with no viewer: only the two readable lists.
+    SELECT pg_catalog.array_agg(id ORDER BY id) INTO v_featured
+    FROM public.fn_restaurant_featured_lists(NULL, v_r1, 10);
+    ASSERT v_featured = ARRAY[
+        '24710000-0000-4000-8000-000000000001'::uuid,
+        '24710000-0000-4000-8000-000000000005'::uuid
+    ], pg_catalog.format('FAIL: guest featured lists, got %s', v_featured);
+
+    RAISE NOTICE 'PASS guest_public_reads lists: grants, public-only gate, Table refusal, verified entries, photos, order, band';
+END;
+$$;
+
 ROLLBACK;
