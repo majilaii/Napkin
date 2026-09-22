@@ -9,7 +9,7 @@ Code-traceable operating map for agents driving the Expo app. Route inventory is
 1. Use an iOS Simulator with the Napkin development client (`com.majilaii.dining-journal-app`). The bundle identifier is declared in `napkin-app/app.config.ts`.
 2. In `napkin-app/`, run `npm start` to start Metro for an already-installed development client (`napkin-app/package.json`).
 3. If the development client is absent or native code/patches changed, run `npm run ios` for a fresh native build (`napkin-app/package.json`). `postinstall` applies `patch-package`, so install dependencies before judging native-patch behavior.
-4. Let `app/_layout.tsx::AuthGate` choose auth, onboarding, or the signed-in shell. `/` itself redirects to `/(tabs)/places` (`app/index.tsx`).
+4. A cold launch shows the native splash (the Napkin wordmark on paper), then the launch screen (`components/launch/`, section 3) until connectivity, session restore, the onboarding-gate read and routing have all landed. `app/_layout.tsx::RootLayoutNav` chooses auth, onboarding, or the signed-in shell underneath it. `/` itself redirects to `/(tabs)/places` (`app/index.tsx`).
 5. Navigate to every changed state, not merely every changed route. Capture a screenshot of each loading, content, empty, error, permission, privacy, and modal state affected by the change.
 6. For a first-screen touch check, tap controls near the bottom of the first native screen mounted after launch; see TICKET-212 in section 5.
 
@@ -182,6 +182,21 @@ Entry companion pickers list mutual follows only. Search uses `user-profile?acti
 ## 3. Per-card states
 
 “Intended-empty” below means the query completed and code received an empty array/zero/null allowed by its contract. “Broken-empty” means a query errored, never enabled, lost identity/parameters, or returned an unexpected shape. Preserve this distinction in screenshots and fixes.
+
+### Launch screen (cold launch and the sign-in wait)
+
+Source: `components/launch/LaunchProvider.tsx`, `LaunchScreen.tsx`, `launchState.ts`, `useLaunchSequence.ts`, `launchLayout.ts`; state reported by `providers/ConnectivityProvider.tsx` and `app/_layout.tsx::RootLayoutNav`; native splash from `app.config.ts` (`expo-splash-screen`) and `assets/images/splash-wordmark.png`, rendered from the Newsreader font by `scripts/brand/render-splash-wordmark.swift`.
+
+- One screen replaces the former three (connection spinner, cold "No connection" page, "Checking your account…" gate). `OnboardingGateBoundary` and the connectivity gate now render plain paper underneath the cover and only report what they wait on.
+- Native splash: the wordmark PNG (a 200pt square centred on the full screen) on paper `#fdf6ec` in light and dark mode. The launch screen draws the same PNG in the same square and hides the native splash two frames after the image loads (1.2 s fallback), so the handoff is invisible. Changing the splash needs a native build; a development client built before this change still shows the old terracotta tile.
+- Intro (cold launch only): two terracotta rules draw outward from the wordmark (about 0.7 s) and dry to the masthead's quiet 25% hairline. Reduced motion fades the finished rules in instead.
+- Loading: the cover stays until reachability is online, the session is restored, the onboarding gate has a real answer and the navigator has held one route for 120 ms. While waiting, a pen stroke runs along the lower rule (reduced motion: the rule breathes in place). After 3.5 s a quiet `Setting the table…` line appears; a normal launch shows no copy at all.
+- Offline at cold launch: `No connection` with a `try again` pill (reachability refresh, busy while it runs); NetInfo also recovers on its own. Later drops keep using the in-app offline banner and never bring the cover back.
+- Account unreachable: the onboarding-gate read exhausted its retries. The gate stays fail-closed; the cover shows `Couldn’t reach Napkin` with `try again` and retries by itself every 8 s while shown.
+- Exit: the masthead lifts and fades, then the paper dissolves (about 0.4 s) into whichever route landed. Launch routing runs with stack animations off while the cover is up, so the `/` redirect and auth routing never show through.
+- Sign-in wait: when signing in blocks the onboarding gate again, the cover returns without the intro (the masthead fades in) and leaves the same way.
+- Accessibility: the cover is modal for VoiceOver while up; the wordmark is labelled `Napkin`; the lower rule is a busy progress bar while working; problem lines are alerts.
+- Live safety: read-only. The `try again` controls only re-probe reachability or re-read `profiles.onboarded_at`.
 
 ### Feed and feed cards
 
@@ -477,13 +492,21 @@ All recipes are read-only unless they explicitly say **fixture/test only**. Pref
 
 ### First run / onboarding
 
-1. In an isolated test or disposable local Supabase fixture, authenticate a user whose `profiles.onboarded_at` is null (`providers/AuthProvider.tsx`, `app/_layout.tsx::AuthGate`).
+1. In an isolated test or disposable local Supabase fixture, authenticate a user whose `profiles.onboarded_at` is null (`providers/AuthProvider.tsx`, `app/_layout.tsx::RootLayoutNav`).
 2. Cold-launch. The gate routes to `/onboarding`; advance through photo and city/follows using mocked Edge Function results.
 3. Capture the name step in both of its forms — skipped entirely when a provider supplied a name (stash a `pendingIdentity` entry or a `user_metadata.full_name` for the fixture user and confirm the stack opens on photo), and rendered `Optional` with Continue enabled on an empty field plus `Maybe later` when it did not — then the mandatory photo (empty, uploading, approved, rejected/unavailable), city (local suggestions, no matches, keyboard), optional follows (loading, candidates, failure rollback), and completion pending/error/retry states. City suggestions are local; only co-diner/completion calls have network failures. All remote writes use isolated fixtures.
 4. Successful real completion alone opens `/welcome?intro=1`; onboarded preview opens `/welcome?preview=1` without enabling tips or completing the profile again. Capture journal → places → sharing → Table chapters, back/skip, terminal Places and optional Tables destinations. New accounts must not be able to reach the welcome before profile completion, and import/handoff/join-table resume priority remains unchanged.
 5. Settings → A guide to Napkin opens the five-chapter directory. Capture every chapter, invalid-topic fallback, close/back hierarchy, privacy doorway and feature destinations. All preview cards are clearly labelled Example and use local bundled assets.
 6. Enable discovery only for a local fixture viewer: capture Places personal pinned list, Feed, active Table, own Diary and Lists tips; dismiss each, remount and confirm it stays absent. Verify a different/signed-out/existing-not-enabled account sees no tip. Tips never overlay the map or show on another person's Diary. Storage failures do not block navigation or lose session dismissals.
 7. Capture zero-Table introduction and its Start a Table/How Tables work navigation without submitting creation; keep loading and cold error/retry separate from intended-empty. Verify comfortable scrolling on a small iPhone, keyboard-safe setup footer, large text and dark mode.
+
+### Launch screen states
+
+1. Cold launch: `xcrun simctl terminate <UDID> com.majilaii.dining-journal-app`, then start `xcrun simctl io <UDID> recordVideo` and launch. The sequence lasts about 1.5 s, faster than `simctl io screenshot` can sample; step through the recording with `ffmpeg` instead.
+2. Slow launch: throttle the Mac with Network Link Conditioner (Very Bad Network) and cold-launch; `Setting the table…` appears after 3.5 s.
+3. Offline cold launch: disconnect the Mac from the network, cold-launch, capture `No connection`, then reconnect and confirm the cover carries on to the app.
+4. Account unreachable and the sign-in wait with a failing profile read: **test only** (`components/launch/__tests__/LaunchProvider.test.tsx`, `providers/AuthProvider.test.tsx`); it needs three failed profile reads while reachability passes.
+5. Native splash handoff: needs a native build (`npx expo run:ios`); compare the last native-splash frame with the first launch-screen frame of a recording.
 
 ### Empty journal
 

@@ -85,6 +85,29 @@ import {
     useQuery,
 } from '@tanstack/react-query';
 import { ConnectivityProvider } from '../ConnectivityProvider';
+import { LaunchReporterContext, type LaunchReporter } from '@/components/launch/launchContext';
+import type { ConnectivityLaunchState } from '@/components/launch/launchState';
+
+// The launch screen owns the cold-launch wait and offline retry; the provider
+// reports its state there. Record every report.
+let launchStates: ConnectivityLaunchState[] = [];
+const launchReporter: LaunchReporter = {
+    setConnectivity: (state) => {
+        launchStates.push(state);
+    },
+    setAccount: () => undefined,
+    setRouteSettled: () => undefined,
+};
+
+function launchState(): ConnectivityLaunchState {
+    return launchStates[launchStates.length - 1];
+}
+
+function launchRetry(): () => void {
+    const state = launchState();
+    if (state.status !== 'offline') throw new Error(`no retry while ${state.status}`);
+    return state.retry;
+}
 
 const checking: Snapshot = {
     type: 'wifi',
@@ -127,9 +150,11 @@ function renderProvider() {
     let renderer: any;
     act(() => {
         renderer = TestRenderer.create(
-            <ConnectivityProvider>
-                <Text>App content</Text>
-            </ConnectivityProvider>,
+            <LaunchReporterContext.Provider value={launchReporter}>
+                <ConnectivityProvider>
+                    <Text>App content</Text>
+                </ConnectivityProvider>
+            </LaunchReporterContext.Provider>,
         );
     });
     return renderer;
@@ -156,6 +181,7 @@ describe('ConnectivityProvider', () => {
         mockFetch.mockReset().mockReturnValue(new Promise(() => {}));
         mockRefresh.mockReset();
         mockTopInset = 0;
+        launchStates = [];
         onlineManager.setOnline(true);
     });
 
@@ -169,24 +195,27 @@ describe('ConnectivityProvider', () => {
         const renderer = renderProvider();
 
         expect(textContent(renderer)).not.toContain('App content');
+        expect(launchState()).toEqual({ status: 'checking' });
+        expect(viewWithTestId(renderer, 'connectivity-cold-launch')).toHaveLength(1);
 
         act(() => mockNetworkListener?.(checking));
-        expect(viewWithTestId(renderer, 'no-connection-state')).toHaveLength(0);
+        expect(launchState()).toEqual({ status: 'checking' });
 
         act(() => mockNetworkListener?.(offline));
-        expect(viewWithTestId(renderer, 'no-connection-state')).toHaveLength(1);
-        expect(textContent(renderer)).toContain('No connection');
+        expect(launchState()).toMatchObject({ status: 'offline', retrying: false });
         expect(textContent(renderer)).not.toContain('App content');
         expect(onlineManager.isOnline()).toBe(false);
 
         act(() => mockNetworkListener?.(online));
         expect(textContent(renderer)).toContain('App content');
-        expect(viewWithTestId(renderer, 'no-connection-state')).toHaveLength(0);
+        expect(launchState()).toEqual({ status: 'ready' });
         expect(onlineManager.isOnline()).toBe(true);
 
         act(() => mockNetworkListener?.(offline));
         expect(textContent(renderer)).toContain('App content');
         expect(viewWithTestId(renderer, 'offline-banner')).toHaveLength(1);
+        // A later drop never brings the launch screen back.
+        expect(launchState()).toEqual({ status: 'ready' });
         expect(onlineManager.isOnline()).toBe(false);
 
         act(() => renderer.unmount());
@@ -202,9 +231,9 @@ describe('ConnectivityProvider', () => {
         act(() => mockNetworkListener?.(offline));
         mockRefresh.mockResolvedValueOnce(online);
 
-        const retry = renderer.root.findByProps({ testID: 'no-connection-retry' });
+        const retry = launchRetry();
         await act(async () => {
-            await retry.props.onPress();
+            await retry();
         });
 
         expect(mockRefresh).toHaveBeenCalledTimes(1);
@@ -218,10 +247,10 @@ describe('ConnectivityProvider', () => {
         act(() => mockNetworkListener?.(offline));
         mockRefresh.mockResolvedValueOnce(connectedUnknown);
 
-        const retry = renderer.root.findByProps({ testID: 'no-connection-retry' });
+        const retry = launchRetry();
         act(() => {
-            void retry.props.onPress();
-            void retry.props.onPress();
+            void retry();
+            void retry();
         });
         await act(async () => {
             await Promise.resolve();
@@ -229,10 +258,7 @@ describe('ConnectivityProvider', () => {
         });
 
         expect(mockRefresh).toHaveBeenCalledTimes(1);
-        expect(
-            renderer.root.findByProps({ testID: 'no-connection-retry' }).props
-                .accessibilityState,
-        ).toEqual({ busy: true, disabled: true });
+        expect(launchState()).toMatchObject({ status: 'offline', retrying: true });
         expect(textContent(renderer)).not.toContain('App content');
 
         await act(async () => {
@@ -252,24 +278,18 @@ describe('ConnectivityProvider', () => {
             act(() => mockNetworkListener?.(offline));
             mockRefresh.mockReturnValueOnce(new Promise(() => {}));
 
-            const retry = renderer.root.findByProps({ testID: 'no-connection-retry' });
+            const retry = launchRetry();
             act(() => {
-                void retry.props.onPress();
+                void retry();
             });
-            expect(
-                renderer.root.findByProps({ testID: 'no-connection-retry' }).props
-                    .accessibilityState,
-            ).toEqual({ busy: true, disabled: true });
+            expect(launchState()).toMatchObject({ status: 'offline', retrying: true });
 
             await act(async () => {
                 await jest.advanceTimersByTimeAsync(6_000);
             });
 
-            expect(
-                renderer.root.findByProps({ testID: 'no-connection-retry' }).props
-                    .accessibilityState,
-            ).toEqual({ busy: false, disabled: false });
-            expect(viewWithTestId(renderer, 'no-connection-state')).toHaveLength(1);
+            expect(launchState()).toMatchObject({ status: 'offline', retrying: false });
+            expect(textContent(renderer)).not.toContain('App content');
             act(() => renderer.unmount());
         } finally {
             jest.useRealTimers();
@@ -285,9 +305,9 @@ describe('ConnectivityProvider', () => {
         );
         const renderer = renderProvider();
         act(() => mockNetworkListener?.(offline));
-        const retry = renderer.root.findByProps({ testID: 'no-connection-retry' });
+        const retry = launchRetry();
         act(() => {
-            void retry.props.onPress();
+            void retry();
             renderer.unmount();
         });
 
@@ -314,7 +334,7 @@ describe('ConnectivityProvider', () => {
             await Promise.resolve();
         });
 
-        expect(viewWithTestId(renderer, 'no-connection-state')).toHaveLength(1);
+        expect(launchState()).toMatchObject({ status: 'offline' });
         expect(textContent(renderer)).not.toContain('App content');
         expect(onlineManager.isOnline()).toBe(false);
         act(() => renderer.unmount());

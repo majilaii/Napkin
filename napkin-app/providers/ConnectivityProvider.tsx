@@ -5,6 +5,7 @@ import React, {
     useCallback,
     useContext,
     useEffect,
+    useLayoutEffect,
     useMemo,
     useRef,
     useState,
@@ -22,7 +23,7 @@ import {
     useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
-import { Colors, Radius, Shadow, Spacing } from '@/constants/theme';
+import { Colors, Shadow, Spacing } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     onNetworkFailure,
@@ -31,6 +32,7 @@ import {
 } from '@/lib/connectivity';
 import { bindQueryFocusToAppState } from '@/lib/focusBridge';
 import { PressableScale } from '@/components/ui/napkin';
+import { useLaunchReporter } from '@/components/launch/launchContext';
 
 // Keep the reachability probe on a small, public Napkin-owned resource rather
 // than the library's third-party default. A HEAD request proves internet access
@@ -74,9 +76,10 @@ export function useConnectivity(): ConnectivityContextValue {
  *
  * The first definitive result gates the rest of the app, preventing a cold
  * offline launch from firing auth/profile reads and mistaking transport errors
- * for product state. After the app has mounted once, it stays mounted through a
- * disconnect so cached screens and in-progress forms are preserved behind the
- * compact banner.
+ * for product state. Until then the launch screen (components/launch) presents
+ * the wait and the cold-offline retry; this provider only reports its state.
+ * After the app has mounted once, it stays mounted through a disconnect so
+ * cached screens and in-progress forms are preserved behind the compact banner.
  */
 export function ConnectivityProvider({ children }: Props) {
     const [status, setStatus] = useState<ConnectivityStatus>('checking');
@@ -239,20 +242,24 @@ export function ConnectivityProvider({ children }: Props) {
         [isRefreshing, refresh, status],
     );
 
-    if (!hasMountedApp) {
-        if (status === 'offline') {
-            return (
-                <ConnectivityContext.Provider value={contextValue}>
-                    <NoConnectionState
-                        isRefreshing={isRefreshing}
-                        onRetry={refresh}
-                    />
-                </ConnectivityContext.Provider>
-            );
+    // Cold launch: the launch screen owns the wait and the offline retry.
+    const launch = useLaunchReporter();
+    const coldOffline = !hasMountedApp && status === 'offline';
+    useLayoutEffect(() => {
+        if (!launch) return;
+        if (hasMountedApp) {
+            launch.setConnectivity({ status: 'ready' });
+        } else if (coldOffline) {
+            launch.setConnectivity({ status: 'offline', retrying: isRefreshing, retry: refresh });
+        } else {
+            launch.setConnectivity({ status: 'checking' });
         }
+    }, [launch, hasMountedApp, coldOffline, isRefreshing, refresh]);
+
+    if (!hasMountedApp) {
         return (
             <ConnectivityContext.Provider value={contextValue}>
-                <ConnectivityLoadingState />
+                <View style={styles.coldLaunch} testID="connectivity-cold-launch" />
             </ConnectivityContext.Provider>
         );
     }
@@ -272,81 +279,6 @@ export function ConnectivityProvider({ children }: Props) {
                 </SafeAreaProvider>
             </View>
         </ConnectivityContext.Provider>
-    );
-}
-
-function ConnectivityLoadingState() {
-    const scheme = useColorScheme() ?? 'light';
-    const palette = Colors[scheme];
-
-    return (
-        <View
-            style={[styles.loadingRoot, { backgroundColor: palette.background }]}
-            accessibilityLabel="Checking connection"
-        >
-            <ActivityIndicator size="small" color={palette.primary} />
-        </View>
-    );
-}
-
-function NoConnectionState({
-    isRefreshing,
-    onRetry,
-}: {
-    isRefreshing: boolean;
-    onRetry: () => void;
-}) {
-    const scheme = useColorScheme() ?? 'light';
-    const palette = Colors[scheme];
-
-    return (
-        <View
-            style={[styles.offlineRoot, { backgroundColor: palette.background }]}
-            accessibilityRole="alert"
-            accessibilityLiveRegion="polite"
-            accessibilityViewIsModal
-            testID="no-connection-state"
-        >
-            <View
-                style={[
-                    styles.offlineIconTile,
-                    Shadow.subtle,
-                    { backgroundColor: palette.surfaceJournal },
-                ]}
-            >
-                <Ionicons
-                    name="cloud-offline-outline"
-                    size={34}
-                    color={palette.primary}
-                />
-            </View>
-            <Text style={[styles.offlineTitle, { color: palette.text }]}>No connection</Text>
-            <Text style={[styles.offlineBody, { color: palette.textMuted }]}>
-                {'Check your connection and try again. Your place in Napkin is safe.'}
-            </Text>
-            <PressableScale
-                onPress={onRetry}
-                disabled={isRefreshing}
-                haptic="selection"
-                accessibilityRole="button"
-                accessibilityLabel="Try connection again"
-                accessibilityState={{ busy: isRefreshing, disabled: isRefreshing }}
-                testID="no-connection-retry"
-                style={[
-                    styles.offlineRetry,
-                    {
-                        borderColor: palette.primary,
-                        opacity: isRefreshing ? 0.6 : 1,
-                    },
-                ]}
-            >
-                {isRefreshing ? (
-                    <ActivityIndicator size="small" color={palette.primary} />
-                ) : (
-                    <Text style={[styles.offlineRetryLabel, { color: palette.primary }]}>try again</Text>
-                )}
-            </PressableScale>
-        </View>
     );
 }
 
@@ -409,55 +341,9 @@ const styles = StyleSheet.create({
     appContent: {
         flex: 1,
     },
-    loadingRoot: {
+    coldLaunch: {
         flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    offlineRoot: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 40,
-        paddingBottom: 28,
-    },
-    offlineIconTile: {
-        width: 72,
-        height: 72,
-        borderRadius: Radius.xl,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    offlineTitle: {
-        marginTop: 26,
-        fontFamily: 'Newsreader_400Regular_Italic',
-        fontSize: 26,
-        lineHeight: 32,
-        letterSpacing: -0.4,
-        textAlign: 'center',
-    },
-    offlineBody: {
-        marginTop: 10,
-        maxWidth: 290,
-        fontFamily: 'Manrope_400Regular',
-        fontSize: 14,
-        lineHeight: 21,
-        textAlign: 'center',
-    },
-    offlineRetry: {
-        minWidth: 132,
-        minHeight: 48,
-        marginTop: 26,
-        paddingHorizontal: 22,
-        borderRadius: Radius.full,
-        borderWidth: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    offlineRetryLabel: {
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
-        letterSpacing: 0.3,
+        backgroundColor: Colors.light.background,
     },
     banner: {
         marginHorizontal: 12,

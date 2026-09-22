@@ -174,16 +174,17 @@ export default ({ config }: ConfigContext): ExpoConfig =>
                 isIosBackgroundLocationEnabled: false,
             },
         ],
+        // The Napkin wordmark on warm paper. The app is light-only, so dark mode
+        // gets the same paper (no black flash). components/launch draws the same
+        // image at the same size, then animates from it; keep imageWidth equal to
+        // SPLASH_WORDMARK_SIZE (components/launch/launchLayout.ts).
         [
             'expo-splash-screen',
             {
-                image: './assets/images/splash-icon.png',
+                image: './assets/images/splash-wordmark.png',
                 imageWidth: 200,
                 resizeMode: 'contain',
-                backgroundColor: '#ffffff',
-                dark: {
-                    backgroundColor: '#000000',
-                },
+                backgroundColor: '#fdf6ec',
             },
         ],
         'expo-web-browser',

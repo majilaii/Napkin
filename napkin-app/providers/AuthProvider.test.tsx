@@ -6,6 +6,7 @@ const mockMaybeSingle = jest.fn();
 const mockGetSession = jest.fn();
 const mockUnsubscribe = jest.fn();
 let confirmOnboardedAt: ((value: string | null) => void) | undefined;
+let retryGate: (() => void) | undefined;
 
 jest.mock('react-native', () => {
     const ReactModule = require('react');
@@ -51,10 +52,11 @@ jest.mock('@/lib/backgroundImportIntake', () => ({
 import { AuthProvider, useAuth } from './AuthProvider';
 
 function GateProbe() {
-    const { onboardedAt, setOnboardedAt } = useAuth();
+    const { onboardedAt, onboardingGateUnresolved, retryOnboardingGate, setOnboardedAt } = useAuth();
     confirmOnboardedAt = setOnboardedAt;
+    retryGate = retryOnboardingGate;
     const value = onboardedAt === undefined
-        ? 'checking'
+        ? onboardingGateUnresolved ? 'unresolved' : 'checking'
         : onboardedAt === null
             ? 'needs-onboarding'
             : onboardedAt;
@@ -66,6 +68,7 @@ describe('AuthProvider onboarding gate', () => {
         jest.useFakeTimers();
         jest.clearAllMocks();
         confirmOnboardedAt = undefined;
+        retryGate = undefined;
         mockGetSession.mockResolvedValue({
             data: { session: { user: { id: 'user-1' } } },
         });
@@ -117,8 +120,55 @@ describe('AuthProvider onboarding gate', () => {
         });
 
         expect(mockMaybeSingle).toHaveBeenCalledTimes(3);
-        expect(screen.getByTestId('gate').props.children).toBe('checking');
+        // Still fail-closed (never a synthetic timestamp), but now marked
+        // unresolved so the launch screen can offer a retry.
+        expect(screen.getByTestId('gate').props.children).toBe('unresolved');
         expect(screen.queryByText(new Date(0).toISOString())).toBeNull();
+    });
+
+    it('re-reads an unresolved gate on retry and resolves from real data', async () => {
+        mockMaybeSingle
+            .mockResolvedValueOnce({ data: null, error: new Error('offline') })
+            .mockResolvedValueOnce({ data: null, error: new Error('offline') })
+            .mockResolvedValueOnce({ data: null, error: new Error('offline') })
+            .mockResolvedValueOnce({ data: { onboarded_at: null }, error: null });
+        const screen = render(
+            <AuthProvider><GateProbe /></AuthProvider>,
+        );
+
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await jest.advanceTimersByTimeAsync(1_000);
+        });
+        expect(screen.getByTestId('gate').props.children).toBe('unresolved');
+
+        await act(async () => {
+            retryGate?.();
+            await Promise.resolve();
+        });
+        expect(mockMaybeSingle).toHaveBeenCalledTimes(4);
+        expect(screen.getByTestId('gate').props.children).toBe('needs-onboarding');
+    });
+
+    it('ignores a retry when nobody is signed in', async () => {
+        mockGetSession.mockResolvedValue({ data: { session: null } });
+        const screen = render(
+            <AuthProvider><GateProbe /></AuthProvider>,
+        );
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            retryGate?.();
+            await Promise.resolve();
+        });
+        expect(mockMaybeSingle).not.toHaveBeenCalled();
+        expect(screen.getByTestId('gate').props.children).toBe('checking');
     });
 
     it('does not let a stale pre-completion read undo server-confirmed onboarding', async () => {

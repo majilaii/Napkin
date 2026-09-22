@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+import { StyleSheet, View } from 'react-native';
 
 import { Colors } from '@/constants/theme';
 
@@ -17,6 +16,11 @@ export function shouldBlockOnboardingGate(
         && (authLoading || (hasSession && onboardedAt === undefined));
 }
 
+/**
+ * Keeps signed-in surfaces unmounted until the gate resolves. The wait itself
+ * is presented by the launch screen (components/launch), which covers this
+ * blocker; the blocker is only the paper underneath it.
+ */
 export function OnboardingGateBoundary({
     blocked,
     children,
@@ -26,38 +30,12 @@ export function OnboardingGateBoundary({
 }) {
     if (!blocked) return children;
 
-    return (
-        <View
-            testID="onboarding-gate-blocker"
-            style={styles.container}
-            accessibilityLabel="Checking your account"
-        >
-            <Text style={styles.brand}>NAPKIN</Text>
-            <ActivityIndicator size="small" color={Colors.light.primary} />
-            <Text style={styles.status}>Checking your account…</Text>
-            <StatusBar style="dark" />
-        </View>
-    );
+    return <View testID="onboarding-gate-blocker" style={styles.container} />;
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 14,
         backgroundColor: Colors.light.background,
-    },
-    brand: {
-        color: Colors.light.text,
-        fontFamily: 'Manrope_700Bold',
-        fontSize: 13,
-        letterSpacing: 3.2,
-    },
-    status: {
-        color: Colors.light.textMuted,
-        fontFamily: 'Manrope_500Medium',
-        fontSize: 13,
-        fontVariant: ['tabular-nums'],
     },
 });
