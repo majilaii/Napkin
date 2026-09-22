@@ -5,6 +5,7 @@ const mockOpenURL = jest.fn((_url: string) => Promise.resolve());
 const mockPage = jest.fn();
 const mockReviews = jest.fn();
 const mockAlert = jest.fn();
+const mockSetString = jest.fn((_text: string) => Promise.resolve(true));
 
 jest.mock('react-native', () => {
     const ReactModule = jest.requireActual('react');
@@ -38,6 +39,7 @@ jest.mock('expo-router', () => ({
     useRouter: () => ({ push: mockPush, back: mockBack }),
 }));
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
+jest.mock('expo-clipboard', () => ({ setStringAsync: (text: string) => mockSetString(text) }));
 jest.mock('expo-haptics', () => ({ impactAsync: jest.fn(), selectionAsync: jest.fn(), ImpactFeedbackStyle: {} }));
 jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -60,7 +62,8 @@ import type {
     PublicReviewCard,
     RestaurantPageRestaurant,
 } from '@/hooks/restaurants/useRestaurantPage';
-import { GuestRestaurantScreen } from '../GuestRestaurantScreen';
+import { GuestRestaurantScreen, sendReport } from '../GuestRestaurantScreen';
+import { LEGAL_URLS, SUPPORT_EMAIL } from '@/constants/links';
 
 const restaurant: RestaurantPageRestaurant = {
     id: 'restaurant-1',
@@ -185,6 +188,37 @@ describe('GuestRestaurantScreen', () => {
 
         buttons[1].onPress?.();
         expect(mockPush).toHaveBeenCalledWith('/auth');
+    });
+
+    it('never dead-ends a report when no mail app can open it', async () => {
+        mockOpenURL.mockRejectedValueOnce(new Error('No app to handle mailto'));
+        sendReport({ id: 'restaurant-1', name: 'Kiln' }, { entry_id: 'entry-1', display_name: 'Clara' });
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(mockAlert).toHaveBeenCalledTimes(1);
+        const [title, message, buttons] = mockAlert.mock.calls[0] as [
+            string,
+            string,
+            { text: string; onPress?: () => void }[],
+        ];
+        expect(title).toBe('Report review');
+        expect(message).toContain(SUPPORT_EMAIL);
+        expect(message).toContain('Review: entry-1 by Clara');
+        expect(buttons.map((b) => b.text)).toEqual(['Copy details', 'Support page', 'Close']);
+
+        buttons[0].onPress?.();
+        expect(mockSetString).toHaveBeenCalledWith(
+            `To: ${SUPPORT_EMAIL}\nRestaurant: Kiln (restaurant-1)\nReview: entry-1 by Clara`,
+        );
+        buttons[1].onPress?.();
+        expect(mockOpenURL).toHaveBeenLastCalledWith(LEGAL_URLS.support);
+    });
+
+    it('shows no fallback when the mail opens', async () => {
+        sendReport({ id: 'restaurant-1', name: 'Kiln' });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(mockOpenURL).toHaveBeenCalledTimes(1);
+        expect(mockAlert).not.toHaveBeenCalled();
     });
 
     it('offers more while the paged query has a next page', () => {

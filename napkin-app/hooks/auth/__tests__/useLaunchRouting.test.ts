@@ -95,38 +95,30 @@ describe('signed out', () => {
         expect(mockReplace).not.toHaveBeenCalled();
     });
 
-    it('sends a guest to /auth from any account route', () => {
-        for (const group of ['settings', 'entry-detail', 'u', 'list', 'import', 'places-scope', 'table']) {
+    it('sends a guest to /auth from any account route, including the hidden tabs', () => {
+        for (const segments of [
+            ['settings'], ['entry-detail'], ['u', '[identifier]'], ['list', '[id]'], ['import'],
+            ['places-scope'], ['table', '[id]', 'settings'], ['(tabs)', 'journal'], ['(tabs)', 'log'],
+        ]) {
             mockReplace.mockClear();
-            run({ segments: [group], isGuest: true });
+            run({ segments, isGuest: true });
             expect(mockReplace).toHaveBeenCalledWith('/auth');
         }
     });
 });
 
 describe('leaving /auth once signed in', () => {
-    it('cold-launch /auth (the lone root) replaces to Places', () => {
+    // OnboardingGateBoundary unmounts the navigator while the new session's
+    // profile is read, so nothing below /auth survives sign-in. The gate always
+    // replaces to Places, whatever the stack looked like before.
+    it('replaces /auth with Places, even when a guest stack sat beneath it', () => {
         run({ segments: ['auth'], session: SESSION, canGoBack: false });
-        expect(mockReplace).toHaveBeenCalledWith('/places');
+        expect(mockReplace).toHaveBeenLastCalledWith('/places');
+        mockReplace.mockClear();
+        run({ segments: ['auth'], session: SESSION, canGoBack: true });
+        expect(mockReplace).toHaveBeenLastCalledWith('/places');
         expect(mockBack).not.toHaveBeenCalled();
-    });
-
-    it('/auth pushed over a guest screen goes back one level, exactly once', () => {
-        const hook = run({ segments: ['auth'], session: SESSION, canGoBack: true });
-        expect(mockBack).toHaveBeenCalledTimes(1);
-        expect(mockReplace).not.toHaveBeenCalled();
-
-        // The gate re-runs before the route leaves auth: no second back().
-        hook.rerender({});
-        hook.rerender({});
-        expect(mockBack).toHaveBeenCalledTimes(1);
-
-        // Once the route has left auth, a later visit may exit again.
-        mockSegments = ['(tabs)', 'places'];
-        hook.rerender({});
-        mockSegments = ['auth'];
-        hook.rerender({});
-        expect(mockBack).toHaveBeenCalledTimes(2);
+        expect(mockDismissAll).not.toHaveBeenCalled();
     });
 
     it('does nothing on ordinary signed-in routes', () => {
@@ -138,20 +130,10 @@ describe('leaving /auth once signed in', () => {
 });
 
 describe('new accounts', () => {
-    it('route to onboarding from cold-launch /auth without touching the stack', () => {
+    it('route to onboarding from /auth', () => {
         const { consumed } = run({ segments: ['auth'], session: SESSION, onboardedAt: null });
-        expect(mockDismissAll).not.toHaveBeenCalled();
         expect(mockReplace).toHaveBeenCalledWith('/onboarding');
         expect(consumed.current).toBe(true);
-    });
-
-    it('drop the guest shell beneath /auth before onboarding', () => {
-        run({ segments: ['auth'], session: SESSION, onboardedAt: null, canGoBack: true });
-        expect(mockDismissAll).toHaveBeenCalledTimes(1);
-        expect(mockReplace).toHaveBeenCalledWith('/onboarding');
-        expect(mockDismissAll.mock.invocationCallOrder[0])
-            .toBeLessThan(mockReplace.mock.invocationCallOrder[0]);
-        expect(mockBack).not.toHaveBeenCalled();
     });
 
     it('let a pending import or recovery finish before onboarding', () => {
@@ -165,8 +147,6 @@ describe('new accounts', () => {
     it('reach onboarding from any other signed-in route', () => {
         run({ segments: ['(tabs)', 'places'], session: SESSION, onboardedAt: null, canGoBack: true });
         expect(mockReplace).toHaveBeenCalledWith('/onboarding');
-        // Only /auth over a stack collapses it; an ordinary route is left alone.
-        expect(mockDismissAll).not.toHaveBeenCalled();
     });
 });
 

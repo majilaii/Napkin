@@ -329,8 +329,8 @@ export default function AuthScreen() {
         }
     };
 
-    // TICKET-247: guest browse doorway. Hidden while a share resume is pending
-    // (saving the shared link needs an account) and while an auth call runs.
+    // TICKET-247: guest browse doorway. A pending share/handoff/invite stash is
+    // left untouched, so signing in later (before it expires) still resumes it.
     const lookAround = async () => {
         await enterGuestMode();
         router.replace('/(tabs)/places');
@@ -366,10 +366,12 @@ export default function AuthScreen() {
                 )}
                 {/* TICKET-247 (App Store 5.1.1(v)): the no-account doorway sits in
                     the top-right corner so it is visible without scrolling on
-                    every device. Hidden for a guest (the chevron above already
-                    returns them), while a share resume is pending (saving the
-                    shared link needs an account) and while an auth call runs. */}
-                {!isGuest && !hasPendingImport && !loading && (
+                    every device. It stays available while a share, handoff or
+                    invite waits for an account: browsing never requires one, and
+                    the pending item is left stashed for a later sign-in. Hidden
+                    for a guest (the chevron above already returns them) and
+                    while an auth call runs. */}
+                {!isGuest && !loading && (
                     <Pressable
                         onPress={lookAround}
                         hitSlop={12}

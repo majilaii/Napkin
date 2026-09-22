@@ -1,59 +1,46 @@
-import { GUEST_ROUTE_GROUPS, resolveSignedOutRedirect } from '../guestRoutes';
+import { GUEST_ROUTE_GROUPS, GUEST_TAB_ROUTES, resolveSignedOutRedirect } from '../guestRoutes';
 
-const SEGMENTS: (string | undefined)[] = [
-    undefined,
-    '(tabs)',
-    'restaurant',
-    'auth',
-    'reset-password',
-    'settings',
-    'entry-detail',
-    'u',
-    'list',
+type Case = [segments: string[], plain: '/auth' | null, guest: '/auth' | null];
+
+// [segments, plain signed-out result, guest result]
+const CASES: Case[] = [
+    [[], '/auth', null],
+    [['(tabs)', 'places'], '/auth', null],
+    [['(tabs)', 'feed'], '/auth', null],
+    [['(tabs)', 'tables'], '/auth', null],
+    [['(tabs)', 'profile'], '/auth', null],
+    [['(tabs)', 'search'], '/auth', null],
+    [['(tabs)'], '/auth', null],
+    [['(tabs)', 'journal'], '/auth', '/auth'],
+    [['(tabs)', 'log'], '/auth', '/auth'],
+    [['restaurant', '[id]'], '/auth', null],
+    [['auth'], null, null],
+    [['reset-password'], null, null],
+    [['settings'], '/auth', '/auth'],
+    [['entry-detail'], '/auth', '/auth'],
+    [['u', '[identifier]'], '/auth', '/auth'],
+    [['list', '[id]'], '/auth', '/auth'],
+    [['places-scope'], '/auth', '/auth'],
+    [['import'], '/auth', '/auth'],
+    [['log-meal'], '/auth', '/auth'],
+    [['onboarding'], '/auth', '/auth'],
 ];
 
 describe('resolveSignedOutRedirect', () => {
-    it('keeps the pre-guest gate for a plain signed-out user (only auth + recovery stay)', () => {
-        const expected: Record<string, '/auth' | null> = {
-            undefined: '/auth',
-            '(tabs)': '/auth',
-            restaurant: '/auth',
-            auth: null,
-            'reset-password': null,
-            settings: '/auth',
-            'entry-detail': '/auth',
-            u: '/auth',
-            list: '/auth',
-        };
-        for (const segment of SEGMENTS) {
-            expect(resolveSignedOutRedirect(segment, false)).toBe(expected[String(segment)]);
-        }
+    it.each(CASES)('%j: plain signed-out -> %s, guest -> %s', (segments, plain, guest) => {
+        expect(resolveSignedOutRedirect(segments, false)).toBe(plain);
+        expect(resolveSignedOutRedirect(segments, true)).toBe(guest);
     });
 
-    it('lets a guest stay on the allowlisted groups and the root index, bounces everything else', () => {
-        const expected: Record<string, '/auth' | null> = {
-            undefined: null,
-            '(tabs)': null,
-            restaurant: null,
-            auth: null,
-            'reset-password': null,
-            settings: '/auth',
-            'entry-detail': '/auth',
-            u: '/auth',
-            list: '/auth',
-        };
-        for (const segment of SEGMENTS) {
-            expect(resolveSignedOutRedirect(segment, true)).toBe(expected[String(segment)]);
-        }
+    it('fails closed on unknown groups and unknown tabs for both states', () => {
+        expect(resolveSignedOutRedirect(['not-a-route'], true)).toBe('/auth');
+        expect(resolveSignedOutRedirect(['not-a-route'], false)).toBe('/auth');
+        expect(resolveSignedOutRedirect([''], true)).toBe('/auth');
+        expect(resolveSignedOutRedirect(['(tabs)', 'not-a-tab'], true)).toBe('/auth');
     });
 
-    it('fails closed on unknown groups for both states', () => {
-        expect(resolveSignedOutRedirect('not-a-route', true)).toBe('/auth');
-        expect(resolveSignedOutRedirect('not-a-route', false)).toBe('/auth');
-        expect(resolveSignedOutRedirect('', true)).toBe('/auth');
-    });
-
-    it('exposes exactly the four guest-reachable groups', () => {
+    it('exposes exactly the guest-reachable groups and tabs', () => {
         expect([...GUEST_ROUTE_GROUPS].sort()).toEqual(['(tabs)', 'auth', 'reset-password', 'restaurant']);
+        expect([...GUEST_TAB_ROUTES].sort()).toEqual(['feed', 'places', 'profile', 'search', 'tables']);
     });
 });
