@@ -1,4 +1,4 @@
-import { loadReviewPhotos } from './reviewPhotos.ts';
+import { loadReviewPhotos } from '../_shared/reviewPhotos.ts';
 /**
  * Restaurant History Edge Function
  *
