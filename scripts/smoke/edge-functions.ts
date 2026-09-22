@@ -932,14 +932,37 @@ const CHECKS: Check[] = [
         body: { action: 'page', restaurant_id: RESTAURANT_ID },
         shape: (json) => {
             const data = (json as {
-                data?: { restaurant?: Record<string, unknown>; reviews?: unknown; reviews_total?: unknown };
+                data?: {
+                    restaurant?: Record<string, unknown>;
+                    reviews?: unknown;
+                    reviews_total?: unknown;
+                    featured_lists?: { rows?: unknown; total?: unknown };
+                };
             }).data;
             if (!data) return 'missing data envelope';
             if (!data.restaurant || typeof data.restaurant !== 'object') return 'missing data.restaurant';
             if (typeof data.restaurant.name !== 'string') return 'data.restaurant.name is not a string';
             if (!Array.isArray(data.reviews)) return 'data.reviews is not an array';
             if (typeof data.reviews_total !== 'number') return 'data.reviews_total is not a number';
+            if (!data.featured_lists || !Array.isArray(data.featured_lists.rows)) {
+                return 'data.featured_lists.rows is not an array';
+            }
+            if (typeof data.featured_lists.total !== 'number') return 'data.featured_lists.total is not a number';
             return null;
+        },
+    },
+    // A random list id must be a clean 404 through the anon key: a missing or
+    // ungranted fn_guest_public_list would surface as a 500 instead.
+    {
+        name: 'public-browse action=list (unknown list is a guest 404)',
+        method: 'POST',
+        fn: 'public-browse',
+        anonAuth: true,
+        body: { action: 'list', list_id: '00000000-0000-4000-8000-000000000000' },
+        expectedStatus: 404,
+        shape: (json) => {
+            const code = (json as { error?: { code?: unknown } }).error?.code;
+            return code === 'NOT_FOUND' ? null : `expected error.code NOT_FOUND, got ${String(code)}`;
         },
     },
     {
