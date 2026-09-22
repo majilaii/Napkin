@@ -28,6 +28,7 @@ import { Colors, IconSize, Radius, Spacing, Type } from '@/constants/theme';
 import { LEGAL_URLS, SUPPORT_EMAIL } from '@/constants/links';
 import { ErrorState } from '@/components/ErrorState';
 import {
+    FeaturedListsSection,
     QuoteCard,
     RestaurantDetails,
     RestaurantOverview,
@@ -202,8 +203,6 @@ export function GuestRestaurantScreen({ restaurantId }: { restaurantId: string }
                                 palette={palette}
                             />
 
-                            <GuestSignInBand />
-
                             {reviewsTotal > 0 ? (
                                 <View style={styles.section} testID="guest-reviews">
                                     <SectionHeading label="Reviews" palette={palette} />
@@ -254,11 +253,21 @@ export function GuestRestaurantScreen({ restaurantId }: { restaurantId: string }
                                 </View>
                             ) : null}
 
+                            {/* Public lists of public accounts only (never Table lists). */}
+                            <FeaturedListsSection
+                                rows={page.data?.featured_lists?.rows ?? []}
+                                onPress={(listId) => router.push({ pathname: '/list/[id]', params: { id: listId } })}
+                                palette={palette}
+                            />
+
                             <RestaurantDetails
                                 restaurant={restaurant}
                                 directionsUrl={restaurantDirectionsUrl(restaurant)}
                                 palette={palette}
                             />
+
+                            {/* Public content first; the account ask closes the page. */}
+                            <GuestSignInBand />
                         </View>
                     </>
                 ) : null}

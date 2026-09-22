@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import {
+    useGuestList,
     useGuestRecent,
     useGuestRestaurantPage,
     useGuestReviews,
@@ -99,5 +100,34 @@ describe('usePublicBrowse', () => {
             action: 'reviews',
             body: { restaurant_id: 'r1', cursor: 'c1' },
         });
+    });
+    it('list sends the list id and reads a 404 as not found, never as an error', async () => {
+        const detail = { list: { id: 'l1' }, entries: [], owner_profile: {}, save_count: 0 };
+        mockCallEdgeFn.mockResolvedValueOnce(detail);
+        const client = freshClient();
+
+        const idle = renderHook(() => useGuestList(undefined), { wrapper: wrapper(client) });
+        await Promise.resolve();
+        expect(mockCallEdgeFn).not.toHaveBeenCalled();
+        idle.unmount();
+
+        const found = renderHook(() => useGuestList('l1'), { wrapper: wrapper(client) });
+        await waitFor(() => expect(found.result.current.data).toEqual({ data: detail, isNotFound: false }));
+        expect(mockCallEdgeFn).toHaveBeenCalledWith('public-browse', {
+            action: 'list',
+            body: { list_id: 'l1' },
+        });
+
+        const notFoundErr = Object.assign(new Error('list not found'), {
+            cause: { code: 'NOT_FOUND', message: 'list not found', status: 404 },
+        });
+        mockCallEdgeFn.mockRejectedValueOnce(notFoundErr);
+        const missing = renderHook(() => useGuestList('l-private'), { wrapper: wrapper(client) });
+        await waitFor(() => expect(missing.result.current.data).toEqual({ data: null, isNotFound: true }));
+        expect(missing.result.current.isError).toBe(false);
+
+        mockCallEdgeFn.mockRejectedValueOnce(new Error('network down'));
+        const broken = renderHook(() => useGuestList('l-broken'), { wrapper: wrapper(client) });
+        await waitFor(() => expect(broken.result.current.isError).toBe(true));
     });
 });

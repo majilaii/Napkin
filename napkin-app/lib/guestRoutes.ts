@@ -6,10 +6,11 @@
  * whether or not the user is a guest.
  */
 
-/** Top-level route groups a guest (signed out, guest flag on) may stay on. */
+/** Top-level route groups a guest (signed out, guest flag on) may stay on; see the per-group checks below. */
 export const GUEST_ROUTE_GROUPS: ReadonlySet<string> = new Set([
     '(tabs)',
     'restaurant',
+    'list',
     'auth',
     'reset-password',
 ]);
@@ -44,6 +45,9 @@ export function resolveSignedOutRedirect(
         if (group === undefined) return null;
         if (!GUEST_ROUTE_GROUPS.has(group)) return '/auth';
         if (group === '(tabs)' && child !== undefined && !GUEST_TAB_ROUTES.has(child)) return '/auth';
+        // Lists: only the read-only detail. Creating (/list/new) and editing
+        // (/list/[id]/edit) are account features.
+        if (group === 'list' && !(child === '[id]' && segments.length === 2)) return '/auth';
         return null;
     }
     if (group === undefined) return '/auth';

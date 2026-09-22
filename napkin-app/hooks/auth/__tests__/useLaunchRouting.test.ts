@@ -86,10 +86,11 @@ describe('signed out', () => {
         expect(mockReplace).not.toHaveBeenCalled();
     });
 
-    it('lets a guest stay on the tabs and restaurant pages', () => {
+    it('lets a guest stay on the tabs, restaurant pages and public list pages', () => {
         run({ segments: ['(tabs)', 'places'], isGuest: true });
         run({ segments: ['(tabs)', 'profile'], isGuest: true });
         run({ segments: ['restaurant', '[id]'], isGuest: true });
+        run({ segments: ['list', '[id]'], isGuest: true });
         run({ segments: ['auth'], isGuest: true });
         run({ segments: [], isGuest: true });
         expect(mockReplace).not.toHaveBeenCalled();
@@ -97,7 +98,7 @@ describe('signed out', () => {
 
     it('sends a guest to /auth from any account route, including the hidden tabs', () => {
         for (const segments of [
-            ['settings'], ['entry-detail'], ['u', '[identifier]'], ['list', '[id]'], ['import'],
+            ['settings'], ['entry-detail'], ['u', '[identifier]'], ['list', 'new'], ['list', '[id]', 'edit'], ['import'],
             ['places-scope'], ['table', '[id]', 'settings'], ['(tabs)', 'journal'], ['(tabs)', 'log'],
         ]) {
             mockReplace.mockClear();

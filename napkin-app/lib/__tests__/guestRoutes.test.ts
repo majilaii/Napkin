@@ -19,7 +19,10 @@ const CASES: Case[] = [
     [['settings'], '/auth', '/auth'],
     [['entry-detail'], '/auth', '/auth'],
     [['u', '[identifier]'], '/auth', '/auth'],
-    [['list', '[id]'], '/auth', '/auth'],
+    [['list', '[id]'], '/auth', null],
+    [['list', 'new'], '/auth', '/auth'],
+    [['list', '[id]', 'edit'], '/auth', '/auth'],
+    [['list'], '/auth', '/auth'],
     [['places-scope'], '/auth', '/auth'],
     [['import'], '/auth', '/auth'],
     [['log-meal'], '/auth', '/auth'],
@@ -40,7 +43,7 @@ describe('resolveSignedOutRedirect', () => {
     });
 
     it('exposes exactly the guest-reachable groups and tabs', () => {
-        expect([...GUEST_ROUTE_GROUPS].sort()).toEqual(['(tabs)', 'auth', 'reset-password', 'restaurant']);
+        expect([...GUEST_ROUTE_GROUPS].sort()).toEqual(['(tabs)', 'auth', 'list', 'reset-password', 'restaurant']);
         expect([...GUEST_TAB_ROUTES].sort()).toEqual(['feed', 'places', 'profile', 'search', 'tables']);
     });
 });

@@ -305,6 +305,7 @@ export const queryKeys = {
         recent: () => ['guest', 'recent'] as const,
         page: (id: string) => ['guest', 'restaurantPage', id] as const,
         reviews: (id: string) => ['guest', 'reviews', id] as const,
+        list: (id: string) => ['guest', 'list', id] as const,
     },
 
     // Handoff — wishlist share link resolve (TICKET-072)

@@ -104,9 +104,12 @@ const review: PublicReviewCard = {
     is_followee: false,
 };
 
-function pageResult(reviews: PublicReviewCard[]) {
+function pageResult(
+    reviews: PublicReviewCard[],
+    featuredLists?: { rows: { id: string; title: string; emoji: string | null; entry_count: number; owner_display_name: string | null; owner_username: string | null }[]; total: number },
+) {
     return {
-        data: { restaurant, reviews, reviews_total: reviews.length },
+        data: { restaurant, reviews, reviews_total: reviews.length, featured_lists: featuredLists },
         isLoading: false,
         isError: false,
         fetchStatus: 'idle',
@@ -219,6 +222,34 @@ describe('GuestRestaurantScreen', () => {
         await new Promise((resolve) => setImmediate(resolve));
         expect(mockOpenURL).toHaveBeenCalledTimes(1);
         expect(mockAlert).not.toHaveBeenCalled();
+    });
+
+    it('shows public lists that include the place and opens one read-only', () => {
+        mockPage.mockReturnValue(pageResult([], {
+            rows: [{
+                id: 'list-1',
+                title: 'Pasta in London',
+                emoji: null,
+                entry_count: 4,
+                owner_display_name: 'Clara',
+                owner_username: 'clara',
+            }],
+            total: 1,
+        }));
+        mockReviews.mockReturnValue(pagedResult([]));
+
+        const screen = render(<GuestRestaurantScreen restaurantId="restaurant-1" />);
+        expect(screen.getByText('In lists')).toBeTruthy();
+        fireEvent.press(screen.getByText('Pasta in London'));
+        expect(mockPush).toHaveBeenCalledWith({ pathname: '/list/[id]', params: { id: 'list-1' } });
+    });
+
+    it('renders no lists band when the page has none (or predates the list read)', () => {
+        mockPage.mockReturnValue(pageResult([]));
+        mockReviews.mockReturnValue(pagedResult([]));
+        const screen = render(<GuestRestaurantScreen restaurantId="restaurant-1" />);
+        expect(screen.queryByText('In lists')).toBeNull();
+        expect(screen.getByTestId('guest-sign-in-band')).toBeTruthy();
     });
 
     it('offers more while the paged query has a next page', () => {

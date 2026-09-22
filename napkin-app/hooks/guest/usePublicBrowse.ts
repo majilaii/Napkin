@@ -14,6 +14,8 @@ import type {
     PublicReviewCard,
     RestaurantPageRestaurant,
 } from '@/hooks/restaurants/useRestaurantPage';
+import type { RestaurantFeaturedListsData } from '@/hooks/restaurants/useRestaurantFeaturedLists';
+import type { ListDetailData } from '@/hooks/lists/useList';
 
 export type GuestRestaurantRow = {
     id: string;
@@ -37,7 +39,15 @@ export type GuestRestaurantPage = {
     /** Capped preview (≤3); the paged `reviews` action carries the rest. */
     reviews: PublicReviewCard[];
     reviews_total: number;
+    /**
+     * Public lists (of public accounts, never Table lists) that contain this
+     * restaurant. Optional: absent from a page cached before the list read shipped.
+     */
+    featured_lists?: RestaurantFeaturedListsData;
 };
+
+/** A public list read by a guest: the signed-in ListDetailData shape, save state off. */
+export type GuestListResult = { data: ListDetailData | null; isNotFound: boolean };
 
 type RowsEnvelope = { rows: GuestRestaurantRow[] };
 
@@ -111,3 +121,29 @@ export function useGuestReviews(restaurantId: string | null | undefined) {
 }
 
 export { flattenPages };
+
+async function fetchGuestList(listId: string): Promise<GuestListResult> {
+    try {
+        const data = await callEdgeFn<ListDetailData | null>('public-browse', {
+            action: 'list',
+            body: { list_id: listId },
+        });
+        return { data: data ?? null, isNotFound: !data };
+    } catch (err) {
+        // A 404 covers private, Table and missing lists alike, by design.
+        const cause = (err as Error & { cause?: { status?: number; code?: string } })?.cause;
+        if (cause?.status === 404 || cause?.code === 'NOT_FOUND') {
+            return { data: null, isNotFound: true };
+        }
+        throw err;
+    }
+}
+
+export function useGuestList(listId: string | null | undefined) {
+    return useQuery<GuestListResult, Error>({
+        queryKey: queryKeys.guest.list(listId ?? ''),
+        queryFn: () => fetchGuestList(listId!),
+        enabled: !!listId,
+        staleTime: FIVE_MINUTES,
+    });
+}
