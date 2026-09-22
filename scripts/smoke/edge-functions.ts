@@ -55,6 +55,11 @@ type Check = {
     expectedStatus?: number;
     /** Skip Authorization + apikey headers (for public endpoints). */
     noAuth?: boolean;
+    /**
+     * TICKET-247: send the ANON key as the bearer instead of the smoke user's
+     * JWT. Proves a signed-out guest (no user session) can read the endpoint.
+     */
+    anonAuth?: boolean;
     /** Extra per-check headers (used only for dedicated operational tokens). */
     headers?: Record<string, string>;
     /** Optional shape sniff on parsed JSON (only for JSON responses). */
@@ -889,6 +894,68 @@ const CHECKS: Check[] = [
             return null;
         },
     },
+    // TICKET-247: the signed-out guest layer (App Store 5.1.1(v)). Every check
+    // sends the ANON key as bearer: a guest has no user JWT, so a 401 here means
+    // the store build's "Look around first" doorway is dead. Empty rows are a
+    // legitimate state for search/recent; page must return the fixture row.
+    {
+        name: 'public-browse action=search (guest catalogue search)',
+        method: 'POST',
+        fn: 'public-browse',
+        anonAuth: true,
+        body: { action: 'search', q: 'ar' },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            return null;
+        },
+    },
+    {
+        name: 'public-browse action=recent (guest Places zero-query list)',
+        method: 'POST',
+        fn: 'public-browse',
+        anonAuth: true,
+        body: { action: 'recent' },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            return null;
+        },
+    },
+    {
+        name: 'public-browse action=page (guest restaurant page)',
+        method: 'POST',
+        fn: 'public-browse',
+        anonAuth: true,
+        body: { action: 'page', restaurant_id: RESTAURANT_ID },
+        shape: (json) => {
+            const data = (json as {
+                data?: { restaurant?: Record<string, unknown>; reviews?: unknown; reviews_total?: unknown };
+            }).data;
+            if (!data) return 'missing data envelope';
+            if (!data.restaurant || typeof data.restaurant !== 'object') return 'missing data.restaurant';
+            if (typeof data.restaurant.name !== 'string') return 'data.restaurant.name is not a string';
+            if (!Array.isArray(data.reviews)) return 'data.reviews is not an array';
+            if (typeof data.reviews_total !== 'number') return 'data.reviews_total is not a number';
+            return null;
+        },
+    },
+    {
+        name: 'public-browse action=reviews (guest paged reviews)',
+        method: 'POST',
+        fn: 'public-browse',
+        anonAuth: true,
+        body: { action: 'reviews', restaurant_id: RESTAURANT_ID, limit: 5 },
+        shape: (json) => {
+            const data = (json as { data?: { rows?: unknown[]; has_more?: unknown } }).data;
+            if (!data) return 'missing data envelope';
+            if (!Array.isArray(data.rows)) return 'data.rows is not an array';
+            if (typeof data.has_more !== 'boolean') return 'data.has_more is not a boolean';
+            return null;
+        },
+    },
 ];
 
 // TICKET-121: places-search costs a REAL Google Places request per call, so it
@@ -1171,7 +1238,7 @@ for (const check of CHECKS) {
     // Build headers: omit auth for noAuth checks (e.g. public share-page endpoint)
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (!check.noAuth) {
-        headers['Authorization'] = `Bearer ${JWT}`;
+        headers['Authorization'] = `Bearer ${check.anonAuth ? ANON_KEY! : JWT}`;
         headers['apikey'] = ANON_KEY!;
     }
     Object.assign(headers, check.headers ?? {});
