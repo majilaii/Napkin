@@ -5,18 +5,28 @@ import { timingSafeSecretEqual } from '../_shared/completeness.ts';
 import { reportError } from '../_shared/report.ts';
 import { drainBackgroundImports } from './worker.ts';
 import { dispatchImportPushes } from '../_shared/importPush.ts';
-import { produceReadyNotice, recoverReadyNotices } from './notifications.ts';
+import { recoverReadyNotices } from './notifications.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN = /^nbi_[0-9a-f]{64}$/;
 const JOB_COLUMNS = 'id,user_id,import_nonce,request,status,response,reason,created_at,updated_at';
 type Environment = (name: string) => string | undefined;
+/**
+ * TICKET-248: iOS relaunches Napkin for a share's background upload only when
+ * the share extension is gone by the time the upload completes; a task that
+ * finishes while the extension is still on screen calls back into the extension
+ * and the app is never woken (Apple DTS, forums thread 76659). Answering an
+ * extension's upload after this delay lets the extension finish and be torn
+ * down first. App (JWT) calls are never delayed.
+ */
+export const EXTENSION_WAKE_DELAY_MS = 8000;
 interface Dependencies {
     // deno-lint-ignore no-explicit-any
     supabase?: any;
     env?: Environment;
     defer?: (promise: Promise<unknown>) => void;
     drain?: typeof drainBackgroundImports;
+    sleep?: (ms: number) => Promise<void>;
 }
 function json(data: unknown, status = 200): Response {
     return new Response(JSON.stringify({ data }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -78,17 +88,13 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
         if (queryAction && body.action && queryAction !== body.action) return failure('INVALID_ACTION', 400);
         const action = queryAction ?? body.action;
         const supabase = deps.supabase ?? createClient(url, serviceKey);
+        const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
         const defer = deps.defer ?? ((promise: Promise<unknown>) => {
             // deno-lint-ignore no-explicit-any
             (globalThis as any).EdgeRuntime?.waitUntil?.(promise);
         });
         const run = async (jobId?: string) => {
-            const result = await (deps.drain ?? drainBackgroundImports)({
-                supabase, url, serviceKey, internalSecret: env('INTERNAL_CALL_SECRET') ?? '', jobId,
-                notifyReady: async (job, count) => {
-                    await produceReadyNotice(supabase, { ...job, response: { candidates: Array(count) } });
-                },
-            });
+            const result = await (deps.drain ?? drainBackgroundImports)({ supabase, jobId });
             // Rescue a crash after ready was committed but before notifications were
             // enqueued. Delivery keys and inbox ids make repeated producers harmless.
             if (!jobId) {
@@ -164,6 +170,7 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
                 // it completes. Authenticate and answer; nothing is stored or run.
                 if (typeof body.job_id !== 'string' || !UUID.test(body.job_id)
                     || body.expected_owner_id !== ownerId) return failure('INVALID_IMPORT', 400);
+                if (credentialId) await sleep(EXTENSION_WAKE_DELAY_MS);
                 return json({ job_id: body.job_id, status: 'wake' });
             }
             if (action === 'enqueue') {
@@ -197,10 +204,13 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
                         .update({ status: 'needs_device', reason: 'device_owns_import', updated_at: new Date().toISOString() })
                         .eq('id', data.id).eq('user_id', ownerId).eq('status', 'pending');
                     if (handoffError) {
-                        // The job stays pending: the scheduled worker is the fallback.
+                        // The job stays pending: the worker hands it off instead.
                         defer(run(data.id).catch(error => reportError(error, { fn: 'background-imports', action: 'kick' })));
                         return json({ job_id: data.id, status: data.status }, 202);
                     }
+                    // Installed builds' share extensions upload here: answering late
+                    // lets iOS wake the app to process on the phone (see the delay).
+                    if (credentialId) await sleep(EXTENSION_WAKE_DELAY_MS);
                     return json({ job_id: data.id, status: 'needs_device' }, 202);
                 }
                 return json({ job_id: data.id, status: data.status }, 202);

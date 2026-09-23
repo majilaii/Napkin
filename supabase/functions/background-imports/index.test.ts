@@ -1,5 +1,5 @@
 import { assertEquals, assertMatch } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { createBackgroundImportsHandler, hashCredential } from "./index.ts";
+import { createBackgroundImportsHandler, EXTENSION_WAKE_DELAY_MS, hashCredential } from "./index.ts";
 
 const OWNER = "bb0a2f2e-7887-401d-9360-a068c23f5d73";
 const OTHER = "7cd1d9af-2766-43b2-992f-6167d5f90e67";
@@ -18,6 +18,7 @@ function fixture() {
   const userChecks: string[] = [];
   const drainCalls: unknown[] = [];
   const deferred: Promise<unknown>[] = [];
+  const sleeps: number[] = [];
   const job = { id: JOB, user_id: OWNER, import_nonce: NONCE, request: { url: "https://www.tiktok.com/@chef/video/123", protocol_generation: "v2" }, status: "pending" };
   let queryData: unknown = { id: CREDENTIAL, user_id: OWNER };
   let authError = false;
@@ -56,9 +57,10 @@ function fixture() {
     supabase, env: name => config[name],
     defer: promise => deferred.push(promise),
     drain: async options => { drainCalls.push(options); return { processed: 1 }; },
+    sleep: async ms => { sleeps.push(ms); },
   });
   return {
-    queries, rpcs, userChecks, drainCalls, deferred, job, config, handler,
+    queries, rpcs, userChecks, drainCalls, deferred, sleeps, job, config, handler,
     setQueryData: (value: unknown) => queryData = value,
     setAuthError: () => authError = true,
     call: (action: string, body: Record<string, unknown> = {}, token = JWT, headers: Record<string, string> = {}) => handler(new Request(`https://backend.example/background-imports?action=${action}`, {
@@ -104,6 +106,17 @@ Deno.test("background intake validates scoped token hash/revocation/expiry and b
   ]);
   await Promise.all(f.deferred);
   assertEquals(f.drainCalls.length, 0);
+  // An installed build's extension upload is answered late so iOS wakes the app.
+  assertEquals(f.sleeps, [EXTENSION_WAKE_DELAY_MS]);
+});
+
+Deno.test("the app's own (JWT) enqueue is never delayed", async () => {
+  const f = fixture();
+  const res = await f.call("enqueue", {
+    job_id: JOB, import_nonce: NONCE, url: f.job.request.url, expected_owner_id: OWNER, protocol_generation: "v2",
+  });
+  assertEquals(res.status, 202);
+  assertEquals(f.sleeps, []);
 });
 
 Deno.test("a share wake authenticates the scoped credential and stores nothing (TICKET-248)", async () => {
@@ -111,6 +124,7 @@ Deno.test("a share wake authenticates the scoped credential and stores nothing (
   const res = await f.call("wake", { job_id: JOB, expected_owner_id: OWNER }, OPAQUE);
   assertEquals(res.status, 200);
   assertEquals((await res.json()).data, { job_id: JOB, status: "wake" });
+  assertEquals(f.sleeps, [EXTENSION_WAKE_DELAY_MS]);
   assertEquals(f.rpcs, []);
   assertEquals(f.queries.map(query => query.table), ["background_import_credentials"]);
   await Promise.all(f.deferred);
