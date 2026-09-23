@@ -1,0 +1,15 @@
+{
+  "ticket": "TICKET-248",
+  "date": "2026-09-23",
+  "device": "iPhone 17 simulator, iOS 26.5 (disposable device created for this check, never signed in)",
+  "build": "Debug dev client + Napkin.appex from the reviewed native code, prebuilt with a placeholder team id and ad-hoc simulator signing",
+  "states": [
+    {"state": "Napkin in the Safari share sheet", "file": "share-sheet.png", "result": "present"},
+    {"state": "share card after capture", "file": "card-link-ready.png", "result": "subtitle 'link ready' (Maps links no longer claim 'list ready')"},
+    {"state": "after 'add for review' without an intake credential", "file": "card-added-no-credential.png", "result": "'open Napkin when you're ready to check the spots'; manifest written review-mode, no remoteJobId, no wake transfer"}
+  ],
+  "not_verified": [
+    "wake-path copy and background relaunch: needs a signed-in intake credential (live data) and a physical device",
+    "the shared URL here is Google's consent page because the simulator's region shows it before Maps"
+  ]
+}

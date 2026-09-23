@@ -93,6 +93,50 @@ export interface PersistedImportSpot {
     stance?: 'recommended' | 'warned' | 'neutral' | null;
 }
 
+/**
+ * TICKET-248: what on-device perception produced for the current attempt (the
+ * fused text plus the flags the resolve needs). A re-drain after iOS cut a
+ * background wake short, or after a server failure, resolves from this instead
+ * of downloading and reading the video again. Cleared once spots exist and on a
+ * manual try-again (which should read the source fresh).
+ */
+export interface ImportEvidence {
+    extractedText: string | null;
+    mergedDesc: string;
+    photoPost: boolean;
+    cheapTierRan: boolean;
+    downloadOk: boolean;
+    escalationAddedEvidence: boolean;
+    fastPathGate: string;
+    thumbUrl: string | null;
+    handle: string | null;
+}
+
+const MAX_EVIDENCE_TEXT = 200_000;
+
+function normalizeImportEvidence(value: unknown): ImportEvidence | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const e = value as Record<string, unknown>;
+    const optionalText = (x: unknown, max: number) =>
+        x === null ? null : typeof x === 'string' && x.length <= max ? x : undefined;
+    const extractedText = optionalText(e.extractedText, MAX_EVIDENCE_TEXT);
+    const thumbUrl = optionalText(e.thumbUrl, 4096);
+    const handle = optionalText(e.handle, 200);
+    if (extractedText === undefined || thumbUrl === undefined || handle === undefined
+        || typeof e.mergedDesc !== 'string' || e.mergedDesc.length > MAX_EVIDENCE_TEXT
+        // Empty evidence would skip a perception that could still succeed.
+        || !(extractedText?.trim() || e.mergedDesc.trim())
+        || typeof e.fastPathGate !== 'string' || e.fastPathGate.length > 40
+        || ![e.photoPost, e.cheapTierRan, e.downloadOk, e.escalationAddedEvidence]
+            .every((flag) => typeof flag === 'boolean')) return undefined;
+    return {
+        extractedText, mergedDesc: e.mergedDesc, photoPost: e.photoPost as boolean,
+        cheapTierRan: e.cheapTierRan as boolean, downloadOk: e.downloadOk as boolean,
+        escalationAddedEvidence: e.escalationAddedEvidence as boolean,
+        fastPathGate: e.fastPathGate, thumbUrl, handle,
+    };
+}
+
 /** Where the import's spots should land. Chosen on the in-extension card. */
 export interface ImportDestinations {
     /** Always true today (wishlist is the base destination). */
@@ -178,6 +222,21 @@ export interface ImportManifest {
     sourceHandle?: string | null;
     /** TICKET-180: live drain stage (see ImportStage). Fire-and-forget per boundary. */
     stage?: ImportStage;
+    /**
+     * TICKET-248: server-answered 5xx during this import (extraction timeout,
+     * provider error). Transient errors used to retry forever without a trace;
+     * the drain now fails the import visibly at MAX_SERVER_FAILURES. Explicit
+     * readAll parse (survival law); reset by retryImport.
+     */
+    serverFailures?: number;
+    /** TICKET-248: see ImportEvidence. Explicit readAll parse (survival law). */
+    evidence?: ImportEvidence;
+    /**
+     * TICKET-248: the server acknowledged dismissing this device-processed
+     * server-lane job. Until then housekeeping retries, so an old ready job can
+     * never notify for an import the phone handled.
+     */
+    remoteDismissed?: boolean;
     /**
      * TICKET-181: whether the single-shot save pins each spot to the personal
      * wishlist. Default TRUE (wishlist is the base destination) — the review editor
@@ -364,6 +423,13 @@ function readAll(): ImportManifest[] {
                     // save-confirm — without this line a re-drain would pin the
                     // wishlist anyway, silently defeating a list-only save.
                     pinWishlist: typeof p.pinWishlist === 'boolean' ? p.pinWishlist : undefined,
+                    // TICKET-248: same survival law — a stage write must not reset it.
+                    serverFailures:
+                        typeof p.serverFailures === 'number' && Number.isSafeInteger(p.serverFailures) && p.serverFailures > 0
+                            ? p.serverFailures
+                            : undefined,
+                    evidence: normalizeImportEvidence(p.evidence),
+                    remoteDismissed: p.remoteDismissed === true ? true : undefined,
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -555,7 +621,7 @@ export function retryImport(jobId: string): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     if (m.sourcePreparation === 'failed') return; // Photos must be selected again.
-    writeManifest({ ...m, attempts: 0, status: 'pending', notificationOutcome: undefined,
+    writeManifest({ ...m, attempts: 0, serverFailures: undefined, evidence: undefined, status: 'pending', notificationOutcome: undefined,
         ...(m.remoteState === 'failed' ? { remoteState: 'needs_device' as const } : {}) });
     pokeImportQueue();
 }
@@ -603,7 +669,7 @@ export function pokeImportQueue(): void {
 export function setImportSpots(jobId: string, spots: PersistedImportSpot[], awaitingNotification = false): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m || m.sourcePreparation === 'pending' || m.sourcePreparation === 'failed') return;
-    writeManifest({ ...m, spots, ...(awaitingNotification ? {
+    writeManifest({ ...m, spots, evidence: undefined, ...(awaitingNotification ? {
         notificationOutcome: 'pending' as const, localNotificationOutcome: undefined,
     } : {}) });
 }
@@ -614,16 +680,16 @@ export function setRemoteImportState(jobId: string, ownerId: string, state: Impo
     if (!writeManifest({ ...manifest, remoteState: state })) throw new Error('Could not checkpoint remote import');
 }
 
-export function checkpointRemoteImport(jobId: string, ownerId: string, spots: PersistedImportSpot[],
-    source: { listCount?: number | null; thumbUrl?: string | null; handle?: string | null }): ImportManifest | null {
+/** Device-processed server-lane jobs whose server copy is not yet dismissed. */
+export function listUndismissedRemoteImports(ownerId: string): ImportManifest[] {
+    return readAll().filter((m) => m.userId === ownerId && !!m.remoteJobId
+        && m.remoteState === 'needs_device' && !m.remoteDismissed);
+}
+
+export function markRemoteImportDismissed(jobId: string, ownerId: string): void {
     const manifest = getImportForUser(jobId, ownerId);
-    if (!manifest?.remoteJobId) return null;
-    if (manifest.spots?.length) return manifest; // never overwrite edits or frozen save nonces
-    const ready: ImportManifest = { ...manifest, spots, mode: 'review', remoteState: 'ready',
-        notificationOutcome: 'review', localNotificationOutcome: 'review',
-        listCount: source.listCount, sourceThumbUrl: source.thumbUrl, sourceHandle: source.handle };
-    if (!writeManifest(ready)) throw new Error('Could not checkpoint ready import');
-    return ready;
+    if (!manifest?.remoteJobId) return;
+    writeManifest({ ...manifest, remoteDismissed: true });
 }
 
 export function listRetiredRemoteImports(ownerId: string): { jobId: string; remoteJobId: string; importNonce?: string; url?: string }[] {
@@ -804,6 +870,42 @@ export function setImportStage(jobId: string, stage: ImportStage): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     writeManifest({ ...m, stage });
+    stageListeners.forEach((listener) => {
+        try {
+            listener(jobId, stage);
+        } catch {
+            /* a bad listener must not break the drain */
+        }
+    });
+}
+
+type StageListener = (jobId: string, stage: ImportStage) => void;
+const stageListeners = new Set<StageListener>();
+
+/** TICKET-248: the import-now session mirrors stages into the system progress UI. */
+export function onImportStage(listener: StageListener): () => void {
+    stageListeners.add(listener);
+    return () => {
+        stageListeners.delete(listener);
+    };
+}
+
+/** Checkpoint on-device perception for this attempt (see ImportEvidence). */
+export function setImportEvidence(jobId: string, evidence: ImportEvidence): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m || m.spots?.length) return;
+    writeManifest({ ...m, evidence });
+}
+
+/** A repeated server failure ends as a visible, retryable failure. */
+export const MAX_SERVER_FAILURES = 2;
+
+/** Count a server-answered 5xx; returns the updated manifest (null if gone). */
+export function bumpImportServerFailure(jobId: string): ImportManifest | null {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return null;
+    const updated: ImportManifest = { ...m, serverFailures: (m.serverFailures ?? 0) + 1 };
+    return writeManifest(updated) ? updated : null;
 }
 
 /**

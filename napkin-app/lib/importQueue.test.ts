@@ -54,6 +54,11 @@ import {
     setImportSource,
     setImportSpots,
     setImportStage,
+    bumpImportServerFailure,
+    MAX_SERVER_FAILURES,
+    setImportEvidence,
+    listUndismissedRemoteImports,
+    markRemoteImportDismissed,
     setImportDestinations,
     confirmImportReview,
     ensureImportV2Routing,
@@ -65,7 +70,6 @@ import {
     failImport,
     retryImport,
     markImportNotification,
-    checkpointRemoteImport,
     removeImport,
     listRetiredRemoteImports,
     type ImportManifest,
@@ -107,14 +111,6 @@ it('retiring remote work retains its immutable capture until server cancellation
     expect(listRetiredRemoteImports('alice')).toEqual([{ jobId: 'remote-1', remoteJobId: 'remote-1',
         importNonce: 'nonce-1', url: 'https://www.tiktok.com/@topjaw/video/1' }]);
     expect(listRetiredRemoteImports('bob')).toEqual([]);
-});
-
-it('a failed remote checkpoint never exposes half-persisted review results', () => {
-    seedManifest({ jobId: 'remote-1', remoteJobId: 'remote-1', userId: 'alice' });
-    nativeMock.__failNextWrite();
-    expect(() => checkpointRemoteImport('remote-1', 'alice', [], {})).toThrow('checkpoint');
-    expect(getImport('remote-1')?.remoteState).toBeUndefined();
-    expect(checkpointRemoteImport('remote-1', 'bob', [], {})).toBeNull();
 });
 
 describe('review-first import creation', () => {
@@ -305,6 +301,83 @@ describe('readAll round-trips the TICKET-180 source/stage fields', () => {
         const m = getImport('job-4');
         expect(m?.sourceThumbUrl).toBe('https://cdn/y.jpg');
         expect(m?.sourceHandle).toBeNull();
+    });
+});
+
+describe('TICKET-248 — serverFailures survives rewrites and resets on retry', () => {
+    it('counts server failures across stage writes and clears them on try-again', () => {
+        seedManifest({ jobId: 'job-1' });
+        expect(bumpImportServerFailure('job-1')?.serverFailures).toBe(1);
+        setImportStage('job-1', 'matching spots');
+        expect(getImport('job-1')?.serverFailures).toBe(1);
+        expect(bumpImportServerFailure('job-1')?.serverFailures).toBe(MAX_SERVER_FAILURES);
+        failImport('job-1');
+        retryImport('job-1');
+        expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+        expect(getImport('job-1')?.serverFailures).toBeUndefined();
+    });
+
+    it('ignores a malformed count from untrusted JSON', () => {
+        seedManifest({ jobId: 'job-2', serverFailures: -3 as number });
+        expect(getImport('job-2')?.serverFailures).toBeUndefined();
+        expect(bumpImportServerFailure('missing')).toBeNull();
+    });
+});
+
+describe('TICKET-248 — perception evidence survives rewrites until spots or try-again', () => {
+    const evidence = {
+        extractedText: '[video text]\nSALVO', mergedDesc: 'Best spots in Amsterdam', photoPost: false,
+        cheapTierRan: true, downloadOk: true, escalationAddedEvidence: true, fastPathGate: 'count_short',
+        thumbUrl: 'https://cdn.example/thumb.jpg', handle: 'topjaw',
+    };
+
+    it('survives stage/diagnostic/failure rewrites', () => {
+        seedManifest({ jobId: 'job-1' });
+        setImportEvidence('job-1', evidence);
+        setImportStage('job-1', 'matching spots');
+        bumpImportServerFailure('job-1');
+        expect(getImport('job-1')?.evidence).toEqual(evidence);
+    });
+
+    it('is cleared once spots exist and never written over them', () => {
+        seedManifest({ jobId: 'job-1' });
+        setImportEvidence('job-1', evidence);
+        setImportSpots('job-1', [{ candidate_id: 'c', client_nonce: 'n', restaurant_id: null, external_id: 'p',
+            restaurant_name: 'Salvo', restaurant_city: null, table_id: null, table_client_nonce: null, place: null }]);
+        expect(getImport('job-1')?.evidence).toBeUndefined();
+        setImportEvidence('job-1', evidence);
+        expect(getImport('job-1')?.evidence).toBeUndefined();
+    });
+
+    it('a manual try-again reads the source fresh', () => {
+        seedManifest({ jobId: 'job-1' });
+        setImportEvidence('job-1', evidence);
+        failImport('job-1');
+        expect(getImport('job-1')?.evidence).toEqual(evidence);
+        retryImport('job-1');
+        expect(getImport('job-1')?.evidence).toBeUndefined();
+    });
+
+    it('drops malformed evidence from untrusted JSON', () => {
+        seedManifest({ jobId: 'job-2', evidence: { ...evidence, downloadOk: 'yes' } as never });
+        expect(getImport('job-2')?.evidence).toBeUndefined();
+        seedManifest({ jobId: 'job-3', evidence: { ...evidence, extractedText: null, thumbUrl: null, handle: null } });
+        expect(getImport('job-3')?.evidence).toMatchObject({ extractedText: null, thumbUrl: null, handle: null });
+        // Empty evidence would skip a perception that could still succeed.
+        seedManifest({ jobId: 'job-4', evidence: { ...evidence, extractedText: '  ', mergedDesc: '' } });
+        expect(getImport('job-4')?.evidence).toBeUndefined();
+    });
+
+    it('remoteDismissed survives rewrites and lists only undismissed device-processed jobs', () => {
+        seedManifest({ jobId: 'remote-1', remoteJobId: 'remote-1', remoteState: 'needs_device', userId: 'alice' });
+        seedManifest({ jobId: 'remote-2', remoteJobId: 'remote-2', remoteState: 'needs_device', userId: 'alice' });
+        seedManifest({ jobId: 'local-1', userId: 'alice' });
+        expect(listUndismissedRemoteImports('alice').map((m) => m.jobId).sort()).toEqual(['remote-1', 'remote-2']);
+        markRemoteImportDismissed('remote-1', 'alice');
+        markRemoteImportDismissed('remote-2', 'bob');
+        setImportStage('remote-1', 'matching spots');
+        expect(getImport('remote-1')?.remoteDismissed).toBe(true);
+        expect(listUndismissedRemoteImports('alice').map((m) => m.jobId)).toEqual(['remote-2']);
     });
 });
 

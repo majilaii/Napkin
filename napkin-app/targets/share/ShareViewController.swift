@@ -2,11 +2,14 @@
 //
 // Share a VIDEO (saved file) or URL (link) → one action writes a review-mode
 // pending-import manifest to the App-Group queue, then completes without an app
-// switch. URL imports also hand off to the server through an iOS-owned upload.
-// Nothing is saved automatically: every spot is confirmed later in the app.
+// switch. Nothing is saved automatically: every spot is confirmed in the app.
 //
-// Snapshot identity must match the scoped intake credential in shared Keychain.
-// NO OCR here (~120MB cap). Movies retain the durable on-device queue.
+// TICKET-248: the share also starts a tiny iOS-owned background upload. Its only
+// purpose is the wake: when it finishes, iOS launches (or resumes) Napkin in the
+// background, and the app starts the import on the device right then instead of
+// waiting to be opened. The server keeps no job for it. The upload needs the
+// scoped intake credential, whose owner must match the snapshot identity.
+// NO OCR here (~120MB cap): perception always runs in the app.
 
 import UIKit
 import UniformTypeIdentifiers
@@ -320,15 +323,8 @@ class ShareViewController: UIViewController {
         captureReady = true
         spinner.stopAnimating()
         spinner.isHidden = true
-        let isMapsLink = capturedURL?.range(
-            of: #"maps\.app\.goo\.gl|goo\.gl/maps|maps\.google\.|google\.[a-z.]+/maps"#,
-            options: .regularExpression
-        ) != nil
-        subtitleLabel.text = kind == "video"
-            ? "video ready"
-            : (isMapsLink
-                ? "list ready"
-                : "link ready")
+        // A Maps short link can be one place or a whole list; "link" is honest.
+        subtitleLabel.text = kind == "video" ? "video ready" : "link ready"
         doneButton.setTitle("add for review", for: .normal)
         doneButton.setTitleColor(.white, for: .normal)
         doneButton.backgroundColor = terracotta
@@ -402,11 +398,6 @@ class ShareViewController: UIViewController {
         ]
         if kind == "video", let p = capturedVideoPath { manifest["videoPath"] = p }
         if kind == "url", let u = capturedURL { manifest["url"] = u }
-        // Declare the remote lane before starting the upload. The app must not
-        // race its local extractor against a server job whose reply is in flight.
-        if kind == "url", BackgroundImportTransfer.canSubmit(owner: snapshotUserId) {
-            manifest["remoteJobId"] = jobId
-        }
 
         guard let data = try? JSONSerialization.data(withJSONObject: manifest) else {
             failToQueue()
@@ -422,10 +413,11 @@ class ShareViewController: UIViewController {
             failToQueue()
             return
         }
-        let submitted = manifest["remoteJobId"] != nil && BackgroundImportTransfer.submit(manifest: manifest, origin: "share")
+        // Only after the manifest is durable: the wake must find it.
+        let waking = BackgroundImportTransfer.wake(jobId: jobId, owner: snapshotUserId, origin: "share")
         titleLabel.text = "added for review"
-        subtitleLabel.text = submitted
-            ? "Napkin will prepare the spots for review"
+        subtitleLabel.text = waking
+            ? "Napkin is getting the spots ready"
             : "open Napkin when you're ready to check the spots"
         doneButton.setTitle("added", for: .normal)
         doneButton.setTitleColor(.white, for: .disabled)
