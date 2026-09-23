@@ -22,15 +22,11 @@
 
 import { createLogger, generateRunId, type Logger } from './lib/log.ts';
 import { getSupabaseClient } from './lib/supabase.ts';
+import { loadDripRestaurants, loadUserTouchedRestaurants, type RestaurantRow } from './lib/restaurants.ts';
 import { createPublicationLimiter } from './lib/rate-limit.ts';
 import { enforceLicense, LicenseError } from './lib/license.ts';
 import { perVenueParsers, listParsers, type ParsedRow } from './parsers/index.ts';
 import { EATER_CITIES, nameMatches } from './parsers/eater.ts';
-
-// ── Config ─────────────────────────────────────────────────────────────────
-
-const DRIP_BATCH_SIZE = 50;
-const SCRAPE_STALENESS_DAYS = 30;
 
 // ── Per-publication run summary ────────────────────────────────────────────
 
@@ -45,97 +41,6 @@ interface PubSummary {
 
 function blankSummary(publication: string): PubSummary {
     return { publication, inserted: 0, updated: 0, skipped_not_found: 0, failed: 0, license_failed: 0 };
-}
-
-// ── Restaurant loaders ─────────────────────────────────────────────────────
-
-interface RestaurantRow {
-    id: string;
-    name: string;
-    address: string | null;
-    external_id: string | null;
-}
-
-/** User-touched restaurants: at least one entry or wishlist_item. */
-async function loadUserTouchedRestaurants(): Promise<RestaurantRow[]> {
-    const supabase = getSupabaseClient();
-
-    // Two separate EXISTS subqueries to avoid cross-table OR complexity.
-    // Service role reads entries + wishlist_items + restaurants directly.
-    const { data: entryRests, error: entryErr } = await supabase
-        .from('entries')
-        .select('restaurant_id');
-    if (entryErr) throw new Error(entryErr.message);
-
-    const { data: wishlistRests, error: wlErr } = await supabase
-        .from('wishlist_items')
-        .select('restaurant_id');
-    if (wlErr) throw new Error(wlErr.message);
-
-    const touchedIds = new Set([
-        ...(entryRests ?? []).map((r: { restaurant_id: string }) => r.restaurant_id),
-        ...(wishlistRests ?? []).map((r: { restaurant_id: string }) => r.restaurant_id),
-    ]);
-
-    if (touchedIds.size === 0) return [];
-
-    const { data: restaurants, error: restErr } = await supabase
-        .from('restaurants')
-        .select('id, name, address, external_id')
-        .in('id', [...touchedIds]);
-    if (restErr) throw new Error(restErr.message);
-
-    return (restaurants ?? []) as RestaurantRow[];
-}
-
-/**
- * Drip-eligible restaurants: no attempt for this publication in the last 30 days,
- * or no attempt at all. Ordered by last_attempted_at nulls first (most stale first).
- * Bounded to DRIP_BATCH_SIZE per publication.
- * P1-3 ARCH-REVIEW: queries critic_scrape_attempts, not professional_critic_reviews.
- */
-async function loadDripRestaurants(publication: string): Promise<RestaurantRow[]> {
-    const supabase = getSupabaseClient();
-    const staleBefore = new Date(Date.now() - SCRAPE_STALENESS_DAYS * 24 * 60 * 60 * 1000).toISOString();
-
-    // Find restaurant IDs that have no attempt record OR a stale one for this publication
-    const { data: recentAttempts, error: attErr } = await supabase
-        .from('critic_scrape_attempts')
-        .select('restaurant_id')
-        .eq('publication', publication)
-        .gte('last_attempted_at', staleBefore);
-    if (attErr) throw new Error(attErr.message);
-
-    const recentIds = new Set((recentAttempts ?? []).map((a: { restaurant_id: string }) => a.restaurant_id));
-
-    // Get all restaurants with at least one entry (user-touched = drip scope)
-    const { data: entryRests, error: entryErr } = await supabase
-        .from('entries')
-        .select('restaurant_id');
-    if (entryErr) throw new Error(entryErr.message);
-
-    const { data: wishlistRests, error: wlErr } = await supabase
-        .from('wishlist_items')
-        .select('restaurant_id');
-    if (wlErr) throw new Error(wlErr.message);
-
-    const allTouchedIds = [...new Set([
-        ...(entryRests ?? []).map((r: { restaurant_id: string }) => r.restaurant_id),
-        ...(wishlistRests ?? []).map((r: { restaurant_id: string }) => r.restaurant_id),
-    ])];
-
-    // Eligible = touched AND not recently attempted
-    const eligibleIds = allTouchedIds.filter((id) => !recentIds.has(id)).slice(0, DRIP_BATCH_SIZE);
-
-    if (eligibleIds.length === 0) return [];
-
-    const { data: restaurants, error: restErr } = await supabase
-        .from('restaurants')
-        .select('id, name, address, external_id')
-        .in('id', eligibleIds);
-    if (restErr) throw new Error(restErr.message);
-
-    return (restaurants ?? []) as RestaurantRow[];
 }
 
 // ── Upsert helper ──────────────────────────────────────────────────────────
@@ -472,14 +377,14 @@ async function main() {
 
     if (mode === 'backfill' || mode === 'drip') {
         const restaurants = mode === 'backfill'
-            ? await loadUserTouchedRestaurants()
+            ? await loadUserTouchedRestaurants(getSupabaseClient())
             : [];  // drip loads per-publication below
 
         for (const parser of perVenueParsers) {
             const summary = blankSummary(parser.publication);
             const batch = mode === 'backfill'
                 ? restaurants
-                : await loadDripRestaurants(parser.publication);
+                : await loadDripRestaurants(getSupabaseClient(), parser.publication);
 
             logger.info(`Starting ${parser.publication} scrape`, { count: batch.length, mode });
 
