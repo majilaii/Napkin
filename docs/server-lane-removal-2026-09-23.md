@@ -7,7 +7,7 @@ TICKET-248 (PRs #393 and #394, 23 September 2026) moved every shared import onto
 Production figures came from one aggregate SELECT through the Supabase Management API. No row contents were read and nothing was written.
 
 - `background_import_jobs` holds 12 rows from one owner on one installation: 8 `failed` (`temporarily_unavailable`), 3 `dismissed`, 1 `needs_device`. None is `pending`, `processing` or `ready`, and none was created after the TICKET-248 deploy (17:11 UTC); the newest is from 22 September, 18:44 UTC.
-- The lane never produced a result in production: zero `ready` jobs, zero `import_push_deliveries` rows ever, zero `import_resolutions` with evidence path `background`.
+- No `ready` job, no `import_push_deliveries` row and no `import_resolutions` row with evidence path `background` was present at the audit. That is a snapshot, not lifetime history: push revocation deletes delivery rows, and account deletion removes jobs and provenance.
 - `import_push_devices` has 2 active rows, last written 15:42 UTC on 23 September, so installed builds still register Expo tokens.
 - `background_import_credentials` has 6 rows (5 active) across 6 installations and 3 owners; the newest is from 17 September.
 - Deployed `background-imports` is version 10 (17:11:24 UTC, the prod-deploy run for da4bc5b). Its downloaded bundle has no `fetch` and no call to `resolve-url`; the worker only claims jobs and finishes them as `needs_device`.
