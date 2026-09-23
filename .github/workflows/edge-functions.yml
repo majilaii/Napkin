@@ -32,3 +32,9 @@ jobs:
         # Dependencies are integrity-checked by deno.lock. The test runtime gets
         # env access for test-owned fixtures, but deliberately no network access.
         run: deno test --allow-env --frozen supabase/functions/
+
+      - name: Run hermetic critics-ingest tests
+        # The daily Critics ingestion cron runs this code against prod with the
+        # service-role key, so these tests are its only pre-merge gate. Same
+        # rules: lock-checked dependencies, no network access.
+        run: deno test --allow-env --frozen scripts/critics-ingest/
