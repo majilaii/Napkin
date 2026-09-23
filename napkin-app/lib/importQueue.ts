@@ -93,6 +93,48 @@ export interface PersistedImportSpot {
     stance?: 'recommended' | 'warned' | 'neutral' | null;
 }
 
+/**
+ * TICKET-248: what on-device perception produced for the current attempt (the
+ * fused text plus the flags the resolve needs). A re-drain after iOS cut a
+ * background wake short, or after a server failure, resolves from this instead
+ * of downloading and reading the video again. Cleared once spots exist and on a
+ * manual try-again (which should read the source fresh).
+ */
+export interface ImportEvidence {
+    extractedText: string | null;
+    mergedDesc: string;
+    photoPost: boolean;
+    cheapTierRan: boolean;
+    downloadOk: boolean;
+    escalationAddedEvidence: boolean;
+    fastPathGate: string;
+    thumbUrl: string | null;
+    handle: string | null;
+}
+
+const MAX_EVIDENCE_TEXT = 200_000;
+
+function normalizeImportEvidence(value: unknown): ImportEvidence | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const e = value as Record<string, unknown>;
+    const optionalText = (x: unknown, max: number) =>
+        x === null ? null : typeof x === 'string' && x.length <= max ? x : undefined;
+    const extractedText = optionalText(e.extractedText, MAX_EVIDENCE_TEXT);
+    const thumbUrl = optionalText(e.thumbUrl, 4096);
+    const handle = optionalText(e.handle, 200);
+    if (extractedText === undefined || thumbUrl === undefined || handle === undefined
+        || typeof e.mergedDesc !== 'string' || e.mergedDesc.length > MAX_EVIDENCE_TEXT
+        || typeof e.fastPathGate !== 'string' || e.fastPathGate.length > 40
+        || ![e.photoPost, e.cheapTierRan, e.downloadOk, e.escalationAddedEvidence]
+            .every((flag) => typeof flag === 'boolean')) return undefined;
+    return {
+        extractedText, mergedDesc: e.mergedDesc, photoPost: e.photoPost as boolean,
+        cheapTierRan: e.cheapTierRan as boolean, downloadOk: e.downloadOk as boolean,
+        escalationAddedEvidence: e.escalationAddedEvidence as boolean,
+        fastPathGate: e.fastPathGate, thumbUrl, handle,
+    };
+}
+
 /** Where the import's spots should land. Chosen on the in-extension card. */
 export interface ImportDestinations {
     /** Always true today (wishlist is the base destination). */
@@ -185,6 +227,8 @@ export interface ImportManifest {
      * readAll parse (survival law); reset by retryImport.
      */
     serverFailures?: number;
+    /** TICKET-248: see ImportEvidence. Explicit readAll parse (survival law). */
+    evidence?: ImportEvidence;
     /**
      * TICKET-181: whether the single-shot save pins each spot to the personal
      * wishlist. Default TRUE (wishlist is the base destination) — the review editor
@@ -376,6 +420,7 @@ function readAll(): ImportManifest[] {
                         typeof p.serverFailures === 'number' && Number.isSafeInteger(p.serverFailures) && p.serverFailures > 0
                             ? p.serverFailures
                             : undefined,
+                    evidence: normalizeImportEvidence(p.evidence),
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -567,7 +612,7 @@ export function retryImport(jobId: string): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     if (m.sourcePreparation === 'failed') return; // Photos must be selected again.
-    writeManifest({ ...m, attempts: 0, serverFailures: undefined, status: 'pending', notificationOutcome: undefined,
+    writeManifest({ ...m, attempts: 0, serverFailures: undefined, evidence: undefined, status: 'pending', notificationOutcome: undefined,
         ...(m.remoteState === 'failed' ? { remoteState: 'needs_device' as const } : {}) });
     pokeImportQueue();
 }
@@ -615,7 +660,7 @@ export function pokeImportQueue(): void {
 export function setImportSpots(jobId: string, spots: PersistedImportSpot[], awaitingNotification = false): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m || m.sourcePreparation === 'pending' || m.sourcePreparation === 'failed') return;
-    writeManifest({ ...m, spots, ...(awaitingNotification ? {
+    writeManifest({ ...m, spots, evidence: undefined, ...(awaitingNotification ? {
         notificationOutcome: 'pending' as const, localNotificationOutcome: undefined,
     } : {}) });
 }
@@ -822,6 +867,13 @@ export function onImportStage(listener: StageListener): () => void {
     return () => {
         stageListeners.delete(listener);
     };
+}
+
+/** Checkpoint on-device perception for this attempt (see ImportEvidence). */
+export function setImportEvidence(jobId: string, evidence: ImportEvidence): void {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m || m.spots?.length) return;
+    writeManifest({ ...m, evidence });
 }
 
 /** A repeated server failure ends as a visible, retryable failure. */

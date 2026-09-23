@@ -56,6 +56,7 @@ import {
     setImportStage,
     bumpImportServerFailure,
     MAX_SERVER_FAILURES,
+    setImportEvidence,
     setImportDestinations,
     confirmImportReview,
     ensureImportV2Routing,
@@ -318,6 +319,48 @@ describe('TICKET-248 — serverFailures survives rewrites and resets on retry', 
         seedManifest({ jobId: 'job-2', serverFailures: -3 as number });
         expect(getImport('job-2')?.serverFailures).toBeUndefined();
         expect(bumpImportServerFailure('missing')).toBeNull();
+    });
+});
+
+describe('TICKET-248 — perception evidence survives rewrites until spots or try-again', () => {
+    const evidence = {
+        extractedText: '[video text]\nSALVO', mergedDesc: 'Best spots in Amsterdam', photoPost: false,
+        cheapTierRan: true, downloadOk: true, escalationAddedEvidence: true, fastPathGate: 'count_short',
+        thumbUrl: 'https://cdn.example/thumb.jpg', handle: 'topjaw',
+    };
+
+    it('survives stage/diagnostic/failure rewrites', () => {
+        seedManifest({ jobId: 'job-1' });
+        setImportEvidence('job-1', evidence);
+        setImportStage('job-1', 'matching spots');
+        bumpImportServerFailure('job-1');
+        expect(getImport('job-1')?.evidence).toEqual(evidence);
+    });
+
+    it('is cleared once spots exist and never written over them', () => {
+        seedManifest({ jobId: 'job-1' });
+        setImportEvidence('job-1', evidence);
+        setImportSpots('job-1', [{ candidate_id: 'c', client_nonce: 'n', restaurant_id: null, external_id: 'p',
+            restaurant_name: 'Salvo', restaurant_city: null, table_id: null, table_client_nonce: null, place: null }]);
+        expect(getImport('job-1')?.evidence).toBeUndefined();
+        setImportEvidence('job-1', evidence);
+        expect(getImport('job-1')?.evidence).toBeUndefined();
+    });
+
+    it('a manual try-again reads the source fresh', () => {
+        seedManifest({ jobId: 'job-1' });
+        setImportEvidence('job-1', evidence);
+        failImport('job-1');
+        expect(getImport('job-1')?.evidence).toEqual(evidence);
+        retryImport('job-1');
+        expect(getImport('job-1')?.evidence).toBeUndefined();
+    });
+
+    it('drops malformed evidence from untrusted JSON', () => {
+        seedManifest({ jobId: 'job-2', evidence: { ...evidence, downloadOk: 'yes' } as never });
+        expect(getImport('job-2')?.evidence).toBeUndefined();
+        seedManifest({ jobId: 'job-3', evidence: { ...evidence, extractedText: null, thumbUrl: null, handle: null } });
+        expect(getImport('job-3')?.evidence).toMatchObject({ extractedText: null, thumbUrl: null, handle: null });
     });
 });
 

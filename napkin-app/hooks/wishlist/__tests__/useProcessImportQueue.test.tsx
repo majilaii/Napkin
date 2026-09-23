@@ -162,6 +162,39 @@ describe('root import queue gallery integration', () => {
             expect.anything());
     });
 
+    it('a server failure after on-device reading resumes from the saved evidence, never re-reading (TICKET-248)', async () => {
+        seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', videoPath: undefined, sourcePreparation: undefined });
+        mockPerceive.mockResolvedValue({
+            text: 'Best spots in Amsterdam', desc: 'Best spots in Amsterdam', transcript: '', hasTranscript: false,
+            isPhotoPost: false, playAddr: null, thumbnailUrl: 'https://cdn.example/thumb.jpg', authorHandle: 'chef',
+        });
+        const second = { ...candidate, candidate_id: 'candidate-2', resolution_id: 'resolution-2',
+            restaurant: { name: 'Bagel Boy', city: 'Amsterdam', external_id: 'place-2' } };
+        const timeout = Object.assign(new Error('Import extraction timed out'), { cause: { status: 503, code: 'TIMEOUT' } });
+        const bodies: unknown[] = [];
+        mockEdge.mockImplementation(async (fn: string, options: any) => {
+            if (fn === 'notifications') return { ok: true };
+            if (fn !== 'resolve-url' || options.action) throw new Error(`Unexpected request ${fn}:${options.action}`);
+            bodies.push(options.body);
+            if (bodies.length === 1) return { source_type: 'video', candidates: [candidate, second], list_count_raw: null };
+            if (bodies.length === 2) throw timeout;
+            return { source_type: 'video', candidates: [candidate, second] };
+        });
+        await mount();
+        expect(getImport('job-1')).toMatchObject({ status: 'pending', serverFailures: 1,
+            evidence: expect.objectContaining({ mergedDesc: 'Best spots in Amsterdam', handle: 'chef', cheapTierRan: true }) });
+
+        await act(async () => { pokeImportQueue(); });
+        await flush();
+        expect(mockPerceive).toHaveBeenCalledTimes(1);
+        expect(bodies).toHaveLength(3);
+        expect(bodies[2]).toEqual(bodies[1]);
+        const done = getImport('job-1');
+        expect(done?.spots).toHaveLength(2);
+        expect(done?.evidence).toBeUndefined();
+        expect(done?.sourceHandle).toBe('chef');
+    });
+
     it('rate limits and lost connections keep waiting without counting a failure', async () => {
         seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', videoPath: undefined, sourcePreparation: undefined });
         const limited = Object.assign(new Error('Too many'), { cause: { status: 429 } });

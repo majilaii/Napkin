@@ -72,6 +72,7 @@ import {
     setRemoteImportState,
     bumpImportServerFailure,
     MAX_SERVER_FAILURES,
+    setImportEvidence,
     type ImportManifest,
     type PersistedImportSpot,
     type LargeImportJob,
@@ -990,7 +991,24 @@ export function useProcessImportQueue() {
                         : isInstagramUrl(m.url)
                           ? 'instagram'
                           : null;
-                    if (provider) {
+                    const resumed = provider ? m.evidence ?? null : null;
+                    if (provider && resumed) {
+                        // TICKET-248: this attempt already read the source on the
+                        // device (a background wake was cut short, or the server
+                        // failed after perception). Resolve from that evidence
+                        // instead of downloading and reading the video again.
+                        extractedText = resumed.extractedText;
+                        mergedDesc = resumed.mergedDesc;
+                        photoPost = resumed.photoPost;
+                        cheapTierRan = resumed.cheapTierRan;
+                        downloadOk = resumed.downloadOk;
+                        escalationAddedEvidence = resumed.escalationAddedEvidence;
+                        fastPathGate = resumed.fastPathGate;
+                        clipProvider = provider;
+                        clipThumbUrl = resumed.thumbUrl;
+                        if (provider === 'instagram') igAuthorHandle = resumed.handle;
+                        else tkHandle = resumed.handle;
+                    } else if (provider) {
                         // TICKET-180 stage 1/6: on-device page fetch (caption + ASR).
                         setImportStage(m.jobId, 'fetching page');
                         // deadlineAt (epoch ms) caps the perception fetches' internal
@@ -1359,6 +1377,17 @@ export function useProcessImportQueue() {
                         } else if (provider === 'tiktok') {
                             tkHandle =
                                 (perception as { authorHandle?: string | null })?.authorHandle ?? null;
+                        }
+                        // TICKET-248: checkpoint the finished perception before the
+                        // server resolve, so a suspension or server failure from
+                        // here on never costs another download and read.
+                        if (!fastPath) {
+                            setImportEvidence(m.jobId, {
+                                extractedText, mergedDesc, photoPost, cheapTierRan, downloadOk,
+                                escalationAddedEvidence, fastPathGate,
+                                thumbUrl: clipThumbUrl,
+                                handle: provider === 'instagram' ? igAuthorHandle : tkHandle,
+                            });
                         }
                     }
                     // ── Shared resolve — SKIPPED on the fast path (candidates set). ──
