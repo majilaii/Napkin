@@ -61,15 +61,44 @@ export type SourceType =
   | "vision"
   | "video";
 
+export interface PlacesSearchLocality {
+  city?: string | null;
+  area?: string | null;
+  /** A shared Maps place's own coordinates: bias there, never the home city. */
+  location?: { lat: number; lng: number } | null;
+  /** false when the query already carries its own address (Maps app shares). */
+  useHomeCity?: boolean;
+}
+
+/**
+ * A shared Maps place is located by the link itself, never by the sharer's home
+ * city: a London user sharing a Paris restaurant must not search "…, London".
+ * Name-only links keep the default home-city fallback.
+ */
+export function mapsPlaceSearchLocality(
+  place: {
+    location: { lat: number; lng: number } | null;
+    selfLocating: boolean;
+  } | null,
+): PlacesSearchLocality | undefined {
+  if (place?.location) return { location: place.location };
+  if (place?.selfLocating) return { useHomeCity: false };
+  return undefined;
+}
+
 export function buildPlacesSearchBody(
   query: string,
-  locality?: { city?: string | null; area?: string | null },
+  locality?: PlacesSearchLocality,
 ): Record<string, unknown> {
   return {
     query,
     limit: 3,
     ...(locality?.city ? { city: locality.city } : {}),
     ...(locality?.area ? { area: locality.area } : {}),
+    ...(locality?.location
+      ? { lat: locality.location.lat, lng: locality.location.lng }
+      : {}),
+    ...(locality?.useHomeCity === false ? { use_home_city: false } : {}),
   };
 }
 

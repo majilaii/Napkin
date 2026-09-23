@@ -110,7 +110,7 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
             let ownerId: string | undefined;
             let credentialId: string | null = null;
             if (TOKEN.test(bearer)) {
-                if (action !== 'enqueue' && action !== 'revoke_intake') return failure('FORBIDDEN', 403);
+                if (action !== 'enqueue' && action !== 'wake' && action !== 'revoke_intake') return failure('FORBIDDEN', 403);
                 const { data, error } = await supabase.from('background_import_credentials')
                     .select('id,user_id').eq('token_hash', await hashCredential(bearer))
                     .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle();
@@ -158,6 +158,14 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
                     .update({ revoked_at: new Date().toISOString() }).eq('id', id).eq('user_id', ownerId);
                 return error ? failure('TEMPORARILY_UNAVAILABLE', 503) : json({ revoked: true });
             }
+            if (action === 'wake') {
+                // TICKET-248: the share extension's background upload exists only
+                // so iOS relaunches Napkin to process the share on the device when
+                // it completes. Authenticate and answer; nothing is stored or run.
+                if (typeof body.job_id !== 'string' || !UUID.test(body.job_id)
+                    || body.expected_owner_id !== ownerId) return failure('INVALID_IMPORT', 400);
+                return json({ job_id: body.job_id, status: 'wake' });
+            }
             if (action === 'enqueue') {
                 if (typeof body.job_id !== 'string' || !UUID.test(body.job_id)
                     || typeof body.import_nonce !== 'string' || !UUID.test(body.import_nonce)
@@ -179,7 +187,22 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
                     if (/IMPORT_RATE_LIMITED|IMPORT_QUEUE_FULL/.test(error.message)) return failure('RATE_LIMITED', 429);
                     return failure('TEMPORARILY_UNAVAILABLE', 503);
                 }
-                if (data.status === 'pending') defer(run(data.id).catch(error => reportError(error, { fn: 'background-imports', action: 'kick' })));
+                if (data.status === 'pending') {
+                    // TICKET-248: the phone owns every share. The worker cannot read
+                    // TikTok/Instagram media, and a pending job made installed builds
+                    // wait for it (for hours when the first attempt failed).
+                    // needs_device sends them straight to on-device processing,
+                    // including when this upload wakes the app in the background.
+                    const { error: handoffError } = await supabase.from('background_import_jobs')
+                        .update({ status: 'needs_device', reason: 'device_owns_import', updated_at: new Date().toISOString() })
+                        .eq('id', data.id).eq('user_id', ownerId).eq('status', 'pending');
+                    if (handoffError) {
+                        // The job stays pending: the scheduled worker is the fallback.
+                        defer(run(data.id).catch(error => reportError(error, { fn: 'background-imports', action: 'kick' })));
+                        return json({ job_id: data.id, status: data.status }, 202);
+                    }
+                    return json({ job_id: data.id, status: 'needs_device' }, 202);
+                }
                 return json({ job_id: data.id, status: data.status }, 202);
             }
             if (action === 'list') {

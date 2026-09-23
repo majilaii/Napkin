@@ -9,10 +9,13 @@ import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
     buildGetlistFallbackUrl,
     cityFromAddress,
+    expandMapsShare,
     extractGetlistPreloadUrl,
     extractListIdFromMapsUrl,
     mapsItemsToStaged,
     parseGetlistResponse,
+    parseMapsPlaceTarget,
+    parsePlaceFromMapsUrl,
 } from './mapsList.ts';
 
 // Verbatim from a live list page (attribute-encoded &amp;).
@@ -132,4 +135,139 @@ Deno.test('cityFromAddress strips postcodes across regional formats', () => {
     assertEquals(cityFromAddress('Piazza del Duomo, 20122 Milano MI, Italy'), 'Milano MI');
     assertEquals(cityFromAddress('single-segment'), null);
     assertEquals(cityFromAddress(null), null);
+});
+
+// ── Share-link expansion (TICKET-248) ──────────────────────────────────────────
+// Redirect targets are verbatim shapes observed 2026-09-23: an app-made share
+// (Google Maps "copy link") names the place in its FIRST hop as ?q=Name,+Address;
+// a web-made share redirects once to /maps/place/<name>/@…/data=…!3d…!4d….
+const APP_SHARE_HOP =
+    'https://maps.google.com/?q=Twigs+Beauty+Lounge%D8%8C+%D8%B4.+%D8%A5%D9%85%D8%AB%D8%A7%D8%B1%D9%8A+%D8%A7%D9%84%D9%86%D8%B9%D9%8A%D9%85%D8%A7%D8%AA%D8%8C+%D8%B9%D9%85%D9%91%D8%A7%D9%86+11821&ftid=0x151ca14f118fcb2f:0xa6158e4e8b82fa6c&entry=gps&g_st=com.google.maps.preview.copy';
+const WEB_SHARE_HOP =
+    'https://www.google.com/maps/place/Dishoom+Covent+Garden/@51.5125176,-0.1268291,17z/data=!3m1!4b1!4m6!3m5!1s0x487604b7c7d895c5:0x9c3887a3670e0076!8m2!3d51.5125176!4d-0.1268291!16s%2Fg%2F1tdjwh2v?entry=tts&g_ep=EgoyMDI2MDkyMC4wIPu8ASoASAFQAw%3D%3D';
+const LIST_SHARE_HOP =
+    'https://www.google.com/maps/@/data=!3m1!4b1!4m3!11m2!2sqnI5mZfQTjOZ23P72_pmRQ!3e3?coh=198004&entry=tts&ucbcb=1';
+
+type Route = { status: number; location?: string; body?: string };
+
+function fakeFetcher(routes: Record<string, Route>) {
+    const calls: { url: string; redirect?: RequestRedirect }[] = [];
+    const fetcher = ((input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({ url, redirect: init?.redirect });
+        const route = routes[url];
+        if (!route) return Promise.reject(new TypeError(`unexpected fetch ${url}`));
+        return Promise.resolve(new Response(route.body ?? null, {
+            status: route.status,
+            headers: route.location ? { location: route.location } : {},
+        }));
+    }) as typeof fetch;
+    return { fetcher, calls };
+}
+
+const signal = () => new AbortController().signal;
+
+Deno.test('parseMapsPlaceTarget: web share → place name + its own !3d/!4d pin', () => {
+    assertEquals(parseMapsPlaceTarget(WEB_SHARE_HOP), {
+        query: 'Dishoom Covent Garden',
+        location: { lat: 51.5125176, lng: -0.1268291 },
+        selfLocating: false,
+    });
+});
+
+Deno.test('parseMapsPlaceTarget: app share → full "name, address" query that locates itself', () => {
+    const target = parseMapsPlaceTarget(APP_SHARE_HOP);
+    assertEquals(target?.query, 'Twigs Beauty Lounge، ش. إمثاري النعيمات، عمّان 11821');
+    assertEquals(target?.location, null);
+    assertEquals(target?.selfLocating, true);
+});
+
+Deno.test('parseMapsPlaceTarget: camera @lat,lng is the fallback, dropped pins are not venues', () => {
+    assertEquals(
+        parseMapsPlaceTarget('https://www.google.com/maps/place/Carbone/@40.7278,-74.0005,17z'),
+        { query: 'Carbone', location: { lat: 40.7278, lng: -74.0005 }, selfLocating: false },
+    );
+    assertEquals(parseMapsPlaceTarget('https://maps.google.com/?q=51.5125,-0.1268'), null);
+    assertEquals(parseMapsPlaceTarget('https://www.google.com/maps/place/%FF'), null);
+    assertEquals(parseMapsPlaceTarget('https://www.google.com/maps/place/%20'), null);
+    // An encoded plus is part of the name; a literal + is a space.
+    assertEquals(
+        parseMapsPlaceTarget('https://www.google.com/maps/place/A%2BB+Cafe')?.query,
+        'A+B Cafe',
+    );
+    assertEquals(parsePlaceFromMapsUrl('https://www.google.com/maps?query=Brat'), 'Brat');
+});
+
+Deno.test('expandMapsShare: app share resolves from the FIRST redirect, never loads the page', async () => {
+    const { fetcher, calls } = fakeFetcher({
+        'https://maps.app.goo.gl/QS9xeZqTY7BzB6Vq6?g_st=ic': { status: 302, location: APP_SHARE_HOP },
+    });
+    const expanded = await expandMapsShare('https://maps.app.goo.gl/QS9xeZqTY7BzB6Vq6?g_st=ic', signal, fetcher);
+    assertEquals(expanded.list, null);
+    assertEquals(expanded.place?.query, 'Twigs Beauty Lounge، ش. إمثاري النعيمات، عمّان 11821');
+    assertEquals(expanded.place?.selfLocating, true);
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0].redirect, 'manual');
+});
+
+Deno.test('expandMapsShare: web share carries the place coordinates', async () => {
+    const { fetcher, calls } = fakeFetcher({
+        'https://maps.app.goo.gl/CEDqyVFDApSaRZc4A': { status: 302, location: WEB_SHARE_HOP },
+    });
+    const expanded = await expandMapsShare('https://maps.app.goo.gl/CEDqyVFDApSaRZc4A', signal, fetcher);
+    assertEquals(expanded.place, {
+        query: 'Dishoom Covent Garden',
+        location: { lat: 51.5125176, lng: -0.1268291 },
+        selfLocating: false,
+    });
+    assertEquals(calls.length, 1);
+});
+
+Deno.test('expandMapsShare: a consent interstitial is unwrapped, not fetched', async () => {
+    const consent = `https://consent.google.com/ml?continue=${encodeURIComponent(WEB_SHARE_HOP)}&gl=GB&hl=en`;
+    const { fetcher, calls } = fakeFetcher({
+        'https://maps.app.goo.gl/abc': { status: 302, location: consent },
+    });
+    const expanded = await expandMapsShare('https://maps.app.goo.gl/abc', signal, fetcher);
+    assertEquals(expanded.place?.query, 'Dishoom Covent Garden');
+    assertEquals(calls.map((call) => call.url), ['https://maps.app.goo.gl/abc']);
+});
+
+Deno.test('expandMapsShare: a list share still loads its page and getlist data', async () => {
+    const { fetcher, calls } = fakeFetcher({
+        'https://maps.app.goo.gl/list': { status: 302, location: LIST_SHARE_HOP },
+        [LIST_SHARE_HOP]: { status: 200, body: PRELOAD_HTML },
+        [extractGetlistPreloadUrl(PRELOAD_HTML)!]: { status: 200, body: GETLIST_BODY },
+    });
+    const expanded = await expandMapsShare('https://maps.app.goo.gl/list', signal, fetcher);
+    assertEquals(expanded.place, null);
+    assertEquals(expanded.list?.title, 'Best pies in Australia');
+    assertEquals(expanded.list?.items.length, 2);
+    assertEquals(calls.length, 3);
+});
+
+Deno.test('expandMapsShare: only Google hosts are followed', async () => {
+    const { fetcher, calls } = fakeFetcher({
+        'https://maps.app.goo.gl/evil': { status: 302, location: 'https://maps.google.com.evil.example/maps/place/Brat' },
+    });
+    assertEquals(await expandMapsShare('https://maps.app.goo.gl/evil', signal, fetcher), { place: null, list: null });
+    assertEquals(calls.length, 1);
+});
+
+Deno.test('expandMapsShare: redirect loops, error pages and network failures degrade to empty', async () => {
+    const loop = fakeFetcher({
+        'https://maps.app.goo.gl/a': { status: 302, location: 'https://maps.app.goo.gl/b' },
+        'https://maps.app.goo.gl/b': { status: 302, location: 'https://maps.app.goo.gl/a' },
+    });
+    assertEquals(await expandMapsShare('https://maps.app.goo.gl/a', signal, loop.fetcher), { place: null, list: null });
+    assertEquals(loop.calls.length <= 7, true);
+
+    const sorry = fakeFetcher({
+        'https://maps.app.goo.gl/x': { status: 302, location: 'https://www.google.com/sorry/index?continue=x&q=EgQtoken' },
+        'https://www.google.com/sorry/index?continue=x&q=EgQtoken': { status: 429, body: 'unusual traffic' },
+    });
+    assertEquals(await expandMapsShare('https://maps.app.goo.gl/x', signal, sorry.fetcher), { place: null, list: null });
+
+    const offline = fakeFetcher({});
+    assertEquals(await expandMapsShare('https://maps.app.goo.gl/y', signal, offline.fetcher), { place: null, list: null });
 });

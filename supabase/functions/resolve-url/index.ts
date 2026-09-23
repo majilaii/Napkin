@@ -82,10 +82,11 @@ import { detectListMarker } from "../_shared/listicle.ts";
 // same doctrine as _helpers.ts).
 import {
   expandMapsShare,
+  type MapsPlaceTarget,
   MAPS_LIST_CAP,
   mapsItemsToStaged,
   type ParsedMapsList,
-  parsePlaceFromMapsUrl,
+  parseMapsPlaceTarget,
 } from "./mapsList.ts";
 import { resizeImageToLimit } from "../_shared/imageResize.ts";
 // TICKET-187: acquireAndMirrorHeroPhotos is the deferred (post-response) hero-
@@ -601,7 +602,7 @@ async function callPlacesSearch(
   signal: AbortSignal,
   internalSecret?: string,
   internalOwnerId?: string,
-  locality?: { city?: string | null; area?: string | null },
+  locality?: PlacesSearchLocality,
 ): Promise<PlacesPayload[]> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -663,7 +664,7 @@ function callImportPlacesSearch(
   signal: AbortSignal,
   internalSecret?: string,
   internalOwnerId?: string,
-  locality?: { city?: string | null; area?: string | null },
+  locality?: PlacesSearchLocality,
 ): Promise<ImportPlaceSearchResult<PlacesPayload>> {
   return resolveImportPlaceSearch(() =>
     callPlacesSearch(
@@ -689,6 +690,8 @@ import {
   buildGhostExternalId,
   buildInlineCompletenessClaims,
   buildPlacesSearchBody,
+  mapsPlaceSearchLocality,
+  type PlacesSearchLocality,
   buildResolveSpotDecisionResult,
   buildV2CompletenessClientFacts,
   buildV2CompletenessItemIdentities,
@@ -3014,6 +3017,9 @@ async function handleUrlResolve(
   let oEmbedCaption: string | null = null;
   // Set when the maps URL resolves to a shared LIST (multi-spot import).
   let mapsList: ParsedMapsList | null = null;
+  // A shared single place: its name plus whatever locates it (coordinates or
+  // an address inside the query) so Places never welds in the home city.
+  let mapsPlace: MapsPlaceTarget | null = null;
 
   // ── Step 1: source-specific query extraction ──────────────────────────────
   if (sourceType === "tiktok") {
@@ -3061,10 +3067,10 @@ async function handleUrlResolve(
     }
   } else if (sourceType === "google_maps") {
     // Already-expanded links: parse directly.
-    query = parsePlaceFromMapsUrl(rawUrl);
+    mapsPlace = parseMapsPlaceTarget(rawUrl);
     // Share links (maps.app.goo.gl/…) are short redirects with no place
-    // segment — follow the redirect to a single place OR a shared list.
-    if (!query) {
+    // segment — walk the redirects to a single place OR a shared list.
+    if (!mapsPlace) {
       const expanded = await expandMapsShare(
         rawUrl,
         (ms) => deadline.stageSignal(ms),
@@ -3072,9 +3078,10 @@ async function handleUrlResolve(
       if (expanded.list && expanded.list.items.length > 0) {
         mapsList = expanded.list;
       } else {
-        query = expanded.placeQuery;
+        mapsPlace = expanded.place;
       }
     }
+    query = mapsPlace?.query ?? null;
   } else if (isWebExtractionSource(sourceType)) {
     // TICKET-079: 'web' + reddit/substack all unfurl the page <title> here.
     const title = await unfurlWebTitle(rawUrl, deadline.stageSignal(2000))
@@ -3214,6 +3221,7 @@ async function handleUrlResolve(
         deadline.stageSignal(2500),
         internalSecret,
         internalOwnerId,
+        mapsPlaceSearchLocality(mapsPlace),
       );
       typeRejectedCount = search.typeRejected ? 1 : 0;
       resolvedPlaces = search.candidates.slice(0, 3).map((r) => r);

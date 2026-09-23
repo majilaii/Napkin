@@ -93,8 +93,40 @@ Deno.test("background intake validates scoped token hash/revocation/expiry and b
     p_owner: OWNER, p_job_id: JOB, p_import_nonce: NONCE,
     p_request: f.job.request, p_credential_id: CREDENTIAL, p_installation_id: null,
   }] });
+  assertEquals((await res.json()).data, { job_id: JOB, status: "needs_device" });
+  // TICKET-248: the device owns the share; the worker is never kicked.
+  const handoff = f.queries.find(query => query.table === "background_import_jobs");
+  assertEquals(handoff?.operations, [
+    { name: "update", args: [{ status: "needs_device", reason: "device_owns_import", updated_at: (handoff!.operations[0].args[0] as { updated_at: string }).updated_at }] },
+    { name: "eq", args: ["id", JOB] },
+    { name: "eq", args: ["user_id", OWNER] },
+    { name: "eq", args: ["status", "pending"] },
+  ]);
   await Promise.all(f.deferred);
-  assertEquals(f.drainCalls.length, 1);
+  assertEquals(f.drainCalls.length, 0);
+});
+
+Deno.test("a share wake authenticates the scoped credential and stores nothing (TICKET-248)", async () => {
+  const f = fixture();
+  const res = await f.call("wake", { job_id: JOB, expected_owner_id: OWNER }, OPAQUE);
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).data, { job_id: JOB, status: "wake" });
+  assertEquals(f.rpcs, []);
+  assertEquals(f.queries.map(query => query.table), ["background_import_credentials"]);
+  await Promise.all(f.deferred);
+  assertEquals(f.drainCalls, []);
+});
+
+Deno.test("a share wake refuses a missing owner fence, a bad job id and a dead credential", async () => {
+  for (const body of [{ job_id: JOB }, { job_id: "not-a-uuid", expected_owner_id: OWNER }]) {
+    const f = fixture();
+    assertEquals((await f.call("wake", body, OPAQUE)).status, 400);
+  }
+  const mismatch = fixture();
+  assertEquals((await mismatch.call("wake", { job_id: JOB, expected_owner_id: OTHER }, OPAQUE)).status, 403);
+  const revoked = fixture();
+  revoked.setQueryData(null);
+  assertEquals((await revoked.call("wake", { job_id: JOB, expected_owner_id: OWNER }, OPAQUE)).status, 401);
 });
 
 Deno.test("background intake refuses revoked or expired scoped credentials before enqueue", async () => {

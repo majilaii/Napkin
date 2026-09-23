@@ -152,6 +152,61 @@ Deno.test("structured city beats coordinates and home_city in the Google request
   assertEquals(String(outbound.textQuery).includes("London"), false);
 });
 
+Deno.test("a self-locating query (use_home_city false) never welds the home city in", async () => {
+  const raw = {
+    query: "Septime, 80 Rue de Charonne, 75011 Paris",
+    use_home_city: false,
+  };
+  const payload = await parsePayload(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(raw),
+    }),
+  );
+  const plan = buildTextSearchPlan(payload, raw, "London");
+  let outbound: Record<string, unknown> = {};
+  const provider = paidProvider((init) => {
+    outbound = JSON.parse(String(init?.body));
+  });
+  await provider.searchText(
+    "owner",
+    { name: payload.query!, city: plan.city, area: plan.area },
+    undefined,
+    undefined,
+  );
+
+  assertEquals(payload.use_home_city, false);
+  assertEquals(plan.needsHomeCity, false);
+  assertEquals(plan.coordinateBias, undefined);
+  assertEquals(outbound.textQuery, "Septime, 80 Rue de Charonne, 75011 Paris");
+});
+
+Deno.test("use_home_city only opts out: true or absent keeps the home-city fallback", async () => {
+  for (const raw of [{ query: "Kamer" }, { query: "Kamer", use_home_city: true }]) {
+    const payload = await parsePayload(
+      new Request("http://localhost", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(raw),
+      }),
+    );
+    assertEquals(payload.use_home_city, undefined);
+    const plan = buildTextSearchPlan(payload, raw, "London");
+    assertEquals(plan.needsHomeCity, true);
+    assertEquals(plan.city, "London");
+  }
+  // Explicit city and coordinates still outrank the opt-out.
+  const cityPlan = buildTextSearchPlan({ query: "x", city: "Paris", use_home_city: false }, {}, "London");
+  assertEquals(cityPlan.city, "Paris");
+  const coordinatePlan = buildTextSearchPlan(
+    { query: "x", use_home_city: false },
+    { lat: 48.85, lng: 2.35 },
+    "London",
+  );
+  assertEquals(coordinatePlan.coordinateBias, { lat: 48.85, lng: 2.35 });
+});
+
 Deno.test("legacy and current coordinate requests construct the same Google bias and do not fallback", async () => {
   const requestBody = async (raw: Record<string, unknown>) => {
     const payload = await parsePayload(
