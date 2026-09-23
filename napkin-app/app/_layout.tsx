@@ -23,8 +23,8 @@ import {
 } from '@expo-google-fonts/manrope';
 import * as SplashScreen from 'expo-splash-screen';
 
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, View, Pressable, Text, StyleSheet } from 'react-native';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AppState, View, Pressable, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { queryClient } from '@/lib/queryClient';
@@ -51,10 +51,18 @@ import {
   OnboardingGateBoundary,
   shouldBlockOnboardingGate,
 } from '@/components/auth/OnboardingGateBoundary';
+import {
+  LAUNCH_TIMING,
+  LaunchProvider,
+  useLaunchCovering,
+  useLaunchReporter,
+} from '@/components/launch';
 
 // TICKET-121: before any render. No-op until EXPO_PUBLIC_SENTRY_DSN exists.
 initSentry();
 
+// The launch screen (components/launch) hides the native splash once it has
+// painted the same wordmark underneath it.
 SplashScreen.preventAutoHideAsync();
 
 // Fatal-JS-error visibility (launch readiness): there is no crash SDK yet, so
@@ -233,7 +241,13 @@ const NavTheme = {
 };
 
 function RootLayoutNav() {
-  const { session, isLoading, onboardedAt } = useAuth();
+  const {
+    session,
+    isLoading,
+    onboardedAt,
+    onboardingGateUnresolved,
+    retryOnboardingGate,
+  } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const [previewOnLaunch, setPreviewOnLaunch] = useState<boolean | undefined>(undefined);
@@ -353,6 +367,33 @@ function RootLayoutNav() {
     segments[0],
   );
 
+  // The launch screen presents the gate's wait, and a retry when the account
+  // read cannot reach Napkin (the gate itself stays fail-closed).
+  const launch = useLaunchReporter();
+  useLayoutEffect(() => {
+    if (!launch) return;
+    if (!gateBlocked) {
+      launch.setAccount({ status: 'ready' });
+    } else if (onboardingGateUnresolved) {
+      launch.setAccount({ status: 'unreachable', retry: retryOnboardingGate });
+    } else {
+      launch.setAccount({ status: 'checking' });
+    }
+  }, [launch, gateBlocked, onboardingGateUnresolved, retryOnboardingGate]);
+
+  // Lift the cover only once routing has landed: `/` redirects to Places and
+  // auth routing may replace it again, so wait for one route to hold.
+  const launchCovering = useLaunchCovering();
+  const routeKey = segments.join('/');
+  const routingResolved = previewOnLaunch !== undefined;
+  useEffect(() => {
+    if (!launch || !launchCovering) return;
+    launch.setRouteSettled(false);
+    if (gateBlocked || !routingResolved) return;
+    const timer = setTimeout(() => launch.setRouteSettled(true), LAUNCH_TIMING.routeSettleMs);
+    return () => clearTimeout(timer);
+  }, [launch, launchCovering, gateBlocked, routingResolved, routeKey]);
+
   return (
     <OnboardingGateBoundary blocked={gateBlocked}>
       <ThemeProvider value={NavTheme}>
@@ -370,8 +411,13 @@ function RootLayoutNav() {
           screenOptions={{
             // Card content never flashes white mid-transition — see NavTheme.
             contentStyle: { backgroundColor: Colors.light.background },
+            // Launch routing happens under the cover; a push animation would
+            // still be sliding when the cover lifts.
+            ...(launchCovering ? { animation: 'none' as const } : null),
           }}
         >
+          {/* `/` only redirects; without this it flashes a header titled "index". */}
+          <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="auth" options={{ headerShown: false }} />
           {/* TICKET-107/204: first-sign-in onboarding (name · photo · city · follows?) */}
@@ -517,14 +563,16 @@ function RootLayoutNav() {
           onClose={() => setNotifSheetVisible(false)}
         />
       </View>
-      <StatusBar style="auto" />
+      {/* The app is light-only (hooks/use-color-scheme); "auto" follows the
+          device and turned the status bar white on cream in dark mode. */}
+      <StatusBar style="dark" />
       </ThemeProvider>
     </OnboardingGateBoundary>
   );
 }
 
 function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Newsreader_400Regular,
     Newsreader_400Regular_Italic,
     Newsreader_500Medium,
@@ -539,31 +587,25 @@ function RootLayout() {
     Manrope_800ExtraBold,
   });
 
-  useEffect(() => {
-    if (fontsLoaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded]);
+  // Bundled fonts; a load error falls back to system faces rather than
+  // holding the launch screen forever.
+  const fontsReady = fontsLoaded || fontError != null;
 
-  if (!fontsLoaded) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.light.background }}>
-        <ActivityIndicator size="small" color={Colors.light.primary} />
-      </View>
-    );
-  }
-
+  // The launch screen covers everything below from the first frame, so the
+  // connectivity probe and session restore start while fonts load.
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <ConnectivityProvider>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider>
-            <ToastProvider>
-              <RootLayoutNav />
-            </ToastProvider>
-          </AuthProvider>
-        </QueryClientProvider>
-      </ConnectivityProvider>
+      <LaunchProvider>
+        <ConnectivityProvider>
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>
+              <ToastProvider>
+                {fontsReady ? <RootLayoutNav /> : null}
+              </ToastProvider>
+            </AuthProvider>
+          </QueryClientProvider>
+        </ConnectivityProvider>
+      </LaunchProvider>
     </GestureHandlerRootView>
   );
 }

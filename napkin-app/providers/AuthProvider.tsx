@@ -20,6 +20,14 @@ interface AuthContextType {
      *   string    → already onboarded (the timestamp)
      */
     onboardedAt: string | null | undefined;
+    /**
+     * True when the onboarding-gate read exhausted its retries without an
+     * answer. The gate stays closed (fail-closed); the launch screen offers
+     * a retry instead of holding a silent spinner forever.
+     */
+    onboardingGateUnresolved: boolean;
+    /** Re-read the onboarding gate for the signed-in user. */
+    retryOnboardingGate: () => void;
     /** Let the completion mutation reconcile the gate after server confirmation. */
     setOnboardedAt: (value: string | null) => void;
     signOut: () => Promise<void>;
@@ -74,21 +82,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [isLoading, setIsLoading] = useState(true);
     // undefined = not yet loaded for the current user (gate must wait).
     const [onboardedAt, setOnboardedAtState] = useState<string | null | undefined>(undefined);
+    const [onboardingGateUnresolved, setOnboardingGateUnresolved] = useState(false);
     const gateReadGeneration = useRef(0);
+    const gateUserId = useRef<string | null>(null);
+    // Where the gate stands for gateUserId, readable from auth callbacks.
+    const gateStatus = useRef<'idle' | 'loading' | 'resolved' | 'unresolved'>('idle');
 
     // Server-confirmed completion must win over any profile read that began
     // before the mutation committed. Invalidating the read generation here
     // prevents its stale null snapshot from sending the user back to S1.
     const setOnboardedAt = useCallback((value: string | null) => {
         gateReadGeneration.current += 1;
+        gateStatus.current = 'resolved';
+        setOnboardingGateUnresolved(false);
         setOnboardedAtState(value);
     }, []);
 
     // Fetch the onboarding gate column for a user. Resets to `undefined` first so
     // the gate waits rather than acting on the previous user's value. Missing row
     // or error → remain unresolved/checking (never fail open past onboarding).
-    async function loadOnboardedAt(userId: string | null | undefined) {
+    const loadOnboardedAt = useCallback(async (userId: string | null | undefined) => {
         const generation = ++gateReadGeneration.current;
+        gateUserId.current = userId ?? null;
+        gateStatus.current = userId ? 'loading' : 'idle';
+        setOnboardingGateUnresolved(false);
         if (!userId) {
             setOnboardedAtState(undefined);
             return;
@@ -97,9 +114,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const result = await readOnboardingGateWithRetry(userId);
         if (gateReadGeneration.current !== generation) return;
         if (result.status === 'resolved') {
+            gateStatus.current = 'resolved';
             setOnboardedAtState(result.value);
+        } else {
+            gateStatus.current = 'unresolved';
+            setOnboardingGateUnresolved(true);
         }
-    }
+    }, []);
+
+    /**
+     * Auth events for the person the gate already describes (a token refresh,
+     * a user-metadata update, the initial-session echo) must not reset it:
+     * resetting unmounts every signed-in surface, losing navigation and any
+     * draft, and replays the cover. Re-read only for a different identity, or
+     * when the last read never got an answer.
+     */
+    const syncOnboardingGate = useCallback((userId: string | null | undefined) => {
+        const sameIdentity = (userId ?? null) === gateUserId.current;
+        if (sameIdentity && (gateStatus.current === 'resolved' || gateStatus.current === 'loading')) {
+            return;
+        }
+        void loadOnboardedAt(userId);
+    }, [loadOnboardedAt]);
+
+    const retryOnboardingGate = useCallback(() => {
+        if (gateUserId.current) void loadOnboardedAt(gateUserId.current);
+    }, [loadOnboardedAt]);
 
     useEffect(() => {
         // Get initial session
@@ -112,7 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSession(session);
             setUser(session?.user ?? null);
             setIsLoading(false);
-            loadOnboardedAt(session?.user?.id);
+            syncOnboardingGate(session?.user?.id);
         });
 
         // Listen for auth changes
@@ -126,7 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setSession(session);
                 setUser(session?.user ?? null);
                 setIsLoading(false);
-                loadOnboardedAt(session?.user?.id);
+                syncOnboardingGate(session?.user?.id);
             }
         );
 
@@ -134,7 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             gateReadGeneration.current += 1;
             subscription.unsubscribe();
         };
-    }, []);
+    }, [syncOnboardingGate]);
 
     useEffect(() => watchImportPushRegistration(), []);
 
@@ -150,12 +190,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         placesScreenState.setActiveUser(null);
         // Clear all cached data to prevent user A seeing user B's data
         queryClient.removeQueries();
+        gateUserId.current = null;
+        gateStatus.current = 'idle';
+        setOnboardingGateUnresolved(false);
         setOnboardedAtState(undefined);
     };
 
     return (
         <AuthContext.Provider
-            value={{ session, user, isLoading, onboardedAt, setOnboardedAt, signOut }}
+            value={{
+                session,
+                user,
+                isLoading,
+                onboardedAt,
+                onboardingGateUnresolved,
+                retryOnboardingGate,
+                setOnboardedAt,
+                signOut,
+            }}
         >
             {children}
         </AuthContext.Provider>
