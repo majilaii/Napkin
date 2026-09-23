@@ -187,6 +187,26 @@ describe('LaunchProvider', () => {
         expect(covering).toBe(false);
     });
 
+    it('hides the app from TalkBack and VoiceOver only while covered', () => {
+        const screen = renderLaunch();
+        const appRoot = () => screen.getByText('App content', { includeHiddenElements: true }).parent;
+        const hidingAncestor = () => {
+            let node = appRoot();
+            while (node && node.props.importantForAccessibility === undefined) node = node.parent;
+            return node;
+        };
+        expect(hidingAncestor()?.props.importantForAccessibility).toBe('no-hide-descendants');
+        expect(hidingAncestor()?.props.accessibilityElementsHidden).toBe(true);
+
+        advance(LAUNCH_TIMING.splashFallbackMs);
+        reportEverythingReady();
+        advance(LAUNCH_TIMING.introMs);
+        advance(LAUNCH_TIMING.exitMs);
+        expect(screen.queryByTestId('launch-screen')).toBeNull();
+        expect(hidingAncestor()?.props.importantForAccessibility).toBe('auto');
+        expect(hidingAncestor()?.props.accessibilityElementsHidden).toBe(false);
+    });
+
     it('waits for the navigator to settle even when the account check is done', () => {
         const screen = renderLaunch();
         advance(LAUNCH_TIMING.splashFallbackMs);
@@ -283,6 +303,23 @@ describe('LaunchProvider', () => {
         expect(screen.queryByTestId('launch-screen')).toBeNull();
         expect(covering).toBe(false);
         expect(mockHideAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not come back when the route changes while it dissolves', () => {
+        const screen = renderLaunch();
+        advance(LAUNCH_TIMING.splashFallbackMs);
+        reportEverythingReady();
+        advance(LAUNCH_TIMING.introMs);
+        expect(screen.getByTestId('launch-screen').props.pointerEvents).toBe('none');
+
+        // A tap or deep link during the exit re-arms route settling.
+        act(() => reporter?.setRouteSettled(false));
+        advance(LAUNCH_TIMING.exitMs);
+        expect(screen.queryByTestId('launch-screen')).toBeNull();
+        expect(covering).toBe(false);
+
+        advance(LAUNCH_TIMING.routeSettleMs + LAUNCH_TIMING.resumeFadeMs);
+        expect(screen.queryByTestId('launch-screen')).toBeNull();
     });
 
     it('runs the same sequence with reduced motion', () => {

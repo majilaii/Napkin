@@ -85,12 +85,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [onboardingGateUnresolved, setOnboardingGateUnresolved] = useState(false);
     const gateReadGeneration = useRef(0);
     const gateUserId = useRef<string | null>(null);
+    // Where the gate stands for gateUserId, readable from auth callbacks.
+    const gateStatus = useRef<'idle' | 'loading' | 'resolved' | 'unresolved'>('idle');
 
     // Server-confirmed completion must win over any profile read that began
     // before the mutation committed. Invalidating the read generation here
     // prevents its stale null snapshot from sending the user back to S1.
     const setOnboardedAt = useCallback((value: string | null) => {
         gateReadGeneration.current += 1;
+        gateStatus.current = 'resolved';
         setOnboardingGateUnresolved(false);
         setOnboardedAtState(value);
     }, []);
@@ -101,6 +104,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const loadOnboardedAt = useCallback(async (userId: string | null | undefined) => {
         const generation = ++gateReadGeneration.current;
         gateUserId.current = userId ?? null;
+        gateStatus.current = userId ? 'loading' : 'idle';
         setOnboardingGateUnresolved(false);
         if (!userId) {
             setOnboardedAtState(undefined);
@@ -110,11 +114,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const result = await readOnboardingGateWithRetry(userId);
         if (gateReadGeneration.current !== generation) return;
         if (result.status === 'resolved') {
+            gateStatus.current = 'resolved';
             setOnboardedAtState(result.value);
         } else {
+            gateStatus.current = 'unresolved';
             setOnboardingGateUnresolved(true);
         }
     }, []);
+
+    /**
+     * Auth events for the person the gate already describes (a token refresh,
+     * a user-metadata update, the initial-session echo) must not reset it:
+     * resetting unmounts every signed-in surface, losing navigation and any
+     * draft, and replays the cover. Re-read only for a different identity, or
+     * when the last read never got an answer.
+     */
+    const syncOnboardingGate = useCallback((userId: string | null | undefined) => {
+        const sameIdentity = (userId ?? null) === gateUserId.current;
+        if (sameIdentity && (gateStatus.current === 'resolved' || gateStatus.current === 'loading')) {
+            return;
+        }
+        void loadOnboardedAt(userId);
+    }, [loadOnboardedAt]);
 
     const retryOnboardingGate = useCallback(() => {
         if (gateUserId.current) void loadOnboardedAt(gateUserId.current);
@@ -131,7 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSession(session);
             setUser(session?.user ?? null);
             setIsLoading(false);
-            loadOnboardedAt(session?.user?.id);
+            syncOnboardingGate(session?.user?.id);
         });
 
         // Listen for auth changes
@@ -145,7 +166,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setSession(session);
                 setUser(session?.user ?? null);
                 setIsLoading(false);
-                loadOnboardedAt(session?.user?.id);
+                syncOnboardingGate(session?.user?.id);
             }
         );
 
@@ -153,7 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             gateReadGeneration.current += 1;
             subscription.unsubscribe();
         };
-    }, [loadOnboardedAt]);
+    }, [syncOnboardingGate]);
 
     useEffect(() => watchImportPushRegistration(), []);
 
@@ -170,6 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Clear all cached data to prevent user A seeing user B's data
         queryClient.removeQueries();
         gateUserId.current = null;
+        gateStatus.current = 'idle';
         setOnboardingGateUnresolved(false);
         setOnboardedAtState(undefined);
     };

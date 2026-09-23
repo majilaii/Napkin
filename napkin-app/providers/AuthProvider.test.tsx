@@ -5,6 +5,7 @@ import { act, render } from '@testing-library/react-native';
 const mockMaybeSingle = jest.fn();
 const mockGetSession = jest.fn();
 const mockUnsubscribe = jest.fn();
+let mockAuthListener: ((event: string, session: unknown) => void) | undefined;
 let confirmOnboardedAt: ((value: string | null) => void) | undefined;
 let retryGate: (() => void) | undefined;
 
@@ -26,9 +27,10 @@ jest.mock('@/lib/supabase', () => ({
     supabase: {
         auth: {
             getSession: (...args: unknown[]) => mockGetSession(...args),
-            onAuthStateChange: jest.fn(() => ({
-                data: { subscription: { unsubscribe: mockUnsubscribe } },
-            })),
+            onAuthStateChange: jest.fn((listener: (event: string, session: unknown) => void) => {
+                mockAuthListener = listener;
+                return { data: { subscription: { unsubscribe: mockUnsubscribe } } };
+            }),
             signOut: jest.fn(),
         },
         from: jest.fn(() => ({
@@ -69,6 +71,7 @@ describe('AuthProvider onboarding gate', () => {
         jest.clearAllMocks();
         confirmOnboardedAt = undefined;
         retryGate = undefined;
+        mockAuthListener = undefined;
         mockGetSession.mockResolvedValue({
             data: { session: { user: { id: 'user-1' } } },
         });
@@ -151,6 +154,100 @@ describe('AuthProvider onboarding gate', () => {
         });
         expect(mockMaybeSingle).toHaveBeenCalledTimes(4);
         expect(screen.getByTestId('gate').props.children).toBe('needs-onboarding');
+    });
+
+    it('keeps a resolved gate through a token refresh for the same person', async () => {
+        mockMaybeSingle.mockResolvedValue({
+            data: { onboarded_at: '2026-07-16T10:00:00.000Z' },
+            error: null,
+        });
+        const screen = render(
+            <AuthProvider><GateProbe /></AuthProvider>,
+        );
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(screen.getByTestId('gate').props.children).toBe('2026-07-16T10:00:00.000Z');
+
+        // An hourly refresh (or a metadata update) must not blank the gate:
+        // a blank gate unmounts every signed-in screen.
+        act(() => mockAuthListener?.('TOKEN_REFRESHED', { user: { id: 'user-1' } }));
+        act(() => mockAuthListener?.('USER_UPDATED', { user: { id: 'user-1' } }));
+        expect(screen.getByTestId('gate').props.children).toBe('2026-07-16T10:00:00.000Z');
+        expect(mockMaybeSingle).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not start a second read for the initial-session echo', async () => {
+        let resolveProfile: ((value: {
+            data: { onboarded_at: string };
+            error: null;
+        }) => void) | undefined;
+        mockMaybeSingle.mockReturnValueOnce(new Promise((resolve) => {
+            resolveProfile = resolve;
+        }));
+        const screen = render(
+            <AuthProvider><GateProbe /></AuthProvider>,
+        );
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        act(() => mockAuthListener?.('INITIAL_SESSION', { user: { id: 'user-1' } }));
+        expect(mockMaybeSingle).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            resolveProfile?.({ data: { onboarded_at: '2026-07-16T10:00:00.000Z' }, error: null });
+            await Promise.resolve();
+        });
+        expect(screen.getByTestId('gate').props.children).toBe('2026-07-16T10:00:00.000Z');
+    });
+
+    it('re-reads the gate for a different person', async () => {
+        mockMaybeSingle
+            .mockResolvedValueOnce({ data: { onboarded_at: '2026-07-16T10:00:00.000Z' }, error: null })
+            .mockResolvedValueOnce({ data: { onboarded_at: null }, error: null });
+        const screen = render(
+            <AuthProvider><GateProbe /></AuthProvider>,
+        );
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(screen.getByTestId('gate').props.children).toBe('2026-07-16T10:00:00.000Z');
+
+        await act(async () => {
+            mockAuthListener?.('SIGNED_IN', { user: { id: 'user-2' } });
+            await Promise.resolve();
+        });
+        expect(mockMaybeSingle).toHaveBeenCalledTimes(2);
+        expect(screen.getByTestId('gate').props.children).toBe('needs-onboarding');
+    });
+
+    it('lets a later auth event retry a gate that never got an answer', async () => {
+        mockMaybeSingle
+            .mockResolvedValueOnce({ data: null, error: new Error('offline') })
+            .mockResolvedValueOnce({ data: null, error: new Error('offline') })
+            .mockResolvedValueOnce({ data: null, error: new Error('offline') })
+            .mockResolvedValueOnce({ data: { onboarded_at: '2026-07-16T10:00:00.000Z' }, error: null });
+        const screen = render(
+            <AuthProvider><GateProbe /></AuthProvider>,
+        );
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await jest.advanceTimersByTimeAsync(1_000);
+        });
+        expect(screen.getByTestId('gate').props.children).toBe('unresolved');
+
+        await act(async () => {
+            mockAuthListener?.('TOKEN_REFRESHED', { user: { id: 'user-1' } });
+            await Promise.resolve();
+        });
+        expect(mockMaybeSingle).toHaveBeenCalledTimes(4);
+        expect(screen.getByTestId('gate').props.children).toBe('2026-07-16T10:00:00.000Z');
     });
 
     it('ignores a retry when nobody is signed in', async () => {

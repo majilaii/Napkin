@@ -36,7 +36,9 @@ export function LaunchProvider({ children }: { children: ReactNode }) {
 
     // A later account check (signing in) brings the cover back without the
     // intro. Layout effect, so it paints together with the gate's blocker.
-    const needsCover = status.kind !== 'ready';
+    // Routing only gates the exit: navigating while the cover dissolves (or a
+    // deep link landing just after it) must never bring the cover back.
+    const needsCover = connectivity.status !== 'ready' || account.status !== 'ready';
     useLayoutEffect(() => {
         if (needsCover && presence === null) {
             setPresence((current) => current ?? { mode: 'resume', key: Date.now() });
@@ -57,12 +59,21 @@ export function LaunchProvider({ children }: { children: ReactNode }) {
         [],
     );
     const handleDone = useCallback(() => setPresence(null), []);
+    const covering = presence !== null;
 
     return (
         <LaunchReporterContext.Provider value={reporter}>
-            <LaunchCoveringContext.Provider value={presence !== null}>
+            <LaunchCoveringContext.Provider value={covering}>
                 <View style={styles.root}>
-                    {children}
+                    {/* The cover is modal for VoiceOver (accessibilityViewIsModal);
+                        this keeps the app underneath out of TalkBack's reach too. */}
+                    <View
+                        style={styles.app}
+                        importantForAccessibility={covering ? 'no-hide-descendants' : 'auto'}
+                        accessibilityElementsHidden={covering}
+                    >
+                        {children}
+                    </View>
                     {presence ? (
                         <LaunchCover
                             key={presence.key}
@@ -106,5 +117,8 @@ const styles = StyleSheet.create({
     root: {
         flex: 1,
         backgroundColor: Colors.light.background,
+    },
+    app: {
+        flex: 1,
     },
 });
