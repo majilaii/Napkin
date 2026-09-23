@@ -178,8 +178,8 @@ enum BackgroundImportTransferOutcome {
   }
 }
 
-/// One persisted request file and session per import. Uploads are owned by iOS
-/// after resume(), so dismissing the extension does not cancel intake.
+/// One persisted request file and session per share. Uploads are owned by iOS
+/// after resume(), so dismissing the extension does not cancel the wake.
 final class BackgroundImportTransfer: NSObject, URLSessionDataDelegate {
   static let sessionPrefix = "com.majilaii.napkin.import-intake."
   private static var retained: [String: BackgroundImportTransfer] = [:]
@@ -198,23 +198,19 @@ final class BackgroundImportTransfer: NSObject, URLSessionDataDelegate {
     super.init()
   }
 
-  static func canSubmit(owner: String?) -> Bool {
-    BackgroundImportCredentialStore.activeCredential(for: owner) != nil
-  }
-
   static func readRecord(jobId: String) -> BackgroundImportTransferRecord? {
     guard UUID(uuidString: jobId) != nil, let file = directory?.appendingPathComponent(jobId + ".json"),
           let data = try? Data(contentsOf: file) else { return nil }
     return try? JSONDecoder().decode(BackgroundImportTransferRecord.self, from: data)
   }
 
-  static func submit(manifest: [String: Any], origin: String) -> Bool {
-    guard let jobId = manifest["jobId"] as? String, UUID(uuidString: jobId) != nil,
-          manifest["remoteJobId"] as? String == jobId, manifest["kind"] as? String == "url",
-          let owner = manifest["userId"] as? String,
-          let nonce = manifest["importNonce"] as? String, UUID(uuidString: nonce) != nil,
-          let source = manifest["url"] as? String, source.utf8.count <= 16_384,
-          let sourceURL = URL(string: source), ["https", "http"].contains(sourceURL.scheme?.lowercased() ?? ""),
+  /// TICKET-248: a wake, not a server job. When this tiny upload finishes, iOS
+  /// launches (or resumes) Napkin in the background — even if neither process
+  /// is running — and the app processes the queued share on the device. The
+  /// server only authenticates the scoped credential and answers; it stores
+  /// nothing. False = no credential for this owner (the share waits for an open).
+  static func wake(jobId: String, owner: String?, origin: String) -> Bool {
+    guard UUID(uuidString: jobId) != nil, let owner,
           let credential = BackgroundImportCredentialStore.activeCredential(for: owner),
           let directory else { return false }
     let sessionId = sessionPrefix + origin + "." + UUID().uuidString.lowercased()
@@ -223,12 +219,12 @@ final class BackgroundImportTransfer: NSObject, URLSessionDataDelegate {
     let transfer = BackgroundImportTransfer(identifier: sessionId, record: record)
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      let body = try JSONSerialization.data(withJSONObject: ["job_id": jobId, "import_nonce": nonce,
-        "url": source, "expected_owner_id": owner, "protocol_generation": "v2"])
+      let body = try JSONSerialization.data(withJSONObject: ["job_id": jobId, "expected_owner_id": owner])
+      // Uploads that outlive the extension must come from a file.
       let bodyURL = directory.appendingPathComponent(jobId + ".request.json")
       try body.write(to: bodyURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
       try transfer.writeRecord(record)
-      var request = URLRequest(url: URL(string: credential.endpoint + "?action=enqueue")!)
+      var request = URLRequest(url: URL(string: credential.endpoint + "?action=wake")!)
       request.httpMethod = "POST"
       request.setValue("application/json", forHTTPHeaderField: "Content-Type")
       request.setValue("Bearer " + credential.token, forHTTPHeaderField: "Authorization")

@@ -179,6 +179,13 @@ export interface ImportManifest {
     /** TICKET-180: live drain stage (see ImportStage). Fire-and-forget per boundary. */
     stage?: ImportStage;
     /**
+     * TICKET-248: server-answered 5xx during this import (extraction timeout,
+     * provider error). Transient errors used to retry forever without a trace;
+     * the drain now fails the import visibly at MAX_SERVER_FAILURES. Explicit
+     * readAll parse (survival law); reset by retryImport.
+     */
+    serverFailures?: number;
+    /**
      * TICKET-181: whether the single-shot save pins each spot to the personal
      * wishlist. Default TRUE (wishlist is the base destination) — the review editor
      * sets it FALSE for a list-only save (spots land only in the chosen list(s), not
@@ -364,6 +371,11 @@ function readAll(): ImportManifest[] {
                     // save-confirm — without this line a re-drain would pin the
                     // wishlist anyway, silently defeating a list-only save.
                     pinWishlist: typeof p.pinWishlist === 'boolean' ? p.pinWishlist : undefined,
+                    // TICKET-248: same survival law — a stage write must not reset it.
+                    serverFailures:
+                        typeof p.serverFailures === 'number' && Number.isSafeInteger(p.serverFailures) && p.serverFailures > 0
+                            ? p.serverFailures
+                            : undefined,
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -555,7 +567,7 @@ export function retryImport(jobId: string): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     if (m.sourcePreparation === 'failed') return; // Photos must be selected again.
-    writeManifest({ ...m, attempts: 0, status: 'pending', notificationOutcome: undefined,
+    writeManifest({ ...m, attempts: 0, serverFailures: undefined, status: 'pending', notificationOutcome: undefined,
         ...(m.remoteState === 'failed' ? { remoteState: 'needs_device' as const } : {}) });
     pokeImportQueue();
 }
@@ -612,18 +624,6 @@ export function setRemoteImportState(jobId: string, ownerId: string, state: Impo
     const manifest = getImportForUser(jobId, ownerId);
     if (!manifest?.remoteJobId) return;
     if (!writeManifest({ ...manifest, remoteState: state })) throw new Error('Could not checkpoint remote import');
-}
-
-export function checkpointRemoteImport(jobId: string, ownerId: string, spots: PersistedImportSpot[],
-    source: { listCount?: number | null; thumbUrl?: string | null; handle?: string | null }): ImportManifest | null {
-    const manifest = getImportForUser(jobId, ownerId);
-    if (!manifest?.remoteJobId) return null;
-    if (manifest.spots?.length) return manifest; // never overwrite edits or frozen save nonces
-    const ready: ImportManifest = { ...manifest, spots, mode: 'review', remoteState: 'ready',
-        notificationOutcome: 'review', localNotificationOutcome: 'review',
-        listCount: source.listCount, sourceThumbUrl: source.thumbUrl, sourceHandle: source.handle };
-    if (!writeManifest(ready)) throw new Error('Could not checkpoint ready import');
-    return ready;
 }
 
 export function listRetiredRemoteImports(ownerId: string): { jobId: string; remoteJobId: string; importNonce?: string; url?: string }[] {
@@ -804,6 +804,35 @@ export function setImportStage(jobId: string, stage: ImportStage): void {
     const m = readAll().find((x) => x.jobId === jobId);
     if (!m) return;
     writeManifest({ ...m, stage });
+    stageListeners.forEach((listener) => {
+        try {
+            listener(jobId, stage);
+        } catch {
+            /* a bad listener must not break the drain */
+        }
+    });
+}
+
+type StageListener = (jobId: string, stage: ImportStage) => void;
+const stageListeners = new Set<StageListener>();
+
+/** TICKET-248: the import-now session mirrors stages into the system progress UI. */
+export function onImportStage(listener: StageListener): () => void {
+    stageListeners.add(listener);
+    return () => {
+        stageListeners.delete(listener);
+    };
+}
+
+/** A repeated server failure ends as a visible, retryable failure. */
+export const MAX_SERVER_FAILURES = 2;
+
+/** Count a server-answered 5xx; returns the updated manifest (null if gone). */
+export function bumpImportServerFailure(jobId: string): ImportManifest | null {
+    const m = readAll().find((x) => x.jobId === jobId);
+    if (!m) return null;
+    const updated: ImportManifest = { ...m, serverFailures: (m.serverFailures ?? 0) + 1 };
+    return writeManifest(updated) ? updated : null;
 }
 
 /**

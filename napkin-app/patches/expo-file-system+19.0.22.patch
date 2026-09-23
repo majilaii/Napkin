@@ -1,0 +1,20 @@
+diff --git a/node_modules/expo-file-system/ios/Legacy/FileSystemBackgroundSessionHandler.swift b/node_modules/expo-file-system/ios/Legacy/FileSystemBackgroundSessionHandler.swift
+index 5d47fa4..b6970f9 100644
+--- a/node_modules/expo-file-system/ios/Legacy/FileSystemBackgroundSessionHandler.swift
++++ b/node_modules/expo-file-system/ios/Legacy/FileSystemBackgroundSessionHandler.swift
+@@ -21,6 +21,15 @@ public final class FileSystemBackgroundSessionHandler: ExpoAppDelegateSubscriber
+ 
+   #if os(iOS) || os(tvOS)
+   public func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
++    // Napkin patch (TICKET-248): Expo forwards every background session's events
++    // to every subscriber and calls UIKit's handler only after ALL of them finish.
++    // expo-file-system names its own sessions with a bare UUID and never finishes
++    // anyone else's, so retaining a foreign handler (the share-wake session) left
++    // UIKit's completion handler uncalled forever. Release what isn't ours.
++    guard UUID(uuidString: identifier) != nil else {
++      completionHandler()
++      return
++    }
+     completionHandlers[identifier] = completionHandler
+   }
+   #endif

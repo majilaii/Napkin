@@ -69,16 +69,14 @@ import {
     claimImportOwner,
     onImportEnqueued,
     pokeImportQueue,
-    checkpointRemoteImport,
     setRemoteImportState,
-    getImportForUser,
-    listActiveManifests,
-    listRetiredRemoteImports,
+    bumpImportServerFailure,
+    MAX_SERVER_FAILURES,
     type ImportManifest,
     type PersistedImportSpot,
     type LargeImportJob,
 } from '@/lib/importQueue';
-import { readBackgroundImport, syncBackgroundImports, validRemoteResult, BackgroundImportRejectedError } from '@/lib/backgroundImports';
+import { dismissBackgroundImport, syncBackgroundImports } from '@/lib/backgroundImports';
 import {
     buildCompletenessDestinationIntent,
     importDestinationTargets,
@@ -166,6 +164,13 @@ function isTransientError(err: unknown): boolean {
     const s = errStatus(err);
     return s === 429 || (typeof s === 'number' && s >= 500);
 }
+/** The server answered with a failure (extraction timeout, provider error). */
+function isServerFailure(err: unknown): boolean {
+    const s = errStatus(err);
+    return typeof s === 'number' && s >= 500;
+}
+/** One automatic retry after a server failure, then a visible failure. */
+const SERVER_RETRY_DELAY_MS = 10_000;
 
 // TICKET-187: no photo fields — the server ignores client photo fields and
 // mirrors the hero server-side (post-response) by the DB-derived external_id.
@@ -312,6 +317,9 @@ export function useProcessImportQueue() {
     const toast = useToast();
     const activeUserIdRef = useRef<string | null>(userId ?? null);
     activeUserIdRef.current = userId ?? null;
+    // TICKET-248: pending automatic retries after a server failure; cleared on
+    // unmount/sign-out so a stale retry never wakes another account's drain.
+    const retryTimersRef = useRef(new Set<ReturnType<typeof setTimeout>>());
     const lastFailureReplayRef = useRef<string | null>(null);
 
     const runOwnerBound = useCallback(
@@ -871,68 +879,14 @@ export function useProcessImportQueue() {
             let spots: PersistedImportSpot[] | undefined = m.spots;
             let freshlyResolved = false;
             if (m.remoteJobId && !spots?.length && m.remoteState !== 'needs_device') {
-                try {
-                    const remote = await readBackgroundImport(m, () => activeUserIdRef.current);
-                    requireActiveImportOwner(m.userId, activeUserIdRef.current);
-                    if (!getImportForUser(m.jobId, m.userId)) return;
-                    if (!remote || remote.status === 'pending' || remote.status === 'processing') {
-                        setImportStage(m.jobId, 'processing in background');
-                        return;
-                    }
-                    if (remote.status === 'dismissed' || remote.status === 'acknowledged') {
-                        removeImport(m.jobId);
-                        return;
-                    }
-                    if (remote.status === 'failed') {
-                        setRemoteImportState(m.jobId, m.userId!, 'failed');
-                        await failAndAnnounceImport(m, "couldn't finish that import");
-                        return;
-                    }
-                    if (remote.status === 'needs_device') {
-                        setRemoteImportState(m.jobId, m.userId!, 'needs_device');
-                        m.remoteState = 'needs_device';
-                    } else if (remote.status === 'ready') {
-                        if (!validRemoteResult(remote.result)) throw new Error('Invalid server import result');
-                        const tableIds = m.destinations.tableIds;
-                        const remoteSpots: PersistedImportSpot[] = remote.result.candidates.map(c => {
-                            const tableShares = Object.fromEntries(tableIds.map(id => [id, safeRandomUUID()]));
-                            return { candidate_id: c.candidate_id ?? safeRandomUUID(), client_nonce: safeRandomUUID(),
-                                resolution_id: c.resolution_id, restaurant_id: c.restaurant_id ?? null,
-                                external_id: c.restaurant_id ? null : c.restaurant.external_id ?? null,
-                                restaurant_name: c.restaurant.name, restaurant_city: c.restaurant.city, area: c.area,
-                                table_id: tableIds[0] ?? null, table_client_nonce: tableIds[0] ? tableShares[tableIds[0]] : null,
-                                table_shares: tableShares, place: buildPlace(c), stance: c.stance ?? null };
-                        });
-                        const ready = checkpointRemoteImport(m.jobId, m.userId!, remoteSpots, {
-                            listCount: remote.result.list_count,
-                            thumbUrl: remote.result.partial_source?.thumbnail_url,
-                            handle: remote.result.partial_source?.author_handle,
-                        });
-                        if (!ready) return;
-                        spots = ready.spots;
-                        m = ready;
-                        if (AppState.currentState === 'active') {
-                            toast.show(`${spots!.length} ${spots!.length === 1 ? 'spot' : 'spots'} ready to review`, {
-                                label: 'Review spots',
-                                onPress: () => { if (m.userId === activeUserIdRef.current) router.push(importNoticeUrl(m.jobId, 'review', m.userId) as any); },
-                            }, { title: 'Imports', icon: 'bookmarks-outline' });
-                        }
-                        queryClient.invalidateQueries({ queryKey: queryKeys.importJobs.all(m.userId!) });
-                        pokeImportQueue();
-                    }
-                } catch (error) {
-                    // Submission/status failure is ambiguous. Keep its identity and
-                    // retry; never launch a second extraction while the server owns it.
-                    if (m.userId === activeUserIdRef.current && getImportForUser(m.jobId, m.userId)) {
-                        if (error instanceof BackgroundImportRejectedError) {
-                            setRemoteImportState(m.jobId, m.userId!, 'failed');
-                            await failAndAnnounceImport(m, error.message);
-                            return;
-                        }
-                        setImportStage(m.jobId, 'waiting for connection');
-                    }
-                    return;
-                }
+                // TICKET-248: the server lane is retired. It could not read TikTok
+                // or Instagram media, and waiting on it stalled shares for hours
+                // ("processing in background"). This device processes its own
+                // share now; the server drops its copy so a late result can never
+                // notify for this job.
+                setRemoteImportState(m.jobId, m.userId!, 'needs_device');
+                m.remoteState = 'needs_device';
+                void dismissBackgroundImport(m, () => activeUserIdRef.current).catch(() => {});
             }
             // TICKET-151: the resolver's true Maps-list size (candidates are capped
             // at MAPS_LIST_CAP). Seed from the manifest so a re-drain — which skips
@@ -1962,11 +1916,6 @@ export function useProcessImportQueue() {
 
         try {
             if (activeUserIdRef.current !== userId) return;
-            if (isBackgroundImportIntakeAvailable?.()) {
-                try { await syncBackgroundImports(userId, () => activeUserIdRef.current); }
-                catch { /* existing local jobs remain usable when server metadata is unavailable */ }
-                if (activeUserIdRef.current !== userId) return;
-            }
             const pending = listPendingImports().flatMap((manifest) => {
                 // Review-mode manifests ARE drained — they get resolved (OCR/caption)
                 // and persisted, then HELD (processOne returns before save) until the
@@ -1990,7 +1939,29 @@ export function useProcessImportQueue() {
                     await processOne(m);
                 } catch (err) {
                     if (activeUserIdRef.current !== m.userId) break;
-                    if (isSessionError(err) || isTransientError(err)) break;
+                    if (isSessionError(err)) break;
+                    if (isTransientError(err)) {
+                        // TICKET-248: a server that ANSWERED 5xx (an extraction
+                        // timeout or provider error) used to retry on every
+                        // foreground forever with no trace. Retry once shortly,
+                        // then fail visibly with try-again. 429 and network
+                        // failures keep resume-on-next-drain.
+                        if (isServerFailure(err)) {
+                            const counted = bumpImportServerFailure(m.jobId);
+                            if (counted && (counted.serverFailures ?? 0) >= MAX_SERVER_FAILURES) {
+                                await failAndAnnounceImport(counted, "couldn't finish that import");
+                                continue;
+                            }
+                            if (counted) {
+                                const timer = setTimeout(() => {
+                                    retryTimersRef.current.delete(timer);
+                                    pokeImportQueue();
+                                }, SERVER_RETRY_DELAY_MS);
+                                retryTimersRef.current.add(timer);
+                            }
+                        }
+                        break;
+                    }
                     const updated = bumpImportAttempt(m.jobId);
                     if (updated?.status === 'failed') {
                         await announceImportOutcome(updated, 'failed', "couldn't import that");
@@ -2014,6 +1985,12 @@ export function useProcessImportQueue() {
                 await announceImportOutcome(failed, 'failed', failed.kind === 'video'
                     ? "couldn't import that video" : "couldn't finish that import");
             }
+            // Server housekeeping for retired server-lane jobs runs AFTER local
+            // work, so an unreachable server never delays an import.
+            if (isBackgroundImportIntakeAvailable?.() && activeUserIdRef.current === userId) {
+                try { await syncBackgroundImports(userId, () => activeUserIdRef.current); }
+                catch { /* retried next drain */ }
+            }
         } finally {
             releaseDrainLock();
             // TICKET-120: release the background-task grant (safe on an invalid id).
@@ -2033,7 +2010,7 @@ export function useProcessImportQueue() {
                 setTimeout(() => pokeImportQueue(), 0);
             }
         }
-    }, [userId, session, processOne, announceImportOutcome]);
+    }, [userId, session, processOne, announceImportOutcome, failAndAnnounceImport]);
 
     useEffect(() => {
         drain();
@@ -2042,19 +2019,13 @@ export function useProcessImportQueue() {
         });
         const unsub = onImportEnqueued(() => drain());
         const unsubPrepared = onVideoImportPrepared(() => pokeImportQueue());
-        // Poll only while a remote job needs attention, and only while foreground.
-        // Server work and pushes continue independently after this timer suspends.
-        const remoteTimer = setInterval(() => {
-            if (!userId || AppState.currentState !== 'active') return;
-            const waiting = listActiveManifests(userId).some(m => m.remoteJobId && !m.spots?.length
-                && m.status === 'pending' && m.remoteState !== 'needs_device');
-            if (waiting || listRetiredRemoteImports(userId).length > 0) drain();
-        }, 5000);
+        const retryTimers = retryTimersRef.current;
         return () => {
             sub.remove();
             unsub();
             unsubPrepared();
-            clearInterval(remoteTimer);
+            retryTimers.forEach((timer) => clearTimeout(timer));
+            retryTimers.clear();
         };
     }, [drain]);
 }

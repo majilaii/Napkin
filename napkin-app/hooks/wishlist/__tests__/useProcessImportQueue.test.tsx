@@ -122,37 +122,56 @@ describe('root import queue gallery integration', () => {
         await flush();
     }
 
-    it('holds a remotely prepared import for review without extracting or saving on the phone', async () => {
+    it('a server-lane share is processed on this device at once and its server job dismissed (TICKET-248)', async () => {
         seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', remoteJobId: 'job-1',
-            videoPath: undefined, sourcePreparation: undefined, mode: 'auto' });
+            videoPath: undefined, sourcePreparation: undefined });
         mockEdge.mockImplementation(async (fn: string, options: any) => {
-            if (fn === 'background-imports' && options.action === 'status') return {
-                job_id: 'job-1', owner_id: 'user-1', import_nonce: 'nonce-1',
-                url: 'https://www.tiktok.com/@chef/video/123', status: 'ready',
-                result: { source_type: 'tiktok', candidates: [candidate] },
-            };
+            if (fn === 'notifications') return { ok: true };
+            if (fn === 'background-imports' && options.action === 'dismiss') return { ok: true };
+            if (fn === 'resolve-url' && !options.action) return { source_type: 'tiktok', candidates: [candidate] };
             throw new Error(`Unexpected request ${fn}:${options.action}`);
         });
         await mount();
-        const checkpoint = getImport('job-1');
-        expect(checkpoint).toMatchObject({ mode: 'review', remoteState: 'ready',
+        expect(getImport('job-1')).toMatchObject({ mode: 'review', remoteState: 'needs_device',
             spots: [expect.objectContaining({ resolution_id: 'resolution-1', restaurant_name: 'Salvo Bakehouse' })] });
-        await act(async () => { pokeImportQueue(); });
-        await flush();
-        expect(getImport('job-1')?.spots?.[0].client_nonce).toBe(checkpoint?.spots?.[0].client_nonce);
-        expect(mockExtract).not.toHaveBeenCalled();
-        expect(mockPerceive).not.toHaveBeenCalled();
-        expect(mockEdge.mock.calls.every(([fn]) => fn === 'background-imports')).toBe(true);
+        expect(mockPerceive).toHaveBeenCalled();
+        const serverCalls = mockEdge.mock.calls.filter(([fn]) => fn === 'background-imports');
+        expect(serverCalls).toHaveLength(1);
+        expect(serverCalls[0][1]).toEqual(expect.objectContaining({ action: 'dismiss', body: {
+            expected_owner_id: 'user-1', job_id: 'job-1', import_nonce: 'nonce-1',
+            url: 'https://www.tiktok.com/@chef/video/123',
+        } }));
     });
 
-    it('keeps unresolved server work pending without local extraction or attempt inflation', async () => {
-        seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', remoteJobId: 'job-1',
-            videoPath: undefined, sourcePreparation: undefined });
-        mockEdge.mockRejectedValue(new Error('connection lost after acceptance'));
+    it('a server that answers 5xx retries once, then fails visibly with try-again (TICKET-248)', async () => {
+        seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', videoPath: undefined, sourcePreparation: undefined });
+        const timeout = Object.assign(new Error('Import extraction timed out'), { cause: { status: 503, code: 'TIMEOUT' } });
+        mockEdge.mockImplementation(async (fn: string) => {
+            if (fn === 'notifications') return { ok: true };
+            if (fn === 'resolve-url') throw timeout;
+            throw new Error(`Unexpected request ${fn}`);
+        });
         await mount();
-        expect(getImport('job-1')).toMatchObject({ status: 'pending', stage: 'waiting for connection', attempts: 0 });
-        expect(mockPerceive).not.toHaveBeenCalled();
-        expect(mockExtract).not.toHaveBeenCalled();
+        expect(getImport('job-1')).toMatchObject({ status: 'pending', serverFailures: 1, attempts: 0 });
+        expect(mockToast).not.toHaveBeenCalledWith("couldn't finish that import", expect.anything(), expect.anything());
+
+        await act(async () => { pokeImportQueue(); });
+        await flush();
+        expect(getImport('job-1')).toMatchObject({ status: 'failed', serverFailures: 2 });
+        expect(mockToast).toHaveBeenCalledWith("couldn't finish that import", expect.objectContaining({ label: 'View import' }),
+            expect.anything());
+    });
+
+    it('rate limits and lost connections keep waiting without counting a failure', async () => {
+        seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', videoPath: undefined, sourcePreparation: undefined });
+        const limited = Object.assign(new Error('Too many'), { cause: { status: 429 } });
+        mockEdge.mockImplementation(async (fn: string) => {
+            if (fn === 'resolve-url') throw limited;
+            return { ok: true };
+        });
+        await mount();
+        expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+        expect(getImport('job-1')?.serverFailures).toBeUndefined();
     });
 
     it.each(['no slide URLs', 'failed downloads', 'failed OCR'] as const)(

@@ -54,6 +54,8 @@ import {
     setImportSource,
     setImportSpots,
     setImportStage,
+    bumpImportServerFailure,
+    MAX_SERVER_FAILURES,
     setImportDestinations,
     confirmImportReview,
     ensureImportV2Routing,
@@ -65,7 +67,6 @@ import {
     failImport,
     retryImport,
     markImportNotification,
-    checkpointRemoteImport,
     removeImport,
     listRetiredRemoteImports,
     type ImportManifest,
@@ -107,14 +108,6 @@ it('retiring remote work retains its immutable capture until server cancellation
     expect(listRetiredRemoteImports('alice')).toEqual([{ jobId: 'remote-1', remoteJobId: 'remote-1',
         importNonce: 'nonce-1', url: 'https://www.tiktok.com/@topjaw/video/1' }]);
     expect(listRetiredRemoteImports('bob')).toEqual([]);
-});
-
-it('a failed remote checkpoint never exposes half-persisted review results', () => {
-    seedManifest({ jobId: 'remote-1', remoteJobId: 'remote-1', userId: 'alice' });
-    nativeMock.__failNextWrite();
-    expect(() => checkpointRemoteImport('remote-1', 'alice', [], {})).toThrow('checkpoint');
-    expect(getImport('remote-1')?.remoteState).toBeUndefined();
-    expect(checkpointRemoteImport('remote-1', 'bob', [], {})).toBeNull();
 });
 
 describe('review-first import creation', () => {
@@ -305,6 +298,26 @@ describe('readAll round-trips the TICKET-180 source/stage fields', () => {
         const m = getImport('job-4');
         expect(m?.sourceThumbUrl).toBe('https://cdn/y.jpg');
         expect(m?.sourceHandle).toBeNull();
+    });
+});
+
+describe('TICKET-248 — serverFailures survives rewrites and resets on retry', () => {
+    it('counts server failures across stage writes and clears them on try-again', () => {
+        seedManifest({ jobId: 'job-1' });
+        expect(bumpImportServerFailure('job-1')?.serverFailures).toBe(1);
+        setImportStage('job-1', 'matching spots');
+        expect(getImport('job-1')?.serverFailures).toBe(1);
+        expect(bumpImportServerFailure('job-1')?.serverFailures).toBe(MAX_SERVER_FAILURES);
+        failImport('job-1');
+        retryImport('job-1');
+        expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+        expect(getImport('job-1')?.serverFailures).toBeUndefined();
+    });
+
+    it('ignores a malformed count from untrusted JSON', () => {
+        seedManifest({ jobId: 'job-2', serverFailures: -3 as number });
+        expect(getImport('job-2')?.serverFailures).toBeUndefined();
+        expect(bumpImportServerFailure('missing')).toBeNull();
     });
 });
 

@@ -201,6 +201,7 @@ final class VideoImportRuntimeLease {
   private let end: (Int) -> Void
   private var identifier: Int?
   private var finished = false
+  var isFinished: Bool { finished }
   init(end: @escaping (Int) -> Void) { self.end = end }
   func start(begin: (@escaping () -> Void) -> Int, expire: @escaping () -> Void) {
     let token = begin { [weak self] in expire(); self?.finish() }

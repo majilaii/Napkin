@@ -249,6 +249,9 @@ public class MediaExtractModule: Module {
         UIApplication.shared.endBackgroundTask(taskId)
         taskId = .invalid
       }
+      // TICKET-248: the drain now holds its own grant; a wake's bridge grant
+      // (held since iOS delivered the transfer events) can end.
+      ImportWakeRuntime.release()
       return taskId.rawValue
     }
 
