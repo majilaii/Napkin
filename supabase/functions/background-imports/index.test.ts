@@ -16,12 +16,11 @@ function fixture() {
   const queries: Array<{ table: string; operations: Operation[] }> = [];
   const rpcs: Operation[] = [];
   const userChecks: string[] = [];
-  const drainCalls: unknown[] = [];
-  const deferred: Promise<unknown>[] = [];
   const sleeps: number[] = [];
   const job = { id: JOB, user_id: OWNER, import_nonce: NONCE, request: { url: "https://www.tiktok.com/@chef/video/123", protocol_generation: "v2" }, status: "pending" };
   let queryData: unknown = { id: CREDENTIAL, user_id: OWNER };
   let authError = false;
+  let updateError = false;
   const supabase = {
     auth: { getUser: async (token: string) => {
       userChecks.push(token);
@@ -30,21 +29,21 @@ function fixture() {
     rpc: async (name: string, args: Record<string, unknown>) => {
       rpcs.push({ name, args: [args] });
       return { data: name === "check_and_increment_rate_limit" ? [{ allowed: true }]
-        : name === "fn_claim_import_push_deliveries" ? [] : name === "fn_dismiss_background_import" ? true : job, error: null };
+        : name === "fn_dismiss_background_import" ? true : job, error: null };
     },
     from: (table: string) => {
       const query = { table, operations: [] as Operation[] };
       queries.push(query);
       // Match the PostgREST fluent/thenable surface without a network client.
       const builder: Record<string, unknown> = {};
-      const data = () => table === "background_import_jobs" && query.operations.some(op =>
-        op.name === "eq" && op.args[0] === "status" && op.args[1] === "ready"
-      ) ? [] : queryData;
+      const result = () => updateError && query.operations.some(op => op.name === "update")
+        ? { data: null, error: { message: "test outage" } }
+        : { data: queryData, error: null };
       for (const name of ["select", "insert", "update", "eq", "is", "gt", "not", "order", "limit", "in"]) {
         builder[name] = (...args: unknown[]) => { query.operations.push({ name, args }); return builder; };
       }
-      builder.maybeSingle = builder.single = () => Promise.resolve({ data: data(), error: null });
-      builder.then = (resolve: (value: unknown) => unknown) => Promise.resolve(resolve({ data: data(), error: null }));
+      builder.maybeSingle = builder.single = () => Promise.resolve(result());
+      builder.then = (resolve: (value: unknown) => unknown) => Promise.resolve(resolve(result()));
       return builder;
     },
   };
@@ -55,14 +54,13 @@ function fixture() {
   };
   const handler = createBackgroundImportsHandler({
     supabase, env: name => config[name],
-    defer: promise => deferred.push(promise),
-    drain: async options => { drainCalls.push(options); return { processed: 1 }; },
     sleep: async ms => { sleeps.push(ms); },
   });
   return {
-    queries, rpcs, userChecks, drainCalls, deferred, sleeps, job, config, handler,
+    queries, rpcs, userChecks, sleeps, job, config, handler,
     setQueryData: (value: unknown) => queryData = value,
     setAuthError: () => authError = true,
+    setUpdateError: () => updateError = true,
     call: (action: string, body: Record<string, unknown> = {}, token = JWT, headers: Record<string, string> = {}) => handler(new Request(`https://backend.example/background-imports?action=${action}`, {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...headers }, body: JSON.stringify(body),
     })),
@@ -70,7 +68,7 @@ function fixture() {
 }
 
 Deno.test("background intake opaque credential cannot list, read, mutate or mint credentials", async () => {
-  for (const action of ["list", "status", "dismiss", "acknowledge", "retry", "register_intake"]) {
+  for (const action of ["list", "status", "dismiss", "acknowledge", "retry", "drain", "register_intake"]) {
     const f = fixture();
     assertEquals((await f.call(action, { job_id: JOB }, OPAQUE)).status, 403);
     assertEquals(f.queries, []);
@@ -96,7 +94,7 @@ Deno.test("background intake validates scoped token hash/revocation/expiry and b
     p_request: f.job.request, p_credential_id: CREDENTIAL, p_installation_id: null,
   }] });
   assertEquals((await res.json()).data, { job_id: JOB, status: "needs_device" });
-  // TICKET-248: the device owns the share; the worker is never kicked.
+  // TICKET-248: the device owns the share.
   const handoff = f.queries.find(query => query.table === "background_import_jobs");
   assertEquals(handoff?.operations, [
     { name: "update", args: [{ status: "needs_device", reason: "device_owns_import", updated_at: (handoff!.operations[0].args[0] as { updated_at: string }).updated_at }] },
@@ -104,10 +102,20 @@ Deno.test("background intake validates scoped token hash/revocation/expiry and b
     { name: "eq", args: ["user_id", OWNER] },
     { name: "eq", args: ["status", "pending"] },
   ]);
-  await Promise.all(f.deferred);
-  assertEquals(f.drainCalls.length, 0);
   // An installed build's extension upload is answered late so iOS wakes the app.
   assertEquals(f.sleeps, [EXTENSION_WAKE_DELAY_MS]);
+});
+
+Deno.test("an enqueue whose handoff fails answers pending and starts nothing (TICKET-249)", async () => {
+  const f = fixture();
+  f.setUpdateError();
+  const res = await f.call("enqueue", {
+    job_id: JOB, import_nonce: NONCE, url: f.job.request.url, expected_owner_id: OWNER, protocol_generation: "v2",
+  }, OPAQUE);
+  assertEquals(res.status, 202);
+  assertEquals((await res.json()).data, { job_id: JOB, status: "pending" });
+  // No worker and no second RPC: the owner's next status read hands it over.
+  assertEquals(f.rpcs.map(rpc => rpc.name), ["fn_enqueue_background_import"]);
 });
 
 Deno.test("the app's own (JWT) enqueue is never delayed", async () => {
@@ -127,8 +135,6 @@ Deno.test("a share wake authenticates the scoped credential and stores nothing (
   assertEquals(f.sleeps, [EXTENSION_WAKE_DELAY_MS]);
   assertEquals(f.rpcs, []);
   assertEquals(f.queries.map(query => query.table), ["background_import_credentials"]);
-  await Promise.all(f.deferred);
-  assertEquals(f.drainCalls, []);
 });
 
 Deno.test("a share wake refuses a missing owner fence, a bad job id and a dead credential", async () => {
@@ -177,20 +183,62 @@ Deno.test("background intake refuses account mismatch and missing owner fence", 
   }
 });
 
-Deno.test("background owner reads and mutation queries always carry the authenticated owner", async () => {
-  for (const action of ["list", "status", "acknowledge", "retry"]) {
+Deno.test("background owner reads always carry the authenticated owner", async () => {
+  for (const action of ["list", "status"]) {
     const f = fixture();
     f.setQueryData(action === "list" ? [f.job] : f.job);
     assertEquals((await f.call(action, { job_id: JOB })).status, 200);
-    assertEquals(f.queries[0].operations.some(op => op.name === "eq" && op.args[0] === "user_id" && op.args[1] === OWNER), true);
-    if (action !== "list") assertEquals(f.queries[0].operations.some(op => op.name === "eq" && op.args[0] === "id" && op.args[1] === JOB), true);
-    if (["dismiss", "acknowledge", "retry"].includes(action)) {
-      const patch = f.queries[0].operations.find(op => op.name === "update")?.args[0] as Record<string, unknown>;
-      assertEquals(patch.lease_token, null);
-      assertEquals(patch.lease_until, null);
-      assertEquals(patch.response, null);
+    for (const query of f.queries) {
+      assertEquals(query.operations.some(op => op.name === "eq" && op.args[0] === "user_id" && op.args[1] === OWNER), true);
+      if (action !== "list") assertEquals(query.operations.some(op => op.name === "eq" && op.args[0] === "id" && op.args[1] === JOB), true);
     }
   }
+});
+
+Deno.test("status hands a pending or processing job of its owner to the device before reading (TICKET-249)", async () => {
+  const f = fixture();
+  f.setQueryData({ ...f.job, status: "needs_device", reason: "device_owns_import" });
+  const res = await f.call("status", { job_id: JOB });
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).data.status, "needs_device");
+  assertEquals(f.queries.map(query => query.table), ["background_import_jobs", "background_import_jobs"]);
+  const [handoff, read] = f.queries;
+  assertEquals(handoff.operations, [
+    { name: "update", args: [{ status: "needs_device", reason: "device_owns_import", lease_token: null,
+      lease_until: null, updated_at: (handoff.operations[0].args[0] as { updated_at: string }).updated_at }] },
+    { name: "eq", args: ["id", JOB] },
+    { name: "eq", args: ["user_id", OWNER] },
+    { name: "in", args: ["status", ["pending", "processing"]] },
+  ]);
+  assertEquals(read.operations[0].name, "select");
+});
+
+Deno.test("a failed status handoff is a 503, never a stale pending job", async () => {
+  const f = fixture();
+  f.setQueryData(f.job);
+  f.setUpdateError();
+  assertEquals((await f.call("status", { job_id: JOB })).status, 503);
+  // The read never ran, so the old app sees an error and polls again.
+  assertEquals(f.queries.length, 1);
+});
+
+Deno.test("retired server-lane actions are refused without touching jobs (TICKET-249)", async () => {
+  for (const action of ["acknowledge", "retry", "drain"]) {
+    const f = fixture();
+    assertEquals((await f.call(action, { job_id: JOB })).status, 400);
+    assertEquals(f.queries, []);
+    assertEquals(f.rpcs, []);
+  }
+  // The removed cron sent no Authorization header, so its request now stops at auth.
+  const cron = fixture();
+  const res = await cron.handler(new Request("https://backend.example/background-imports", {
+    method: "POST", body: JSON.stringify({ action: "drain" }),
+    headers: { "apikey": "test-cron-key", "Content-Type": "application/json", "x-completeness-cron": "test-cron-secret" },
+  }));
+  assertEquals(res.status, 401);
+  assertEquals(cron.userChecks, []);
+  assertEquals(cron.queries, []);
+  assertEquals(cron.rpcs, []);
 });
 
 Deno.test("dismiss persists the original identity before a delayed native upload arrives", async () => {
@@ -199,7 +247,7 @@ Deno.test("dismiss persists the original identity before a delayed native upload
   assertEquals(f.rpcs[0], { name: 'fn_dismiss_background_import', args: [{
     p_owner: OWNER, p_job_id: JOB, p_import_nonce: NONCE, p_request: f.job.request,
   }] });
-  assertEquals(f.drainCalls, []);
+  assertEquals(f.rpcs.length, 1);
 });
 
 Deno.test('dismiss can retire a permanently rejected oversized source without fetching it', async () => {
@@ -208,7 +256,6 @@ Deno.test('dismiss can retire a permanently rejected oversized source without fe
   assertEquals((await f.call('dismiss', { job_id: JOB, import_nonce: NONCE, url })).status, 200);
   assertEquals(f.rpcs[0].args, [{ p_owner: OWNER, p_job_id: JOB, p_import_nonce: NONCE,
     p_request: { url, protocol_generation: 'v2' } }]);
-  assertEquals(f.drainCalls, []);
 });
 
 Deno.test("background intake registration binds verified auth session and stores only the credential hash", async () => {
@@ -233,21 +280,6 @@ Deno.test("background intake registration requires both valid auth and a signed 
   const noSession = fixture();
   assertEquals((await noSession.call("register_intake", { installation_id: INSTALLATION }, "test-without-session")).status, 401);
   assertEquals(noSession.queries, []);
-});
-
-Deno.test("background scheduled drain requires both pinned internal credentials", async () => {
-  for (const headers of [
-    {}, { "apikey": "test-cron-key" }, { "x-completeness-cron": "test-cron-secret" },
-    { "apikey": "wrong", "x-completeness-cron": "test-cron-secret" },
-  ]) {
-    const f = fixture();
-    assertEquals((await f.call("drain", {}, JWT, headers)).status, 401);
-    assertEquals(f.drainCalls, []);
-  }
-  const f = fixture();
-  assertEquals((await f.call("drain", {}, "", { "apikey": "test-cron-key", "x-completeness-cron": "test-cron-secret" })).status, 200);
-  assertEquals(f.userChecks, []);
-  assertEquals(f.drainCalls.length, 1);
 });
 
 Deno.test("background intake rejects conflicting action and oversized body before auth", async () => {

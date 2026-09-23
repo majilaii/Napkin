@@ -1,11 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { corsHeaders } from '../_shared/cors.ts';
 import { validateUrl } from '../_shared/urlValidation.ts';
-import { timingSafeSecretEqual } from '../_shared/completeness.ts';
 import { reportError } from '../_shared/report.ts';
-import { drainBackgroundImports } from './worker.ts';
-import { dispatchImportPushes } from '../_shared/importPush.ts';
-import { recoverReadyNotices } from './notifications.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN = /^nbi_[0-9a-f]{64}$/;
@@ -25,8 +21,6 @@ interface Dependencies {
     // deno-lint-ignore no-explicit-any
     supabase?: any;
     env?: Environment;
-    defer?: (promise: Promise<unknown>) => void;
-    drain?: typeof drainBackgroundImports;
     sleep?: (ms: number) => Promise<void>;
 }
 function json(data: unknown, status = 200): Response {
@@ -105,29 +99,7 @@ function createHandler(deps: Dependencies) {
         if (queryAction && body.action && queryAction !== body.action) return failure('INVALID_ACTION', 400);
         const action = queryAction ?? body.action;
         const supabase = deps.supabase ?? createClient(url, serviceKey);
-        const defer = deps.defer ?? ((promise: Promise<unknown>) => {
-            // deno-lint-ignore no-explicit-any
-            (globalThis as any).EdgeRuntime?.waitUntil?.(promise);
-        });
-        const run = async (jobId?: string) => {
-            const result = await (deps.drain ?? drainBackgroundImports)({ supabase, jobId });
-            // Rescue a crash after ready was committed but before notifications were
-            // enqueued. Delivery keys and inbox ids make repeated producers harmless.
-            if (!jobId) {
-                await recoverReadyNotices(supabase);
-            }
-            await dispatchImportPushes(supabase);
-            return result;
-        };
         try {
-            if (action === 'drain') {
-                // Reuse the existing scheduled-worker two-factor credential pair.
-                if (!timingSafeSecretEqual(req.headers.get('x-completeness-cron'), env('COMPLETENESS_CRON_SECRET'))
-                    || !timingSafeSecretEqual(req.headers.get('apikey'), env('COMPLETENESS_SERVICE_ROLE_KEY'))) {
-                    return failure('UNAUTHORIZED', 401);
-                }
-                return json(await run());
-            }
             const bearer = req.headers.get('Authorization')?.replace(/^Bearer /, '') ?? '';
             let ownerId: string | undefined;
             let credentialId: string | null = null;
@@ -218,12 +190,9 @@ function createHandler(deps: Dependencies) {
                     const { error: handoffError } = await supabase.from('background_import_jobs')
                         .update({ status: 'needs_device', reason: 'device_owns_import', updated_at: new Date().toISOString() })
                         .eq('id', data.id).eq('user_id', ownerId).eq('status', 'pending');
-                    if (handoffError) {
-                        // The job stays pending: the worker hands it off instead.
-                        defer(run(data.id).catch(error => reportError(error, { fn: 'background-imports', action: 'kick' })));
-                        return json({ job_id: data.id, status: data.status }, 202);
-                    }
-                    return json({ job_id: data.id, status: 'needs_device' }, 202);
+                    // A failed handoff leaves the job pending; the owner's next
+                    // status read hands it over (TICKET-249).
+                    return json({ job_id: data.id, status: handoffError ? data.status : 'needs_device' }, 202);
                 }
                 return json({ job_id: data.id, status: data.status }, 202);
             }
@@ -233,36 +202,35 @@ function createHandler(deps: Dependencies) {
                     .order('created_at', { ascending: false }).limit(100);
                 return error ? failure('TEMPORARILY_UNAVAILABLE', 503) : json({ jobs: (data ?? []).map(publicJob) });
             }
-            if (['status', 'dismiss', 'acknowledge', 'retry'].includes(String(action))) {
+            if (action === 'status' || action === 'dismiss') {
                 if (typeof body.job_id !== 'string' || !UUID.test(body.job_id)) return failure('INVALID_JOB', 400);
                 if (action === 'status') {
+                    // TICKET-249: nothing on the server works a job any more. Builds
+                    // 262 to 264 wait while their job reads pending or processing, so
+                    // the owner's own status read hands it to the device. A worker from
+                    // before this deploy that finishes later fails its lease check.
+                    // background_imports.spec.sql runs this exact statement.
+                    const { error: handoffError } = await supabase.from('background_import_jobs')
+                        .update({ status: 'needs_device', reason: 'device_owns_import', lease_token: null,
+                            lease_until: null, updated_at: new Date().toISOString() })
+                        .eq('id', body.job_id).eq('user_id', ownerId).in('status', ['pending', 'processing']);
+                    if (handoffError) return failure('TEMPORARILY_UNAVAILABLE', 503);
                     const { data, error } = await supabase.from('background_import_jobs').select(JOB_COLUMNS)
                         .eq('id', body.job_id).eq('user_id', ownerId).maybeSingle();
                     if (error) return failure('TEMPORARILY_UNAVAILABLE', 503);
                     return data ? json(publicJob(data)) : failure('NOT_FOUND', 404);
                 }
-                if (action === 'dismiss') {
-                    // Tombstones never fetch their input. Preserve even a rejected
-                    // source so its local capture can be discarded durably.
-                    const validCapture = typeof body.import_nonce === 'string' && UUID.test(body.import_nonce)
-                        && typeof body.url === 'string' && body.url.length <= 16384;
-                    const { data, error } = await supabase.rpc('fn_dismiss_background_import', {
-                        p_owner: ownerId, p_job_id: body.job_id,
-                        p_import_nonce: validCapture ? body.import_nonce : null,
-                        p_request: validCapture ? { url: (body.url as string).trim(), protocol_generation: 'v2' } : null,
-                    });
-                    if (error) return failure('TEMPORARILY_UNAVAILABLE', 503);
-                    return data === true ? json({ ok: true }) : failure('NOT_FOUND', 404);
-                }
-                // Retry means allow the native evidence path, not unbounded paid replay.
-                const status = action === 'acknowledge' ? 'acknowledged' : 'needs_device';
-                let query = supabase.from('background_import_jobs').update({ status, response: null,
-                    lease_token: null, lease_until: null, updated_at: new Date().toISOString() })
-                    .eq('id', body.job_id).eq('user_id', ownerId);
-                if (action === 'acknowledge') query = query.in('status', ['ready', 'needs_device', 'failed']);
-                if (action === 'retry') query = query.eq('status', 'failed');
-                const { error } = await query;
-                return error ? failure('TEMPORARILY_UNAVAILABLE', 503) : json({ ok: true });
+                // Tombstones never fetch their input. Preserve even a rejected
+                // source so its local capture can be discarded durably.
+                const validCapture = typeof body.import_nonce === 'string' && UUID.test(body.import_nonce)
+                    && typeof body.url === 'string' && body.url.length <= 16384;
+                const { data, error } = await supabase.rpc('fn_dismiss_background_import', {
+                    p_owner: ownerId, p_job_id: body.job_id,
+                    p_import_nonce: validCapture ? body.import_nonce : null,
+                    p_request: validCapture ? { url: (body.url as string).trim(), protocol_generation: 'v2' } : null,
+                });
+                if (error) return failure('TEMPORARILY_UNAVAILABLE', 503);
+                return data === true ? json({ ok: true }) : failure('NOT_FOUND', 404);
             }
             return failure('INVALID_ACTION', 400);
         } catch (error) {

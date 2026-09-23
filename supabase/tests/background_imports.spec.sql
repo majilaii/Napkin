@@ -226,6 +226,89 @@ end;
 $queue$;
 reset role;
 
+-- TICKET-249: no worker leases jobs any more. The owner's `status` read in
+-- background-imports/index.ts hands a pending or processing job to its device
+-- with the statement below; keep the two in step.
+set local role service_role;
+do $handoff$
+declare
+    owner_a uuid := 'b9130000-0000-4000-8000-000000000001';
+    owner_b uuid := 'b9130000-0000-4000-8000-000000000002';
+    input jsonb := '{"url":"https://www.tiktok.com/@chef/video/456","protocol_generation":"v2"}';
+    job public.background_import_jobs;
+    claimed public.background_import_jobs;
+    terminal text;
+    handed integer;
+begin
+    -- A pending job becomes needs_device.
+    job := public.fn_enqueue_background_import(owner_a,gen_random_uuid(),gen_random_uuid(),input);
+    update public.background_import_jobs set status='needs_device',reason='device_owns_import',
+        lease_token=null,lease_until=null,updated_at=now()
+    where id=job.id and user_id=owner_a and status in ('pending','processing');
+    get diagnostics handed = row_count;
+    assert handed=1 and (select status='needs_device' and reason='device_owns_import'
+        and lease_token is null and lease_until is null from public.background_import_jobs where id=job.id),
+        'a pending job must be handed to its device';
+    -- A late upload of the same capture keeps the handed-over job.
+    assert (public.fn_enqueue_background_import(owner_a,job.id,job.import_nonce,input)).status='needs_device',
+        'a delayed extension upload must not reopen a handed-over job';
+    -- Dismissal after the handoff still tombstones it.
+    assert public.fn_dismiss_background_import(owner_a,job.id);
+    assert (select status='dismissed' from public.background_import_jobs where id=job.id);
+
+    -- Another owner's read changes nothing.
+    job := public.fn_enqueue_background_import(owner_b,gen_random_uuid(),gen_random_uuid(),input);
+    update public.background_import_jobs set status='needs_device',reason='device_owns_import',
+        lease_token=null,lease_until=null,updated_at=now()
+    where id=job.id and user_id=owner_a and status in ('pending','processing');
+    get diagnostics handed = row_count;
+    assert handed=0 and (select status='pending' from public.background_import_jobs where id=job.id),
+        'a status read must only hand over the caller''s own job';
+
+    -- A live lease from a worker deployed before this change: the handoff wins
+    -- and that worker's later finish is refused.
+    job := public.fn_enqueue_background_import(owner_a,gen_random_uuid(),gen_random_uuid(),input);
+    select * into claimed from public.fn_claim_background_imports(job.id,1);
+    assert claimed.status='processing' and claimed.lease_until>now();
+    update public.background_import_jobs set status='needs_device',reason='device_owns_import',
+        lease_token=null,lease_until=null,updated_at=now()
+    where id=job.id and user_id=owner_a and status in ('pending','processing');
+    get diagnostics handed = row_count;
+    assert handed=1, 'a leased job must be handed over';
+    assert not public.fn_finish_background_import(job.id,claimed.lease_token,'needs_device',null,'device_owns_import',30),
+        'a pre-deploy worker finishing late must not rewrite a handed-over job';
+    assert not public.fn_finish_background_import(job.id,claimed.lease_token,'ready','{"candidates":[{}]}'),
+        'a late worker must never store a ready result';
+    assert (select status='needs_device' and response is null and lease_token is null
+        from public.background_import_jobs where id=job.id);
+
+    -- An expired third attempt, which the old claim turned into a failure, goes
+    -- to the device instead; the lease check constraint holds.
+    job := public.fn_enqueue_background_import(owner_a,gen_random_uuid(),gen_random_uuid(),input);
+    update public.background_import_jobs set status='processing',attempts=3,
+        lease_token=gen_random_uuid(),lease_until=now()-interval '1 second' where id=job.id;
+    update public.background_import_jobs set status='needs_device',reason='device_owns_import',
+        lease_token=null,lease_until=null,updated_at=now()
+    where id=job.id and user_id=owner_a and status in ('pending','processing');
+    get diagnostics handed = row_count;
+    assert handed=1 and (select status='needs_device' and attempts=3 from public.background_import_jobs where id=job.id),
+        'an exhausted expired attempt must be handed to the device, not stuck';
+
+    -- Settled jobs keep their state.
+    foreach terminal in array array['needs_device','ready','failed','dismissed','acknowledged'] loop
+        job := public.fn_enqueue_background_import(owner_a,gen_random_uuid(),gen_random_uuid(),input);
+        update public.background_import_jobs set status=terminal,reason='fixture' where id=job.id;
+        update public.background_import_jobs set status='needs_device',reason='device_owns_import',
+            lease_token=null,lease_until=null,updated_at=now()
+        where id=job.id and user_id=owner_a and status in ('pending','processing');
+        get diagnostics handed = row_count;
+        assert handed=0 and (select status=terminal and reason='fixture' from public.background_import_jobs where id=job.id),
+            format('a %s job must not be handed over', terminal);
+    end loop;
+end;
+$handoff$;
+reset role;
+
 -- Revoking the originating Supabase session deletes the extension credential.
 delete from auth.sessions where id='b9130000-0000-4000-8000-000000000041';
 do $session_cascade$
