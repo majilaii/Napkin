@@ -417,7 +417,7 @@ class ShareViewController: UIViewController {
         let waking = BackgroundImportTransfer.wake(jobId: jobId, owner: snapshotUserId, origin: "share")
         titleLabel.text = "added for review"
         subtitleLabel.text = waking
-            ? "Napkin is finding the spots now"
+            ? "Napkin is getting the spots ready"
             : "open Napkin when you're ready to check the spots"
         doneButton.setTitle("added", for: .normal)
         doneButton.setTitleColor(.white, for: .disabled)
