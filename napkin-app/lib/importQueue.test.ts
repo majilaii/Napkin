@@ -57,6 +57,8 @@ import {
     bumpImportServerFailure,
     MAX_SERVER_FAILURES,
     setImportEvidence,
+    listUndismissedRemoteImports,
+    markRemoteImportDismissed,
     setImportDestinations,
     confirmImportReview,
     ensureImportV2Routing,
@@ -361,6 +363,21 @@ describe('TICKET-248 — perception evidence survives rewrites until spots or tr
         expect(getImport('job-2')?.evidence).toBeUndefined();
         seedManifest({ jobId: 'job-3', evidence: { ...evidence, extractedText: null, thumbUrl: null, handle: null } });
         expect(getImport('job-3')?.evidence).toMatchObject({ extractedText: null, thumbUrl: null, handle: null });
+        // Empty evidence would skip a perception that could still succeed.
+        seedManifest({ jobId: 'job-4', evidence: { ...evidence, extractedText: '  ', mergedDesc: '' } });
+        expect(getImport('job-4')?.evidence).toBeUndefined();
+    });
+
+    it('remoteDismissed survives rewrites and lists only undismissed device-processed jobs', () => {
+        seedManifest({ jobId: 'remote-1', remoteJobId: 'remote-1', remoteState: 'needs_device', userId: 'alice' });
+        seedManifest({ jobId: 'remote-2', remoteJobId: 'remote-2', remoteState: 'needs_device', userId: 'alice' });
+        seedManifest({ jobId: 'local-1', userId: 'alice' });
+        expect(listUndismissedRemoteImports('alice').map((m) => m.jobId).sort()).toEqual(['remote-1', 'remote-2']);
+        markRemoteImportDismissed('remote-1', 'alice');
+        markRemoteImportDismissed('remote-2', 'bob');
+        setImportStage('remote-1', 'matching spots');
+        expect(getImport('remote-1')?.remoteDismissed).toBe(true);
+        expect(listUndismissedRemoteImports('alice').map((m) => m.jobId)).toEqual(['remote-2']);
     });
 });
 

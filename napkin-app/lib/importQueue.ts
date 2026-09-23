@@ -124,6 +124,8 @@ function normalizeImportEvidence(value: unknown): ImportEvidence | undefined {
     const handle = optionalText(e.handle, 200);
     if (extractedText === undefined || thumbUrl === undefined || handle === undefined
         || typeof e.mergedDesc !== 'string' || e.mergedDesc.length > MAX_EVIDENCE_TEXT
+        // Empty evidence would skip a perception that could still succeed.
+        || !(extractedText?.trim() || e.mergedDesc.trim())
         || typeof e.fastPathGate !== 'string' || e.fastPathGate.length > 40
         || ![e.photoPost, e.cheapTierRan, e.downloadOk, e.escalationAddedEvidence]
             .every((flag) => typeof flag === 'boolean')) return undefined;
@@ -229,6 +231,12 @@ export interface ImportManifest {
     serverFailures?: number;
     /** TICKET-248: see ImportEvidence. Explicit readAll parse (survival law). */
     evidence?: ImportEvidence;
+    /**
+     * TICKET-248: the server acknowledged dismissing this device-processed
+     * server-lane job. Until then housekeeping retries, so an old ready job can
+     * never notify for an import the phone handled.
+     */
+    remoteDismissed?: boolean;
     /**
      * TICKET-181: whether the single-shot save pins each spot to the personal
      * wishlist. Default TRUE (wishlist is the base destination) — the review editor
@@ -421,6 +429,7 @@ function readAll(): ImportManifest[] {
                             ? p.serverFailures
                             : undefined,
                     evidence: normalizeImportEvidence(p.evidence),
+                    remoteDismissed: p.remoteDismissed === true ? true : undefined,
                 });
             } catch {
                 /* skip a corrupt manifest */
@@ -669,6 +678,18 @@ export function setRemoteImportState(jobId: string, ownerId: string, state: Impo
     const manifest = getImportForUser(jobId, ownerId);
     if (!manifest?.remoteJobId) return;
     if (!writeManifest({ ...manifest, remoteState: state })) throw new Error('Could not checkpoint remote import');
+}
+
+/** Device-processed server-lane jobs whose server copy is not yet dismissed. */
+export function listUndismissedRemoteImports(ownerId: string): ImportManifest[] {
+    return readAll().filter((m) => m.userId === ownerId && !!m.remoteJobId
+        && m.remoteState === 'needs_device' && !m.remoteDismissed);
+}
+
+export function markRemoteImportDismissed(jobId: string, ownerId: string): void {
+    const manifest = getImportForUser(jobId, ownerId);
+    if (!manifest?.remoteJobId) return;
+    writeManifest({ ...manifest, remoteDismissed: true });
 }
 
 export function listRetiredRemoteImports(ownerId: string): { jobId: string; remoteJobId: string; importNonce?: string; url?: string }[] {

@@ -1,5 +1,6 @@
 import { callEdgeFn } from './edgeInvoke';
-import { listRetiredRemoteImports, finishRetiredRemoteImport, type ImportManifest } from './importQueue';
+import { listRetiredRemoteImports, finishRetiredRemoteImport, listUndismissedRemoteImports,
+    markRemoteImportDismissed, type ImportManifest } from './importQueue';
 
 // TICKET-248: the server intake lane is retired. New shares never create server
 // jobs; this module only tells the server to drop jobs that builds 262+ created,
@@ -20,13 +21,19 @@ export async function backgroundImportCall<T>(ownerId: string, activeOwner: () =
         return result;
     } finally { clearTimeout(timer); }
 }
-/** Flush originating-device cancellations of retired server-lane jobs. */
+/**
+ * Flush originating-device cancellations of retired server-lane jobs, and retry
+ * dismissing any server copy of a job this device now processes itself.
+ */
 export async function syncBackgroundImports(ownerId: string, activeOwner: () => string | null): Promise<void> {
     assertOwner(ownerId, activeOwner);
     for (const retired of listRetiredRemoteImports(ownerId)) {
         await backgroundImportCall(ownerId, activeOwner, 'dismiss', { job_id: retired.remoteJobId,
             import_nonce: retired.importNonce, url: retired.url });
         finishRetiredRemoteImport(retired.jobId, ownerId);
+    }
+    for (const manifest of listUndismissedRemoteImports(ownerId)) {
+        await dismissBackgroundImport(manifest, activeOwner);
     }
 }
 
@@ -39,4 +46,5 @@ export async function dismissBackgroundImport(manifest: ImportManifest,
     if (!manifest.userId || !manifest.remoteJobId) return;
     await backgroundImportCall(manifest.userId, activeOwner, 'dismiss', { job_id: manifest.remoteJobId,
         import_nonce: manifest.importNonce, url: manifest.url });
+    markRemoteImportDismissed(manifest.jobId, manifest.userId);
 }

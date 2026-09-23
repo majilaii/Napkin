@@ -884,7 +884,8 @@ export function useProcessImportQueue() {
                 // or Instagram media, and waiting on it stalled shares for hours
                 // ("processing in background"). This device processes its own
                 // share now; the server drops its copy so a late result can never
-                // notify for this job.
+                // notify for this job. A failed dismissal is retried by
+                // housekeeping until acknowledged (remoteDismissed).
                 setRemoteImportState(m.jobId, m.userId!, 'needs_device');
                 m.remoteState = 'needs_device';
                 void dismissBackgroundImport(m, () => activeUserIdRef.current).catch(() => {});
@@ -1380,8 +1381,11 @@ export function useProcessImportQueue() {
                         }
                         // TICKET-248: checkpoint the finished perception before the
                         // server resolve, so a suspension or server failure from
-                        // here on never costs another download and read.
-                        if (!fastPath) {
+                        // here on never costs another download and read. Only when
+                        // the device actually read new text (OCR, speech, or a
+                        // recovered page channel): a failed fetch/download must be
+                        // retried, not frozen into an empty checkpoint.
+                        if (!fastPath && escalationAddedEvidence) {
                             setImportEvidence(m.jobId, {
                                 extractedText, mergedDesc, photoPost, cheapTierRan, downloadOk,
                                 escalationAddedEvidence, fastPathGate,

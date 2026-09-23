@@ -182,6 +182,7 @@ enum BackgroundImportTransferOutcome {
 /// after resume(), so dismissing the extension does not cancel the wake.
 final class BackgroundImportTransfer: NSObject, URLSessionDataDelegate {
   static let sessionPrefix = "com.majilaii.napkin.import-intake."
+  static let wakeNotBeforeSeconds: TimeInterval = 3
   private static var retained: [String: BackgroundImportTransfer] = [:]
   private static let retentionLock = NSLock()
   static var onCompletion: ((String) -> Void)?
@@ -232,6 +233,13 @@ final class BackgroundImportTransfer: NSObject, URLSessionDataDelegate {
       transfer.retainAndConnect()
       let task = transfer.session!.uploadTask(with: request, fromFile: bodyURL)
       task.taskDescription = jobId
+      // Not before the extension is gone: a task that completes while it is still
+      // running calls back into the extension and iOS never wakes the app (Apple
+      // DTS, forums 76659). The server also holds its reply; this covers any
+      // failure that could answer fast. Tiny byte hints help the scheduler.
+      task.earliestBeginDate = Date().addingTimeInterval(Self.wakeNotBeforeSeconds)
+      task.countOfBytesClientExpectsToSend = Int64(body.count) + 1024
+      task.countOfBytesClientExpectsToReceive = 1024
       task.resume()
       return true
     } catch {

@@ -1,14 +1,17 @@
 import { callEdgeFn } from './edgeInvoke';
-import { listRetiredRemoteImports, finishRetiredRemoteImport, type ImportManifest } from './importQueue';
+import { listRetiredRemoteImports, finishRetiredRemoteImport, listUndismissedRemoteImports,
+    markRemoteImportDismissed, type ImportManifest } from './importQueue';
 import { dismissBackgroundImport, syncBackgroundImports } from './backgroundImports';
 jest.mock('./edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
 jest.mock('./importQueue', () => ({ listRetiredRemoteImports: jest.fn(() => []),
-    finishRetiredRemoteImport: jest.fn() }));
+    finishRetiredRemoteImport: jest.fn(), listUndismissedRemoteImports: jest.fn(() => []),
+    markRemoteImportDismissed: jest.fn() }));
 
 const manifest = { jobId: 'capture', remoteJobId: 'capture', importNonce: 'nonce', userId: 'alice',
     url: 'https://www.tiktok.com/@chef/video/123' } as ImportManifest;
 const edge = jest.mocked(callEdgeFn);
-beforeEach(() => { jest.clearAllMocks(); jest.mocked(listRetiredRemoteImports).mockReturnValue([]); });
+beforeEach(() => { jest.clearAllMocks(); jest.mocked(listRetiredRemoteImports).mockReturnValue([]);
+    jest.mocked(listUndismissedRemoteImports).mockReturnValue([]); });
 it('tombstones a server-lane job with its full capture identity (TICKET-248)', async () => {
     edge.mockResolvedValueOnce({ ok: true });
     await dismissBackgroundImport(manifest, () => 'alice');
@@ -32,6 +35,21 @@ it('only clears a local cancellation after the server accepts its durable identi
     expect(edge.mock.calls[1][1]).toEqual(expect.objectContaining({ action: 'dismiss', body: {
         expected_owner_id: 'alice', job_id: 'capture', import_nonce: 'nonce', url: manifest.url,
     } }));
+});
+it('marks the job dismissed only after the server acknowledges', async () => {
+    edge.mockRejectedValueOnce(new Error('offline'));
+    await expect(dismissBackgroundImport(manifest, () => 'alice')).rejects.toThrow('offline');
+    expect(markRemoteImportDismissed).not.toHaveBeenCalled();
+    edge.mockResolvedValueOnce({ ok: true });
+    await dismissBackgroundImport(manifest, () => 'alice');
+    expect(markRemoteImportDismissed).toHaveBeenCalledWith('capture', 'alice');
+});
+it('housekeeping retries every undismissed device-processed job', async () => {
+    jest.mocked(listUndismissedRemoteImports).mockReturnValue([manifest]);
+    edge.mockResolvedValueOnce({ ok: true });
+    await syncBackgroundImports('alice', () => 'alice');
+    expect(edge).toHaveBeenCalledWith('background-imports', expect.objectContaining({ action: 'dismiss' }));
+    expect(markRemoteImportDismissed).toHaveBeenCalledWith('capture', 'alice');
 });
 it('does not call the server when nothing was retired', async () => {
     await syncBackgroundImports('alice', () => 'alice');
