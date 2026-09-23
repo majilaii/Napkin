@@ -15,9 +15,10 @@ type Environment = (name: string) => string | undefined;
  * TICKET-248: iOS relaunches Napkin for a share's background upload only when
  * the share extension is gone by the time the upload completes; a task that
  * finishes while the extension is still on screen calls back into the extension
- * and the app is never woken (Apple DTS, forums thread 76659). Answering an
- * extension's upload after this delay lets the extension finish and be torn
- * down first. App (JWT) calls are never delayed.
+ * and the app is never woken (Apple DTS, forums thread 76659). Every response
+ * to an extension's upload, success or failure, waits this long so the
+ * extension is torn down first. New extensions also set earliestBeginDate;
+ * this covers installed builds too. App (JWT) calls are never delayed.
  */
 export const EXTENSION_WAKE_DELAY_MS = 8000;
 interface Dependencies {
@@ -75,6 +76,22 @@ function publicJob(job: any) {
 }
 
 export function createBackgroundImportsHandler(deps: Dependencies = {}) {
+    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+    const handle = createHandler(deps);
+    return async (req: Request): Promise<Response> => {
+        // A share extension's background upload (scoped token, wake/enqueue in the
+        // query) is answered late whatever the outcome: a fast reply, even a 401
+        // or 503, lands back in the still-open extension and the app never wakes.
+        const bearer = req.headers.get('Authorization')?.replace(/^Bearer /, '') ?? '';
+        const queryAction = new URL(req.url).searchParams.get('action');
+        const extensionUpload = TOKEN.test(bearer) && (queryAction === 'wake' || queryAction === 'enqueue');
+        const response = await handle(req);
+        if (extensionUpload) await sleep(EXTENSION_WAKE_DELAY_MS);
+        return response;
+    };
+}
+
+function createHandler(deps: Dependencies) {
     const env = deps.env ?? ((name: string) => Deno.env.get(name));
     return async (req: Request): Promise<Response> => {
         if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -88,7 +105,6 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
         if (queryAction && body.action && queryAction !== body.action) return failure('INVALID_ACTION', 400);
         const action = queryAction ?? body.action;
         const supabase = deps.supabase ?? createClient(url, serviceKey);
-        const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
         const defer = deps.defer ?? ((promise: Promise<unknown>) => {
             // deno-lint-ignore no-explicit-any
             (globalThis as any).EdgeRuntime?.waitUntil?.(promise);
@@ -170,7 +186,6 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
                 // it completes. Authenticate and answer; nothing is stored or run.
                 if (typeof body.job_id !== 'string' || !UUID.test(body.job_id)
                     || body.expected_owner_id !== ownerId) return failure('INVALID_IMPORT', 400);
-                if (credentialId) await sleep(EXTENSION_WAKE_DELAY_MS);
                 return json({ job_id: body.job_id, status: 'wake' });
             }
             if (action === 'enqueue') {
@@ -208,9 +223,6 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
                         defer(run(data.id).catch(error => reportError(error, { fn: 'background-imports', action: 'kick' })));
                         return json({ job_id: data.id, status: data.status }, 202);
                     }
-                    // Installed builds' share extensions upload here: answering late
-                    // lets iOS wake the app to process on the phone (see the delay).
-                    if (credentialId) await sleep(EXTENSION_WAKE_DELAY_MS);
                     return json({ job_id: data.id, status: 'needs_device' }, 202);
                 }
                 return json({ job_id: data.id, status: data.status }, 202);

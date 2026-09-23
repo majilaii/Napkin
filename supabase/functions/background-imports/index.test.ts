@@ -143,6 +143,24 @@ Deno.test("a share wake refuses a missing owner fence, a bad job id and a dead c
   assertEquals((await revoked.call("wake", { job_id: JOB, expected_owner_id: OWNER }, OPAQUE)).status, 401);
 });
 
+Deno.test("every extension upload answer is held, failures included, so it cannot land in the extension", async () => {
+  const revoked = fixture();
+  revoked.setQueryData(null);
+  assertEquals((await revoked.call("wake", { job_id: JOB, expected_owner_id: OWNER }, OPAQUE)).status, 401);
+  assertEquals(revoked.sleeps, [EXTENSION_WAKE_DELAY_MS]);
+  const invalid = fixture();
+  assertEquals((await invalid.call("enqueue", { job_id: "bad" }, OPAQUE)).status, 400);
+  assertEquals(invalid.sleeps, [EXTENSION_WAKE_DELAY_MS]);
+  // The app's own calls and other token actions are never held.
+  const app = fixture();
+  app.setQueryData([app.job]);
+  assertEquals((await app.call("list", {})).status, 200);
+  assertEquals(app.sleeps, []);
+  const revoke = fixture();
+  await revoke.call("revoke_intake", {}, OPAQUE);
+  assertEquals(revoke.sleeps, []);
+});
+
 Deno.test("background intake refuses revoked or expired scoped credentials before enqueue", async () => {
   const f = fixture();
   f.setQueryData(null);
