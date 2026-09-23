@@ -5,18 +5,29 @@ import { timingSafeSecretEqual } from '../_shared/completeness.ts';
 import { reportError } from '../_shared/report.ts';
 import { drainBackgroundImports } from './worker.ts';
 import { dispatchImportPushes } from '../_shared/importPush.ts';
-import { produceReadyNotice, recoverReadyNotices } from './notifications.ts';
+import { recoverReadyNotices } from './notifications.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN = /^nbi_[0-9a-f]{64}$/;
 const JOB_COLUMNS = 'id,user_id,import_nonce,request,status,response,reason,created_at,updated_at';
 type Environment = (name: string) => string | undefined;
+/**
+ * TICKET-248: iOS relaunches Napkin for a share's background upload only when
+ * the share extension is gone by the time the upload completes; a task that
+ * finishes while the extension is still on screen calls back into the extension
+ * and the app is never woken (Apple DTS, forums thread 76659). Every response
+ * to an extension's upload, success or failure, waits this long so the
+ * extension is torn down first. New extensions also set earliestBeginDate;
+ * this covers installed builds too. App (JWT) calls are never delayed.
+ */
+export const EXTENSION_WAKE_DELAY_MS = 8000;
 interface Dependencies {
     // deno-lint-ignore no-explicit-any
     supabase?: any;
     env?: Environment;
     defer?: (promise: Promise<unknown>) => void;
     drain?: typeof drainBackgroundImports;
+    sleep?: (ms: number) => Promise<void>;
 }
 function json(data: unknown, status = 200): Response {
     return new Response(JSON.stringify({ data }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -65,6 +76,22 @@ function publicJob(job: any) {
 }
 
 export function createBackgroundImportsHandler(deps: Dependencies = {}) {
+    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+    const handle = createHandler(deps);
+    return async (req: Request): Promise<Response> => {
+        // A share extension's background upload (scoped token, wake/enqueue in the
+        // query) is answered late whatever the outcome: a fast reply, even a 401
+        // or 503, lands back in the still-open extension and the app never wakes.
+        const bearer = req.headers.get('Authorization')?.replace(/^Bearer /, '') ?? '';
+        const queryAction = new URL(req.url).searchParams.get('action');
+        const extensionUpload = TOKEN.test(bearer) && (queryAction === 'wake' || queryAction === 'enqueue');
+        const response = await handle(req);
+        if (extensionUpload) await sleep(EXTENSION_WAKE_DELAY_MS);
+        return response;
+    };
+}
+
+function createHandler(deps: Dependencies) {
     const env = deps.env ?? ((name: string) => Deno.env.get(name));
     return async (req: Request): Promise<Response> => {
         if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -83,12 +110,7 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
             (globalThis as any).EdgeRuntime?.waitUntil?.(promise);
         });
         const run = async (jobId?: string) => {
-            const result = await (deps.drain ?? drainBackgroundImports)({
-                supabase, url, serviceKey, internalSecret: env('INTERNAL_CALL_SECRET') ?? '', jobId,
-                notifyReady: async (job, count) => {
-                    await produceReadyNotice(supabase, { ...job, response: { candidates: Array(count) } });
-                },
-            });
+            const result = await (deps.drain ?? drainBackgroundImports)({ supabase, jobId });
             // Rescue a crash after ready was committed but before notifications were
             // enqueued. Delivery keys and inbox ids make repeated producers harmless.
             if (!jobId) {
@@ -110,7 +132,7 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
             let ownerId: string | undefined;
             let credentialId: string | null = null;
             if (TOKEN.test(bearer)) {
-                if (action !== 'enqueue' && action !== 'revoke_intake') return failure('FORBIDDEN', 403);
+                if (action !== 'enqueue' && action !== 'wake' && action !== 'revoke_intake') return failure('FORBIDDEN', 403);
                 const { data, error } = await supabase.from('background_import_credentials')
                     .select('id,user_id').eq('token_hash', await hashCredential(bearer))
                     .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle();
@@ -158,6 +180,14 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
                     .update({ revoked_at: new Date().toISOString() }).eq('id', id).eq('user_id', ownerId);
                 return error ? failure('TEMPORARILY_UNAVAILABLE', 503) : json({ revoked: true });
             }
+            if (action === 'wake') {
+                // TICKET-248: the share extension's background upload exists only
+                // so iOS relaunches Napkin to process the share on the device when
+                // it completes. Authenticate and answer; nothing is stored or run.
+                if (typeof body.job_id !== 'string' || !UUID.test(body.job_id)
+                    || body.expected_owner_id !== ownerId) return failure('INVALID_IMPORT', 400);
+                return json({ job_id: body.job_id, status: 'wake' });
+            }
             if (action === 'enqueue') {
                 if (typeof body.job_id !== 'string' || !UUID.test(body.job_id)
                     || typeof body.import_nonce !== 'string' || !UUID.test(body.import_nonce)
@@ -179,7 +209,22 @@ export function createBackgroundImportsHandler(deps: Dependencies = {}) {
                     if (/IMPORT_RATE_LIMITED|IMPORT_QUEUE_FULL/.test(error.message)) return failure('RATE_LIMITED', 429);
                     return failure('TEMPORARILY_UNAVAILABLE', 503);
                 }
-                if (data.status === 'pending') defer(run(data.id).catch(error => reportError(error, { fn: 'background-imports', action: 'kick' })));
+                if (data.status === 'pending') {
+                    // TICKET-248: the phone owns every share. The worker cannot read
+                    // TikTok/Instagram media, and a pending job made installed builds
+                    // wait for it (for hours when the first attempt failed).
+                    // needs_device sends them straight to on-device processing,
+                    // including when this upload wakes the app in the background.
+                    const { error: handoffError } = await supabase.from('background_import_jobs')
+                        .update({ status: 'needs_device', reason: 'device_owns_import', updated_at: new Date().toISOString() })
+                        .eq('id', data.id).eq('user_id', ownerId).eq('status', 'pending');
+                    if (handoffError) {
+                        // The job stays pending: the worker hands it off instead.
+                        defer(run(data.id).catch(error => reportError(error, { fn: 'background-imports', action: 'kick' })));
+                        return json({ job_id: data.id, status: data.status }, 202);
+                    }
+                    return json({ job_id: data.id, status: 'needs_device' }, 202);
+                }
                 return json({ job_id: data.id, status: data.status }, 202);
             }
             if (action === 'list') {

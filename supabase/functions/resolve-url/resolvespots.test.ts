@@ -31,6 +31,7 @@ import {
     buildPlacesSearchBody,
     buildCandidatePlacesQuery,
     keepTypeRejectedAsGhost,
+    mapsPlaceSearchLocality,
 } from './_helpers.ts';
 import { mapsItemsToStaged } from './mapsList.ts';
 import { classifyInteractiveSearchResults } from '../_shared/candidateDedupe.ts';
@@ -46,6 +47,26 @@ Deno.test('import Places request keeps name bare and forwards structured localit
         city: 'Paris',
         area: 'Le Marais',
     });
+});
+
+Deno.test('a shared Maps place is located by its link, never by the home city (TICKET-248)', () => {
+    // Web share: the place's own pin biases the search.
+    const pinned = mapsPlaceSearchLocality({
+        location: { lat: 48.8534, lng: 2.3811 },
+        selfLocating: false,
+    });
+    assertEquals(buildPlacesSearchBody('Septime', pinned), {
+        query: 'Septime', limit: 3, lat: 48.8534, lng: 2.3811,
+    });
+    // App share: "Name, full address" opts out of the home-city weld.
+    const addressed = mapsPlaceSearchLocality({ location: null, selfLocating: true });
+    assertEquals(buildPlacesSearchBody('Septime, 80 Rue de Charonne, 75011 Paris', addressed), {
+        query: 'Septime, 80 Rue de Charonne, 75011 Paris', limit: 3, use_home_city: false,
+    });
+    // A bare name keeps today's home-city fallback.
+    assertEquals(mapsPlaceSearchLocality({ location: null, selfLocating: false }), undefined);
+    assertEquals(mapsPlaceSearchLocality(null), undefined);
+    assertEquals(buildPlacesSearchBody('Dishoom', undefined), { query: 'Dishoom', limit: 3 });
 });
 
 Deno.test('import Places request carries explicit branch address and preserves structured locality', () => {

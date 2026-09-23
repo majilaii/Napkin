@@ -20,6 +20,11 @@ export type SearchPayload = {
     /** Opt in to one best-effort world-biased pass after an empty coordinate-biased pass. */
     global_fallback?: boolean;
     /**
+     * false when the query locates itself (a shared Maps place's full address):
+     * never weld the caller's home city into it. Absent keeps the fallback.
+     */
+    use_home_city?: boolean;
+    /**
      * When true and place_id is provided, server upserts the resulting place
      * into restaurants and returns restaurant_id alongside the sanitized place.
      * Used by the client for opportunistic backfill of stale rows and for
@@ -51,6 +56,7 @@ export async function parsePayload(req: Request): Promise<SearchPayload> {
                 global_fallback: typeof body.global_fallback === 'boolean'
                     ? body.global_fallback
                     : searchParams.get('global_fallback') === 'true' || undefined,
+                use_home_city: body.use_home_city === false ? false : undefined,
                 persist: typeof body.persist === 'boolean'
                     ? body.persist
                     : searchParams.get('persist') === 'true' || undefined,
@@ -121,7 +127,10 @@ export type TextSearchPlan = {
   needsHomeCity: boolean;
 };
 
-/** Locality precedence: explicit city > valid coordinates > home-city fallback. */
+/**
+ * Locality precedence: explicit city > valid coordinates > a self-locating query
+ * (use_home_city false) > home-city fallback.
+ */
 export function buildTextSearchPlan(
   payload: SearchPayload,
   rawPayload: unknown,
@@ -146,6 +155,9 @@ export function buildTextSearchPlan(
     parseTextSearchBias(payload);
   if (coordinateBias) {
     return { city: "", area, coordinateBias, needsHomeCity: false };
+  }
+  if (payload.use_home_city === false) {
+    return { city: "", area, coordinateBias: undefined, needsHomeCity: false };
   }
 
   return {
