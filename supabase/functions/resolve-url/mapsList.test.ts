@@ -15,7 +15,6 @@ import {
     mapsItemsToStaged,
     parseGetlistResponse,
     parseMapsPlaceTarget,
-    parsePlaceFromMapsUrl,
 } from './mapsList.ts';
 
 // Verbatim from a live list page (attribute-encoded &amp;).
@@ -195,7 +194,7 @@ Deno.test('parseMapsPlaceTarget: camera @lat,lng is the fallback, dropped pins a
         parseMapsPlaceTarget('https://www.google.com/maps/place/A%2BB+Cafe')?.query,
         'A+B Cafe',
     );
-    assertEquals(parsePlaceFromMapsUrl('https://www.google.com/maps?query=Brat'), 'Brat');
+    assertEquals(parseMapsPlaceTarget('https://www.google.com/maps?query=Brat')?.query, 'Brat');
 });
 
 Deno.test('expandMapsShare: app share resolves from the FIRST redirect, never loads the page', async () => {

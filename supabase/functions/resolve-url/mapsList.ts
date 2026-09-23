@@ -162,11 +162,6 @@ export function cleanMapsTitle(t: string): string {
     return t.replace(/\s*[-–—|]\s*Google\s*Maps\s*$/i, '').trim();
 }
 
-/** Parse a place name from an already-canonical Maps URL (/place/<name> or ?q=). */
-export function parsePlaceFromMapsUrl(u: string): string | null {
-    return parseMapsPlaceTarget(u)?.query ?? null;
-}
-
 export interface MapsPlaceLocation {
     lat: number;
     lng: number;
