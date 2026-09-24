@@ -8,7 +8,9 @@
 
 import React from 'react';
 import { View, Text, Image } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@/constants/theme';
+import { isPlaceholderName } from '@/lib/onboardingName';
 import { PressableScale } from '@/components/ui/napkin/PressableScale';
 
 type Palette = typeof Colors.light;
@@ -59,15 +61,20 @@ export function Avatar({ name, url, size, palette, onPress }: AvatarProps) {
         <Image source={{ uri: url }} style={outlineStyle} />
     ) : (
         <View style={baseStyle}>
-            <Text
-                style={{
-                    fontFamily: 'Manrope_600SemiBold',
-                    fontSize: size * 0.36,
-                    color: palette.text,
-                }}
-            >
-                {initials}
-            </Text>
+            {isPlaceholderName(name) ? (
+                // No name given (optional step skipped): a neutral figure, not "NU".
+                <Ionicons name="person-outline" size={Math.round(size * 0.5)} color={palette.text} />
+            ) : (
+                <Text
+                    style={{
+                        fontFamily: 'Manrope_600SemiBold',
+                        fontSize: size * 0.36,
+                        color: palette.text,
+                    }}
+                >
+                    {initials}
+                </Text>
+            )}
         </View>
     );
 

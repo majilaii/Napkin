@@ -44,6 +44,13 @@ import {
     isBackgroundImportIntakeAvailable,
 } from '@/modules/media-extract';
 import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
+import {
+    declinedAiImportConsentThisSession,
+    hasAiImportConsent,
+    importNeedsAiConsent,
+    requestAiImportConsent,
+    subscribeAiImportConsent,
+} from '@/lib/aiConsent';
 import { markImportCompleted } from '@/lib/importActivation';
 import { importNoticeUrl } from '@/lib/importNotificationNavigation';
 import {
@@ -1958,15 +1965,30 @@ export function useProcessImportQueue() {
                 const claimed = claimImportOwner(manifest.jobId, userId);
                 return claimed ? [claimed] : [];
             });
+            // TICKET-250 (Guideline 5.1.2(i)): an AI-bound import waits for the
+            // user's OK. Ask only while they are looking at the app, and not
+            // again this session after a "Not now"; a background wake leaves the
+            // import pending and sends nothing. /import-progress offers "allow".
+            let aiAllowed = await hasAiImportConsent(userId);
+            if (
+                !aiAllowed &&
+                pending.some(importNeedsAiConsent) &&
+                AppState.currentState === 'active' &&
+                !declinedAiImportConsentThisSession(userId)
+            ) {
+                aiAllowed = (await requestAiImportConsent(userId)).granted;
+            }
+            if (activeUserIdRef.current !== userId) return;
+            const runnable = aiAllowed ? pending : pending.filter((m) => !importNeedsAiConsent(m));
             // TICKET-120: actively draining ≥1 import while the user is here is the
             // demonstrated-value beat to (quietly, cadence-gated) offer notifications.
             // Gallery capture asks only after its native picker and tray close.
             // Even a very fast preparation event must not present a sibling
             // permission modal while that handoff is still dismissing.
-            if (pending.some((m) => m.sourcePreparation === undefined) && AppState.currentState === 'active') {
+            if (runnable.some((m) => m.sourcePreparation === undefined) && AppState.currentState === 'active') {
                 maybeOfferNotifPrompt();
             }
-            for (const m of pending) {
+            for (const m of runnable) {
                 if (!session) break;
                 try {
                     await processOne(m);
@@ -2052,11 +2074,14 @@ export function useProcessImportQueue() {
         });
         const unsub = onImportEnqueued(() => drain());
         const unsubPrepared = onVideoImportPrepared(() => pokeImportQueue());
+        // A grant anywhere (sheet, progress hub, Settings) releases held imports.
+        const unsubConsent = subscribeAiImportConsent(() => pokeImportQueue());
         const retryTimers = retryTimersRef.current;
         return () => {
             sub.remove();
             unsub();
             unsubPrepared();
+            unsubConsent();
             retryTimers.forEach((timer) => clearTimeout(timer));
             retryTimers.clear();
         };

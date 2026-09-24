@@ -121,26 +121,27 @@
         <p class="wordmark">napkin</p>
         <p class="kicker">legal</p>
         <h1>Privacy Policy</h1>
-        <p class="meta">Effective 16 July 2026 · built and operated by Jacky Ieong</p>
+        <p class="meta">Effective 24 September 2026 · built and operated by Jacky Ieong</p>
     </header>
 
     <p class="intro">Napkin is a meal journal for iPhone: you log the restaurants you eat at, keep a wishlist of ones to try, and share — if you choose — with small private groups called Tables. This page explains what data Napkin handles and what happens to it. The short version: your data exists to power your journal. No ads, no data sales, no tracking.</p>
 
     <h2><span class="no">1.</span>What we collect</h2>
     <ul>
-        <li><strong>Account.</strong> Your email address and password, handled by Supabase Auth (passwords are stored hashed — we never see them), plus your display name and, for new accounts, a profile photo.</li>
+        <li><strong>Account.</strong> Your email address and password, handled by Supabase Auth (passwords are stored hashed, so we never see them), plus your display name and, if you add one, a profile photo.</li>
         <li><strong>Things you make.</strong> Restaurant logs — ratings, written notes, dates, tagged companions — the photos you attach, wishlist saves, lists, your Table memberships and activity, comments, and emoji reactions.</li>
         <li><strong>Location — optional, foreground only.</strong> If you allow it, your coordinates are used to find restaurants near you and to sort saved spots by distance. They serve the search in front of you and nothing else: we don't record where you've been or build a location history. Restaurant coordinates come from Google, not from tracking you.</li>
         <li><strong>Search text.</strong> What you type into restaurant search is sent to Google Places to return results.</li>
-        <li><strong>Imported video text.</strong> Paste a TikTok or similar link and the video is read on your device — frames and audio are turned into text locally. Only that extracted text (restaurant names, captions) is sent to our server and to Anthropic's Claude to identify the restaurants. The video itself is never uploaded, stored, or redistributed.</li>
+        <li><strong>Imports.</strong> When you import a link, a saved video or a screenshot, Napkin reads it to find the restaurants in it. On-screen text and speech in a video are read on your device, and the video itself is never uploaded. The first time you import, Napkin asks your permission; only if you allow it, the post's caption, the on-screen text and speech we read, or the screenshot you picked, are sent to our server and to OpenAI to identify the restaurants. Google Maps links never need it. You can withdraw that permission in Settings → privacy → Imports.</li>
         <li><strong>Usage events.</strong> First-party events like "logged a meal", tied to your account id and stored in our own database. There is no third-party analytics SDK in the app.</li>
+        <li><strong>Crash reports.</strong> If the app crashes, Sentry receives technical details of the crash (device model, system and app version, the error) so we can fix it. They are not linked to your account.</li>
     </ul>
 
     <h2><span class="no">2.</span>How we use it</h2>
     <ul>
         <li>To run the app: your journal, feed, wishlist, Tables, and profile.</li>
         <li>To show what you make to the people you chose — Tablemates, tagged friends, or anyone, if your profile is public.</li>
-        <li>To find restaurants: search text (and, for nearby search, transient coordinates) goes to Google Places; imported video text goes to Anthropic.</li>
+        <li>To find restaurants: search text (and, for nearby search, transient coordinates) goes to Google Places. What you import goes to OpenAI, only after you allow it in the app.</li>
         <li>To keep user images safe: before an avatar or meal photo is published, a standardized JPEG copy is sent to Google Cloud Vision SafeSearch to check for adult, violent, or sexually suggestive content. Rejected images are not published.</li>
         <li>To see which features get used, via our own usage events.</li>
         <li>To email you about your account — password resets, replies when you write to us.</li>
@@ -165,17 +166,19 @@
                 <tr><td>Supabase</td><td>Database, sign-in, and photo storage. Hosted in EU-West.</td><td>Account data and the content you create.</td></tr>
                 <tr><td>Google Places</td><td>Restaurant search and restaurant details.</td><td>Your search text; transient coordinates for nearby search.</td></tr>
                 <tr><td>Google Cloud Vision</td><td>Safety-checks avatars and meal photos before publication.</td><td>The standardized JPEG being checked. Google says online Vision images are processed in memory, not persisted to disk, not used to train Cloud Vision, and not shared publicly or with another third party.</td></tr>
-                <tr><td>Anthropic</td><td>Identifies restaurant names during video/link import.</td><td>Text extracted on your device — never the video.</td></tr>
+                <tr><td>OpenAI</td><td>Identifies the restaurants in what you import, only after you allow it in the app.</td><td>A post's caption, the on-screen text and speech read on your device, or the screenshot you picked. Never your name, email or account, and never the video. Under OpenAI's API terms this data is not used to train its models.</td></tr>
+                <tr><td>Sentry</td><td>Crash reports.</td><td>Technical details of a crash. Not linked to your account.</td></tr>
+                <tr><td>Vercel</td><td>Hosts these pages and Table invite links.</td><td>Standard web request data (such as IP address and browser) when you open a page or an invite link.</td></tr>
                 <tr><td>Apple</td><td>App Store distribution.</td><td>Nothing from inside Napkin.</td></tr>
             </tbody>
         </table>
     </div>
 
     <h2><span class="no">5.</span>How long we keep it</h2>
-    <p>For as long as your account exists. Your search text and location aren't stored as a history — they serve the request in front of you, and that's it. When you delete your account, your data goes with it.</p>
+    <p>For as long as your account exists. Your search text and location aren't stored as a history: they serve the request in front of you, and that's it. Screenshots you import are kept privately with your account so an import can be finished later, and text read from a public post is kept so the same post imports faster next time. When you delete your account, your data goes with it.</p>
 
     <h2><span class="no">6.</span>Deleting your data</h2>
-    <p><strong>Settings → Account → Delete account.</strong> The request immediately freezes new uploads and signs you out. Your logs, photos, wishlist, comments, Table memberships, and account are then deleted irreversibly; storage cleanup is recorded durably and retries if a provider call fails. If you'd rather we handle it — or you can't get into the app — email <a href="mailto:jackyieong@mainrichinternational.com">jackyieong@mainrichinternational.com</a>.</p>
+    <p><strong>Profile → Settings → delete account</strong> (at the bottom of Settings). The request immediately freezes new uploads and signs you out. Your logs, photos, imported screenshots, wishlist, comments, Table memberships, and account are then deleted irreversibly; storage cleanup is recorded durably and retries if a provider call fails. If you'd rather we handle it, or you can't get into the app, email <a href="mailto:jackyieong@mainrichinternational.com">jackyieong@mainrichinternational.com</a>.</p>
 
     <h2><span class="no">7.</span>Your rights</h2>
     <p>Wherever you live, you get the GDPR-style basics:</p>

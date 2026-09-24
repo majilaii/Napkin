@@ -74,9 +74,12 @@ export default ({ config }: ConfigContext): ExpoConfig =>
             NSLocationWhenInUseUsageDescription:
                 'Napkin uses your location to sort your saved spots by distance and find places near you.',
             // TICKET-082: on-device voiceover transcription when importing a video
-            // (the spoken restaurant names). Runs on-device; audio is not uploaded.
+            // (the spoken restaurant names). Recognition runs on-device and audio
+            // is never uploaded; the resulting text goes to the import model only
+            // after the TICKET-250 consent, so the string must not promise that
+            // nothing leaves the phone.
             NSSpeechRecognitionUsageDescription:
-                'Napkin reads the names spoken in a video you import so it can find those restaurants. This runs on your device.',
+                'Napkin listens for restaurant names spoken in a video you import. Speech is recognised on your device.',
             // ARCH-REVIEW-3: Belt-and-suspenders in case Expo SDK 54 string-array
             // scheme doesn't emit both entries. Explicit declaration guarantees both.
             CFBundleURLTypes: [
@@ -153,10 +156,12 @@ export default ({ config }: ConfigContext): ExpoConfig =>
         [
             'expo-image-picker',
             {
+                // TICKET-250: spelled out; $(PRODUCT_NAME) expands to the target
+                // name ("diningjournalapp") in the system prompt.
                 photosPermission:
-                    '$(PRODUCT_NAME) would like to access your photo library to add photos to your entries and profile.',
+                    'Napkin adds the photos you choose to your meals and your profile.',
                 cameraPermission:
-                    '$(PRODUCT_NAME) would like to use your camera to take photos for your entries and profile.',
+                    'Napkin uses the camera when you take a photo for a meal or your profile.',
                 // TICKET-090: photos only (mediaTypes: ['images'] everywhere) — no
                 // mic string, or App Review asks why a food journal wants audio.
                 microphonePermission: false,

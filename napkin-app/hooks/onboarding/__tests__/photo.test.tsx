@@ -74,19 +74,17 @@ jest.mock('@/app/onboarding/OnboardingDraftContext', () => ({
 
 import OnboardingPhotoScreen from '@/app/onboarding/photo';
 
-describe('mandatory onboarding photo', () => {
+describe('onboarding photo', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockDraft = { display_name: 'Jacky', avatar_url: null, home_city: null };
     });
 
-    // SUPERSEDES the 2026-07-22 rule ("a down moderation service must never wall
-    // onboarding", which is why Skip existed). Founder call 2026-07-25: the photo
-    // is mandatory — no face, no feed. That earlier rule was written when the
-    // Vision credential was unprovisioned and EVERY upload 503'd; the credential
-    // is live now. The tradeoff is real and deliberate: if Vision goes down,
-    // this screen blocks all new signups, so Vision is a launch dependency.
-    it('has no Skip and blocks Continue until a photo is approved', () => {
+    // TICKET-250 SUPERSEDES the 2026-07-25 no-skip call: App Store Guideline
+    // 5.1.1(v) forbids requiring personal information the app does not need,
+    // and the mandate forced every new user's face through Google Cloud Vision.
+    // Continue still means "continue with this photo"; Maybe later moves on.
+    it('blocks Continue until a photo is approved and offers Maybe later instead', () => {
         const screen = render(<OnboardingPhotoScreen />);
 
         const continueButton = screen.getByLabelText('Continue');
@@ -94,9 +92,24 @@ describe('mandatory onboarding photo', () => {
         fireEvent.press(continueButton);
         expect(mockPush).not.toHaveBeenCalled();
 
-        // No escape hatch anywhere on the screen.
-        expect(screen.queryByText('Skip')).toBeNull();
-        expect(mockPush).not.toHaveBeenCalled();
+        fireEvent.press(screen.getByLabelText('Skip profile photo'));
+        expect(mockPush).toHaveBeenCalledWith('/onboarding/city');
+        expect(mockPatch).not.toHaveBeenCalled();
+    });
+
+    it('names who checks the photo before anyone sees it', () => {
+        const screen = render(<OnboardingPhotoScreen />);
+        expect(screen.getByText('Google Cloud Vision checks each photo before anyone sees it.')).toBeTruthy();
+    });
+
+    it('drops Maybe later once a photo is in', () => {
+        mockDraft = {
+            display_name: 'Jacky',
+            avatar_url: 'https://cdn.test/approved/avatar.jpg',
+            home_city: null,
+        };
+        const screen = render(<OnboardingPhotoScreen />);
+        expect(screen.queryByLabelText('Skip profile photo')).toBeNull();
     });
 
     it('allows the next step only with an approved URL in the draft', () => {

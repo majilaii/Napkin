@@ -19,6 +19,7 @@ import { Colors, Spacing, Radius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useEditComment, useDeleteComment, useToggleCommentLike } from '@/hooks/posts/usePostInteractions';
+import { useCommentSafetyMenu } from '@/hooks/account/useCommentSafetyMenu';
 import type { Comment, TargetType, Scope } from '@/hooks/posts/usePostInteractions';
 
 interface CommentRowProps {
@@ -67,6 +68,7 @@ export function CommentRow({
     const editComment = useEditComment();
     const deleteComment = useDeleteComment();
     const toggleLike = useToggleCommentLike();
+    const openSafetyMenu = useCommentSafetyMenu();
 
     const [isEditing, setIsEditing] = useState(false);
     const [editBody, setEditBody] = useState(comment.body);
@@ -76,6 +78,8 @@ export function CommentRow({
     const canEdit = isAuthor && ageMs < 5 * 60 * 1000 && !comment.pending;
     const canDelete = isAuthor && !comment.pending;
     const interactive = !comment.pending && !comment.failed;
+    // Guideline 1.2: anyone else's comment can be reported, its author blocked.
+    const canReport = !!user && !isAuthor && interactive && !!comment.user_id;
     const liked = !!comment.viewer_liked;
     const likeCount = comment.like_count ?? 0;
 
@@ -191,6 +195,20 @@ export function CommentRow({
                             hitSlop={8}
                             style={styles.menuBtn}
                             accessibilityLabel="Comment options"
+                        >
+                            <Text
+                                style={[styles.menuDots, { color: palette.textMuted }]}
+                            >
+                                •••
+                            </Text>
+                        </Pressable>
+                    )}
+                    {canReport && (
+                        <Pressable
+                            onPress={() => openSafetyMenu(comment)}
+                            hitSlop={8}
+                            style={styles.menuBtn}
+                            accessibilityLabel="Report or block"
                         >
                             <Text
                                 style={[styles.menuDots, { color: palette.textMuted }]}

@@ -29,6 +29,15 @@
  */
 export const SERVER_PLACEHOLDER_NAME = 'New User';
 
+/**
+ * True for the trigger's placeholder. A user who skipped the optional name step
+ * keeps it, so surfaces render a neutral fallback instead of printing
+ * "New User" and an "NU" monogram (TICKET-250).
+ */
+export function isPlaceholderName(value: string | null | undefined): boolean {
+    return typeof value === 'string' && value.trim().toLowerCase() === SERVER_PLACEHOLDER_NAME.toLowerCase();
+}
+
 /** Matches the server cap in fn_complete_onboarding (1–80 chars after trim). */
 export const MAX_DISPLAY_NAME = 80;
 

@@ -21,6 +21,10 @@ let mockSession = { user: { id: 'user-1' } };
 let mockSourceExists = true;
 let mockIntakeAvailable = false;
 let mockPreparedListener: ((event: { jobId: string }) => void) | undefined;
+// TICKET-250: most tests model a user who already allowed AI imports.
+let mockAiConsent = true;
+let mockAiDeclined = false;
+const mockRequestAiConsent = jest.fn();
 
 jest.mock('react-native', () => ({ get AppState() { return mockAppState; }, Platform: { OS: 'ios' } }));
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
@@ -39,6 +43,13 @@ jest.mock('@/lib/edgeInvoke', () => ({
     callEdgeFn: (...args: unknown[]) => mockEdge(...args),
     isAuthFailure: () => false,
     SessionExpiredError: class extends Error {},
+}));
+jest.mock('@/lib/aiConsent', () => ({
+    ...jest.requireActual('@/lib/aiConsent'),
+    hasAiImportConsent: async () => mockAiConsent,
+    declinedAiImportConsentThisSession: () => mockAiDeclined,
+    requestAiImportConsent: (...args: unknown[]) => mockRequestAiConsent(...args),
+    subscribeAiImportConsent: () => () => {},
 }));
 jest.mock('@/lib/localNotify', () => ({
     presentImportNotification: (...args: unknown[]) => mockLocalNotification(...args),
@@ -97,6 +108,9 @@ describe('root import queue gallery integration', () => {
         mockAppState.currentState = 'active';
         mockSourceExists = true;
         mockIntakeAvailable = false;
+        mockAiConsent = true;
+        mockAiDeclined = false;
+        mockRequestAiConsent.mockReset().mockResolvedValue({ granted: true, prompted: true });
         mockExtract.mockReset().mockResolvedValue(evidence);
         mockPerceive.mockReset().mockResolvedValue(null);
         mockSlideDownload.mockReset().mockResolvedValue(null);
@@ -124,6 +138,60 @@ describe('root import queue gallery integration', () => {
         await act(async () => { tree = TestRenderer.create(<Root showSheet={showSheet} />); });
         await flush();
     }
+
+    describe('AI consent gate (TICKET-250)', () => {
+        const tiktok = { kind: 'url' as const, url: 'https://www.tiktok.com/@chef/video/123',
+            videoPath: undefined, sourcePreparation: undefined };
+        function resolveCalls() {
+            return mockEdge.mock.calls.filter(([fn]) => fn === 'resolve-url');
+        }
+
+        it('sends nothing from a background wake without consent, and does not ask', async () => {
+            mockAiConsent = false;
+            mockAppState.currentState = 'background';
+            seed(tiktok);
+            await mount();
+            expect(mockRequestAiConsent).not.toHaveBeenCalled();
+            expect(mockPerceive).not.toHaveBeenCalled();
+            expect(resolveCalls()).toHaveLength(0);
+            expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+        });
+
+        it('holds a saved video too: its text and speech would go to the model', async () => {
+            mockAiConsent = false;
+            mockAppState.currentState = 'background';
+            seed();
+            await mount();
+            expect(mockExtract).not.toHaveBeenCalled();
+            expect(resolveCalls()).toHaveLength(0);
+            expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+        });
+
+        it('asks while the app is open and runs the import after Allow', async () => {
+            mockAiConsent = false;
+            seed(tiktok);
+            await mount();
+            expect(mockRequestAiConsent).toHaveBeenCalledWith('user-1');
+            expect(resolveCalls().length).toBeGreaterThan(0);
+            expect(getImport('job-1')).toMatchObject({ mode: 'review' });
+        });
+
+        it('keeps the import pending after Not now and does not ask again this session', async () => {
+            mockAiConsent = false;
+            mockRequestAiConsent.mockResolvedValue({ granted: false, prompted: true });
+            seed(tiktok);
+            await mount();
+            expect(mockRequestAiConsent).toHaveBeenCalledTimes(1);
+            expect(resolveCalls()).toHaveLength(0);
+            expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+
+            mockAiDeclined = true;
+            await act(async () => { pokeImportQueue(); });
+            await flush();
+            expect(mockRequestAiConsent).toHaveBeenCalledTimes(1);
+            expect(resolveCalls()).toHaveLength(0);
+        });
+    });
 
     it('a server-lane share is processed on this device at once and its server job dismissed (TICKET-248)', async () => {
         seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', remoteJobId: 'job-1',

@@ -44,6 +44,8 @@ import { mintImportMatchCorrection } from '@/lib/importResolution';
 import { deleteAppGroupFile, isBackgroundVideoCaptureAvailable, pickVideoForImport } from '@/modules/media-extract';
 import { maybeOfferNotifPrompt } from '@/lib/localNotify';
 import { importNoticeDetail } from '@/lib/importNotificationNavigation';
+import { AI_IMPORT_PROVIDER_LABEL, importNeedsAiConsent } from '@/lib/aiConsent';
+import { useAiImportConsent } from '@/hooks/imports/useAiImportConsent';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -100,6 +102,14 @@ export default function ImportProgressScreen() {
     // lead and the banner steps aside.
     const hasRows = active.length > 0 || recentBatches.length > 0 || exhausted.length > 0;
     const canCaptureVideo = isBackgroundVideoCaptureAvailable();
+    // TICKET-250: shared imports wait here until the user allows the model.
+    const aiConsent = useAiImportConsent(user?.id);
+    const heldForConsent = aiConsent.allowed === false && active.some(
+        (a) => a.manifest.status === 'pending' && importNeedsAiConsent(a.manifest),
+    );
+    const allowHeldImports = React.useCallback(async () => {
+        if (await aiConsent.request()) pokeImportQueue();
+    }, [aiConsent]);
 
     const toast = useToast();
     const activeUserRef = React.useRef(user?.id);
@@ -290,6 +300,23 @@ export default function ImportProgressScreen() {
                             showHubLink={false}
                             palette={palette}
                         />
+                    </View>
+                ) : null}
+
+                {heldForConsent ? (
+                    <View style={[styles.consentNote, { backgroundColor: palette.surfaceNote }]}>
+                        <Text style={[Type.body, { color: palette.text }]}>
+                            {`waiting for your OK to read these with ${AI_IMPORT_PROVIDER_LABEL}.`}
+                        </Text>
+                        <Pressable
+                            onPress={() => void allowHeldImports()}
+                            accessibilityRole="button"
+                            accessibilityLabel={`allow ${AI_IMPORT_PROVIDER_LABEL} to read these imports`}
+                            hitSlop={8}
+                            style={styles.consentAllow}
+                        >
+                            <Text style={[Type.label, { color: palette.primary }]}>allow</Text>
+                        </Pressable>
                     </View>
                 ) : null}
 
@@ -675,6 +702,18 @@ export default function ImportProgressScreen() {
 }
 
 const styles = StyleSheet.create({
+    consentNote: {
+        borderRadius: 16,
+        paddingHorizontal: Spacing.lg,
+        paddingVertical: Spacing.md,
+        marginBottom: Spacing.md,
+    },
+    consentAllow: {
+        alignSelf: 'flex-start',
+        minHeight: 44,
+        justifyContent: 'center',
+        marginTop: Spacing.xs,
+    },
     container: { flex: 1 },
     header: {
         flexDirection: 'row',

@@ -34,6 +34,8 @@ import {
 } from '@/hooks/users';
 import { ErrorState } from '@/components/ErrorState';
 import { resolveRequiredDataState } from '@/lib/screenLoadState';
+import { AI_IMPORT_PROVIDER_LABEL } from '@/lib/aiConsent';
+import { useAiImportConsent } from '@/hooks/imports/useAiImportConsent';
 
 export default function PrivacyScreen() {
     const scheme = useColorScheme() ?? 'light';
@@ -52,6 +54,8 @@ export default function PrivacyScreen() {
 
     const updatePrivacy = useUpdatePrivacy(user?.id);
     const updateReplyPermission = useUpdateReplyPermission(user?.id);
+    // TICKET-250: the grant from the import prompt, withdrawable here.
+    const aiConsent = useAiImportConsent(user?.id);
 
     // App is light-locked; ink hairline for pills (never for sectioning).
     const hairline = 'rgba(28,28,25,0.12)';
@@ -250,6 +254,48 @@ export default function PrivacyScreen() {
                             public profile only
                         </Text>
                     ) : null}
+                </View>
+
+                {/* Imports: may the model provider read what the user imports */}
+                <View style={styles.section}>
+                    <Text style={[styles.sectionLabel, { color: palette.textMuted }]}>
+                        IMPORTS
+                    </Text>
+                    <View style={styles.chipRow}>
+                        {([
+                            { allow: false, label: 'off' },
+                            { allow: true, label: `read by ${AI_IMPORT_PROVIDER_LABEL}` },
+                        ] as const).map(({ allow, label }) => {
+                            const isActive = aiConsent.allowed === allow;
+                            return (
+                                <Pressable
+                                    key={label}
+                                    disabled={aiConsent.allowed === undefined}
+                                    onPress={() => void aiConsent.setAllowed(allow)}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ selected: isActive }}
+                                    style={[
+                                        styles.chip,
+                                        isActive
+                                            ? { backgroundColor: palette.primary }
+                                            : { borderWidth: 1, borderColor: hairline },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.chipText,
+                                            { color: isActive ? palette.cream : palette.textSecondary },
+                                        ]}
+                                    >
+                                        {label}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+                    <Text style={[styles.sectionHint, { color: palette.textMuted }]}>
+                        {`${AI_IMPORT_PROVIDER_LABEL} reads the caption, on-screen text, speech or screenshot of each import to find the restaurants. google maps links never need it.`}
+                    </Text>
                 </View>
             </ScrollView>
         </View>
