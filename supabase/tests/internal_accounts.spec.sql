@@ -424,4 +424,44 @@ BEGIN
 END;
 $spec$;
 
+-- ── is_internal is not client-writable (TICKET-251 review) ───────────────────
+DO $spec$
+DECLARE
+    v_flag boolean;
+BEGIN
+    -- A signed-in real user tries to flag themselves through PostgREST's role.
+    PERFORM set_config('request.jwt.claims',
+        '{"sub": "25100000-0000-4000-8000-000000000003"}', true);
+    SET LOCAL ROLE authenticated;
+    UPDATE public.profiles SET is_internal = true
+     WHERE user_id = '25100000-0000-4000-8000-000000000003';
+    RESET ROLE;
+
+    SELECT is_internal INTO v_flag FROM public.profiles
+     WHERE user_id = '25100000-0000-4000-8000-000000000003';
+    ASSERT v_flag = false, 'FAIL: a client role must not be able to set its own is_internal';
+
+    -- An internal account cannot clear its own flag either.
+    PERFORM set_config('request.jwt.claims',
+        '{"sub": "25100000-0000-4000-8000-000000000001"}', true);
+    SET LOCAL ROLE authenticated;
+    UPDATE public.profiles SET is_internal = false
+     WHERE user_id = '25100000-0000-4000-8000-000000000001';
+    RESET ROLE;
+
+    SELECT is_internal INTO v_flag FROM public.profiles
+     WHERE user_id = '25100000-0000-4000-8000-000000000001';
+    ASSERT v_flag = true, 'FAIL: a client role must not be able to clear its own is_internal';
+
+    -- Migrations and service code still can.
+    UPDATE public.profiles SET is_internal = true
+     WHERE user_id = '25100000-0000-4000-8000-000000000003';
+    SELECT is_internal INTO v_flag FROM public.profiles
+     WHERE user_id = '25100000-0000-4000-8000-000000000003';
+    ASSERT v_flag = true, 'FAIL: the migration role must still set is_internal';
+
+    RAISE NOTICE 'PASS internal_accounts flag: not client-writable, migration-writable';
+END;
+$spec$;
+
 ROLLBACK;

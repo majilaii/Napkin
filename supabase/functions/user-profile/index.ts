@@ -57,6 +57,7 @@ import {
     computeRelationship,
     decideTasteAggregateAccess,
     fetchBlockState,
+    hidesInternalProfile,
     strangerCanReadPalate,
     type BlockState,
     type ViewerRelationship,
@@ -221,22 +222,32 @@ function notFound(): Response {
 async function resolveProfile(
     supabase: any,
     identifier: string,
+    viewerId: string,
 ): Promise<ProfileRow | null> {
     const isUuid = UUID_REGEX.test(identifier);
     const { data, error } = isUuid
         ? await supabase
             .from('profiles')
-            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies')
+            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies, is_internal')
             .eq('user_id', identifier)
             .maybeSingle()
         : await supabase
             .from('profiles')
-            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies')
+            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies, is_internal')
             .ilike('username', identifier)
             .maybeSingle();
 
     if (error) throw error;
-    return data ?? null;
+    if (!data) return null;
+    // TICKET-251: internal accounts read as not-found to real users on every
+    // profile surface (profile, diary, regulars, spots, reviews, taste).
+    const { is_internal: targetIsInternal, ...profile } = data as ProfileRow & { is_internal?: boolean };
+    if (targetIsInternal === true) {
+        const isSelf = profile.user_id === viewerId;
+        const viewerIsInternal = isSelf ? true : await isInternalViewer(supabase, viewerId);
+        if (hidesInternalProfile(true, isSelf, viewerIsInternal)) return null;
+    }
+    return profile as ProfileRow;
 }
 
 /**
@@ -1208,7 +1219,7 @@ serve(async (req) => {
             }
 
             // 1. Resolve target profile
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
 
             // If target doesn't exist, always return not_found (no existence leak)
             if (!targetProfile) return notFound();
@@ -1466,7 +1477,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -1513,7 +1524,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -1548,7 +1559,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -1664,7 +1675,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -1712,7 +1723,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
