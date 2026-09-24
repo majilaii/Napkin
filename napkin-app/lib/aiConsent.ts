@@ -33,6 +33,14 @@ export const AI_IMPORT_CONSENT_VERSION = 'import-v1:openai';
  */
 export const AI_CONSENT_PROMPT_SETTLE_MS = 450;
 
+/**
+ * After a consent alert is answered, nothing else may present a Modal for this
+ * long: a grant wakes the import queue, whose first pass can offer the
+ * notification sheet, and the sheet may be presenting the Photos picker. The
+ * queue checks aiConsentPromptRecentlyAnswered() before that offer.
+ */
+export const AI_CONSENT_QUIET_AFTER_PROMPT_MS = 2000;
+
 export const AI_CONSENT_PROMPT = {
     title: `Read imports with ${AI_IMPORT_PROVIDER_LABEL}?`,
     message:
@@ -50,6 +58,7 @@ const cache = new Map<string, boolean>();
 const listeners = new Set<() => void>();
 const declinedThisSession = new Set<string>();
 const inflight = new Map<string, Promise<ConsentAnswer>>();
+let lastPromptAnsweredAt = 0;
 
 export type ConsentAnswer = { granted: boolean; prompted: boolean };
 
@@ -134,6 +143,11 @@ export function subscribeAiImportConsent(fn: () => void): () => void {
     };
 }
 
+/** True while an answered consent alert may still be leaving the screen. */
+export function aiConsentPromptRecentlyAnswered(now: number = Date.now()): boolean {
+    return now - lastPromptAnsweredAt < AI_CONSENT_QUIET_AFTER_PROMPT_MS;
+}
+
 /** True once the user answered "Not now" to a prompt in this app session. */
 export function declinedAiImportConsentThisSession(userId: string): boolean {
     return declinedThisSession.has(userId);
@@ -166,6 +180,7 @@ export async function requestAiImportConsent(userId: string | null | undefined):
     if (pending) return pending;
     const ask = (async (): Promise<ConsentAnswer> => {
         const granted = await prompt();
+        lastPromptAnsweredAt = Date.now();
         if (granted) await setAiImportConsent(userId, true);
         else declinedThisSession.add(userId);
         return { granted, prompted: true };
@@ -184,4 +199,5 @@ export function __resetAiConsentForTests(): void {
     listeners.clear();
     declinedThisSession.clear();
     inflight.clear();
+    lastPromptAnsweredAt = 0;
 }

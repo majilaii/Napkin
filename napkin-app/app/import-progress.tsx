@@ -110,8 +110,9 @@ export default function ImportProgressScreen() {
             && a.manifest.sourcePreparation !== 'failed'
             && importNeedsAiConsent(a.manifest),
     );
+    // A grant wakes the root queue itself (consent subscription), after the alert.
     const allowHeldImports = React.useCallback(async () => {
-        if (await aiConsent.request()) pokeImportQueue();
+        await aiConsent.request();
     }, [aiConsent]);
 
     const toast = useToast();

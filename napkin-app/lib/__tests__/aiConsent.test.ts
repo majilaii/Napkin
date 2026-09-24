@@ -9,7 +9,9 @@ jest.mock('react-native', () => ({
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
     AI_CONSENT_PROMPT,
+    AI_CONSENT_QUIET_AFTER_PROMPT_MS,
     AI_IMPORT_CONSENT_VERSION,
+    aiConsentPromptRecentlyAnswered,
     __resetAiConsentForTests,
     declinedAiImportConsentThisSession,
     hasAiImportConsent,
@@ -117,6 +119,16 @@ describe('aiConsent', () => {
         await expect(hasAiImportConsent('user-a')).resolves.toBe(false);
         expect(await AsyncStorage.getItem('napkin.aiImportConsent.v1:user-a')).toBeNull();
         expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps other modals quiet for a moment after any answer', async () => {
+        expect(aiConsentPromptRecentlyAnswered()).toBe(false);
+        const pending = requestAiImportConsent('user-a');
+        await alerts(1);
+        press('Not now');
+        await pending;
+        expect(aiConsentPromptRecentlyAnswered()).toBe(true);
+        expect(aiConsentPromptRecentlyAnswered(Date.now() + AI_CONSENT_QUIET_AFTER_PROMPT_MS + 1)).toBe(false);
     });
 
     it('treats a withdrawal as Not now for the rest of the session', async () => {

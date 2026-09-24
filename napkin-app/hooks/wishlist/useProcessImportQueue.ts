@@ -45,6 +45,8 @@ import {
 } from '@/modules/media-extract';
 import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
 import {
+    AI_CONSENT_PROMPT_SETTLE_MS,
+    aiConsentPromptRecentlyAnswered,
     declinedAiImportConsentThisSession,
     hasAiImportConsent,
     importNeedsAiConsent,
@@ -1993,15 +1995,15 @@ export function useProcessImportQueue() {
                 heldImportNoticeShown.add(userId);
                 toast.show(
                     held.length === 1
-                        ? 'A shared import is waiting for your OK'
+                        ? 'a shared import is waiting for your OK'
                         : `${held.length} shared imports are waiting for your OK`,
                     {
                         label: 'Allow',
                         onPress: () => {
                             if (userId !== activeUserIdRef.current) return;
-                            void requestAiImportConsent(userId).then(({ granted }) => {
-                                if (granted) pokeImportQueue();
-                            });
+                            // A grant wakes the queue through the consent
+                            // subscription below, after the alert has left.
+                            void requestAiImportConsent(userId);
                         },
                     },
                     { title: 'Imports', icon: 'information-circle-outline' },
@@ -2013,7 +2015,15 @@ export function useProcessImportQueue() {
             // Gallery capture asks only after its native picker and tray close.
             // Even a very fast preparation event must not present a sibling
             // permission modal while that handoff is still dismissing.
-            if (runnable.some((m) => m.sourcePreparation === undefined) && AppState.currentState === 'active') {
+            // TICKET-250: never right after a consent alert. Its exit, or the
+            // Photos picker the sheet presents next, would collide with the
+            // notification sheet's Modal (the freeze class ImportLinkSheet
+            // documents). The next import's drain offers it instead.
+            if (
+                runnable.some((m) => m.sourcePreparation === undefined) &&
+                AppState.currentState === 'active' &&
+                !aiConsentPromptRecentlyAnswered()
+            ) {
                 maybeOfferNotifPrompt();
             }
             for (const m of runnable) {
@@ -2102,8 +2112,15 @@ export function useProcessImportQueue() {
         });
         const unsub = onImportEnqueued(() => drain());
         const unsubPrepared = onVideoImportPrepared(() => pokeImportQueue());
-        // A grant anywhere (sheet, progress hub, Settings) releases held imports.
-        const unsubConsent = subscribeAiImportConsent(() => pokeImportQueue());
+        // A grant anywhere (sheet, toast, progress hub, Settings) releases held
+        // imports, once the consent alert has finished leaving the screen.
+        const unsubConsent = subscribeAiImportConsent(() => {
+            const timer = setTimeout(() => {
+                retryTimersRef.current.delete(timer);
+                pokeImportQueue();
+            }, AI_CONSENT_PROMPT_SETTLE_MS);
+            retryTimersRef.current.add(timer);
+        });
         const retryTimers = retryTimersRef.current;
         return () => {
             sub.remove();

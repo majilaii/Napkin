@@ -24,7 +24,9 @@ let mockPreparedListener: ((event: { jobId: string }) => void) | undefined;
 // TICKET-250: most tests model a user who already allowed AI imports.
 let mockAiConsent = true;
 let mockAiDeclined = false;
+let mockAiRecentlyAnswered = false;
 const mockRequestAiConsent = jest.fn();
+const mockConsentListeners = new Set<() => void>();
 
 jest.mock('react-native', () => ({ get AppState() { return mockAppState; }, Platform: { OS: 'ios' } }));
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
@@ -46,10 +48,15 @@ jest.mock('@/lib/edgeInvoke', () => ({
 }));
 jest.mock('@/lib/aiConsent', () => ({
     ...jest.requireActual('@/lib/aiConsent'),
+    AI_CONSENT_PROMPT_SETTLE_MS: 0,
+    aiConsentPromptRecentlyAnswered: () => mockAiRecentlyAnswered,
     hasAiImportConsent: async () => mockAiConsent,
     declinedAiImportConsentThisSession: () => mockAiDeclined,
     requestAiImportConsent: (...args: unknown[]) => mockRequestAiConsent(...args),
-    subscribeAiImportConsent: () => () => {},
+    subscribeAiImportConsent: (fn: () => void) => {
+        mockConsentListeners.add(fn);
+        return () => { mockConsentListeners.delete(fn); };
+    },
 }));
 jest.mock('@/lib/localNotify', () => ({
     presentImportNotification: (...args: unknown[]) => mockLocalNotification(...args),
@@ -110,6 +117,7 @@ describe('root import queue gallery integration', () => {
         mockIntakeAvailable = false;
         mockAiConsent = true;
         mockAiDeclined = false;
+        mockAiRecentlyAnswered = false;
         __resetHeldImportNoticeForTests();
         mockToast.mockReset();
         mockRequestAiConsent.mockReset().mockResolvedValue({ granted: true, prompted: true });
@@ -183,8 +191,13 @@ describe('root import queue gallery integration', () => {
             expect(heldToasts()).toHaveLength(1);
 
             const [, action] = heldToasts()[0];
+            mockOfferNotifications.mockClear();
             mockRequestAiConsent.mockImplementation(async () => {
+                // What lib/aiConsent does on Allow: store it, mark the alert as
+                // just answered, and notify subscribers.
                 mockAiConsent = true;
+                mockAiRecentlyAnswered = true;
+                mockConsentListeners.forEach((fn) => fn());
                 return { granted: true, prompted: true };
             });
             await act(async () => { action.onPress(); });
@@ -192,6 +205,8 @@ describe('root import queue gallery integration', () => {
             expect(mockRequestAiConsent).toHaveBeenCalledWith('user-1');
             expect(resolveCalls().length).toBeGreaterThan(0);
             expect(getImport('job-1')).toMatchObject({ mode: 'review' });
+            // The notification sheet must not present while the alert leaves.
+            expect(mockOfferNotifications).not.toHaveBeenCalled();
         });
 
         it('keeps the import pending after Not now and offers the toast once per session', async () => {
