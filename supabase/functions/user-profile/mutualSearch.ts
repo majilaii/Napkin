@@ -61,22 +61,32 @@ async function fetchFollowGraph(
     };
 }
 
+export interface MutualSearchOptions {
+    /**
+     * TICKET-251: drop internal (CI smoke / test) accounts. True for every
+     * non-internal viewer; internal viewers keep seeing each other.
+     */
+    hideInternal?: boolean;
+}
+
 async function searchMutualProfileRows(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     supabase: any,
     pattern: string,
     mutualIds: string[],
+    hideInternal: boolean,
 ): Promise<MutualSearchProfile[]> {
     if (mutualIds.length === 0) return [];
 
     const matches: MutualSearchProfile[] = [];
     for (const idChunk of chunks(mutualIds, IN_CHUNK_SIZE)) {
-        const { data, error } = await supabase
+        let query = supabase
             .from('profiles')
             .select('user_id, display_name, avatar_url, created_at')
             .ilike('display_name', pattern)
-            .in('user_id', idChunk)
-            .order('display_name', { ascending: true });
+            .in('user_id', idChunk);
+        if (hideInternal) query = query.eq('is_internal', false);
+        const { data, error } = await query.order('display_name', { ascending: true });
         if (error) throw error;
         matches.push(...((data ?? []) as MutualSearchProfile[]));
     }
@@ -103,9 +113,11 @@ export async function searchProfilesWithMutualBackfill(
     viewerId: string,
     pattern: string,
     maxResults: number,
+    options: MutualSearchOptions = {},
 ): Promise<MutualSearchResult[]> {
+    const hideInternal = options.hideInternal === true;
     const graph = await fetchFollowGraph(supabase, viewerId);
-    const mutualRows = await searchMutualProfileRows(supabase, pattern, graph.mutualIds);
+    const mutualRows = await searchMutualProfileRows(supabase, pattern, graph.mutualIds, hideInternal);
     const mutualResults = mutualRows.map((row) => ({
         user_id: row.user_id,
         display_name: row.display_name,
@@ -122,11 +134,13 @@ export async function searchProfilesWithMutualBackfill(
         .filter((userId) => !graph.followers.has(userId));
     const followedMatches: MutualSearchProfile[] = [];
     for (const idChunk of chunks(followedOnlyIds, IN_CHUNK_SIZE)) {
-        const { data, error } = await supabase
+        let followedQuery = supabase
             .from('profiles')
             .select('user_id, display_name, avatar_url, created_at')
             .ilike('display_name', pattern)
-            .in('user_id', idChunk)
+            .in('user_id', idChunk);
+        if (hideInternal) followedQuery = followedQuery.eq('is_internal', false);
+        const { data, error } = await followedQuery
             .order('created_at', { ascending: false })
             .order('display_name', { ascending: true })
             .limit(backfillLimit);
@@ -154,6 +168,7 @@ export async function searchProfilesWithMutualBackfill(
         .select('user_id, display_name, avatar_url, created_at')
         .ilike('display_name', pattern)
         .neq('user_id', viewerId);
+    if (hideInternal) strangerQuery = strangerQuery.eq('is_internal', false);
     const excludedIds = [...new Set([...graph.mutualIds, ...graph.following])];
     for (const idChunk of chunks(excludedIds, IN_CHUNK_SIZE)) {
         strangerQuery = strangerQuery.not('user_id', 'in', `(${idChunk.join(',')})`);

@@ -17,6 +17,7 @@ import {
     strangerCanReadPalate,
     type BlockState,
     type ViewerRelationship,
+    hidesInternalProfile,
 } from './gates.ts';
 
 const VIEWER = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -161,4 +162,15 @@ Deno.test('fetchBlockState: query error throws (fail closed, no silent allow)', 
     await assertRejects(() =>
         fetchBlockState(fakeClient(null, new Error('boom')), VIEWER, TARGET),
     );
+});
+
+Deno.test('hidesInternalProfile: internal profiles read as not-found to real users only (TICKET-251)', () => {
+    // A real user never reaches a smoke / test account by username or id.
+    assertEquals(hidesInternalProfile(true, false, false), true);
+    // The account itself and other internal accounts keep reading it (smoke).
+    assertEquals(hidesInternalProfile(true, true, false), false);
+    assertEquals(hidesInternalProfile(true, false, true), false);
+    // Real profiles are never affected.
+    assertEquals(hidesInternalProfile(false, false, false), false);
+    assertEquals(hidesInternalProfile(false, false, true), false);
 });

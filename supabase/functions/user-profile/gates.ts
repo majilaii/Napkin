@@ -183,3 +183,17 @@ export function buildPrivateProfileStub<P>(
         private_stub: true,
     };
 }
+
+/**
+ * TICKET-251: an internal (CI smoke / test) profile reads as not-found to
+ * anyone but itself and other internal accounts. Search already hides these
+ * accounts; this closes direct navigation by username or id, which otherwise
+ * served their profile, diary and reviews to real users.
+ */
+export function hidesInternalProfile(
+    targetIsInternal: boolean,
+    isSelf: boolean,
+    viewerIsInternal: boolean,
+): boolean {
+    return targetIsInternal && !isSelf && !viewerIsInternal;
+}

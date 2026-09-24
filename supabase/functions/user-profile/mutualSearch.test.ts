@@ -20,12 +20,14 @@ function fakeSearchClient(rowsByTable: Record<string, Row[]>) {
                         let inValues: string[] = [];
                         let excludedUserId: string | null = null;
                         const notInValues = new Set<string>();
+                        const eqFilters: Array<[string, unknown]> = [];
                         const orders: Array<{ column: string; ascending: boolean }> = [];
                         const resolveRows = (limit?: number) => {
                             const rows = (rowsByTable[table] ?? [])
                                 .filter((row) => !excludedUserId || row.user_id !== excludedUserId)
                                 .filter((row) => inValues.length === 0 || inValues.includes(String(row.user_id)))
                                 .filter((row) => !notInValues.has(String(row.user_id)))
+                                .filter((row) => eqFilters.every(([column, value]) => row[column] === value))
                                 .filter((row) =>
                                     String(row.display_name).toLocaleLowerCase().includes(pattern)
                                 )
@@ -45,7 +47,14 @@ function fakeSearchClient(rowsByTable: Record<string, Row[]>) {
                             };
                         };
                         const builder = {
-                            eq(column: string, value: string) {
+                            eq(column: string, value: unknown) {
+                                // follows reads terminate the chain; on any other
+                                // table eq is a chainable filter (TICKET-251
+                                // is_internal = false on profiles).
+                                if (table !== 'follows') {
+                                    eqFilters.push([column, value]);
+                                    return builder;
+                                }
                                 followReads += 1;
                                 return Promise.resolve({
                                     data: (rowsByTable[table] ?? []).filter((row) => row[column] === value),
@@ -157,4 +166,53 @@ Deno.test('mutual-only search prioritizes followed non-mutuals before stranger b
     });
     assertEquals(fake.followReads, 2);
     assertEquals(fake.profileInValues, [[mutualId], ['followed-last']]);
+});
+
+Deno.test('mutual-only search hides internal accounts from non-internal viewers only (TICKET-251)', async () => {
+    const viewerId = 'viewer';
+    const profiles = [
+        {
+            user_id: 'real-stranger',
+            display_name: 'Smoke Real',
+            avatar_url: null,
+            created_at: '2026-01-02T00:00:00Z',
+            is_internal: false,
+        },
+        {
+            user_id: 'internal-stranger',
+            display_name: 'Smoke Internal',
+            avatar_url: null,
+            created_at: '2026-01-03T00:00:00Z',
+            is_internal: true,
+        },
+        {
+            user_id: 'internal-followed',
+            display_name: 'Smoke Followed Internal',
+            avatar_url: null,
+            created_at: '2026-01-01T00:00:00Z',
+            is_internal: true,
+        },
+    ];
+    const follows = [{ follower_id: viewerId, following_id: 'internal-followed' }];
+
+    // A real viewer: every internal account drops out, followed or not.
+    const hidden = await searchProfilesWithMutualBackfill(
+        fakeSearchClient({ follows, profiles }).client,
+        viewerId,
+        '%Smoke%',
+        20,
+        { hideInternal: true },
+    );
+    assertEquals(hidden.map((row) => row.user_id), ['real-stranger']);
+
+    // An internal viewer keeps the full contract: followed first, then
+    // strangers newest first.
+    const shown = await searchProfilesWithMutualBackfill(
+        fakeSearchClient({ follows, profiles }).client,
+        viewerId,
+        '%Smoke%',
+        20,
+        { hideInternal: false },
+    );
+    assertEquals(shown.map((row) => row.user_id), ['internal-followed', 'internal-stranger', 'real-stranger']);
 });

@@ -1,5 +1,12 @@
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { createSupabaseDeletionAdapter } from "./deletionSupabase.ts";
+import {
+  assertEquals,
+  assertRejects,
+} from "https://deno.land/std@0.224.0/assert/mod.ts";
+import {
+  createSupabaseDeletionAdapter,
+  listAllStoragePaths,
+} from "./deletionSupabase.ts";
+import { allPerUserScopes } from "./deletionSaga.ts";
 
 const UID = "11111111-1111-4111-8111-111111111111";
 
@@ -128,4 +135,72 @@ Deno.test("account deletion drains fenced nonterminal registry paths before inve
     { bucket: "avatars", paths: [`approved/${UID}/a.jpg`] },
     { bucket: "entry-photos", paths: [`approved/${UID}/b.jpg`] },
   ]);
+});
+
+Deno.test("account inventory lists import screenshots through the allowlisted scope and removes them", async () => {
+  const listed: Array<Record<string, unknown>> = [];
+  const removed: Array<{ bucket: string; paths: string[] }> = [];
+  const screenshots = [
+    `${UID}/1727000000000-abc123.jpg`,
+    `${UID}/1727000000001-def456.jpg`,
+  ];
+  const supabase = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      assertEquals(name, "fn_list_account_storage_paths");
+      listed.push(args);
+      return {
+        data: {
+          paths: args.p_bucket === "import-uploads" ? screenshots : [],
+          next_cursor: null,
+        },
+        error: null,
+      };
+    },
+    from: (_table: string) => ({
+      select: () => ({
+        eq: async () => ({ data: [], error: null }),
+      }),
+    }),
+    storage: {
+      from: (bucket: string) => ({
+        remove: async (paths: string[]) => {
+          removed.push({ bucket, paths });
+          return { error: null };
+        },
+      }),
+    },
+  };
+
+  const adapter = createSupabaseDeletionAdapter(supabase, UID);
+  const inventory = await adapter.buildInventory(allPerUserScopes(UID));
+
+  // The catalog is asked for the user's own import-uploads prefix, exactly.
+  assertEquals(
+    listed.filter((args) => args.p_bucket === "import-uploads").map((args) => args.p_prefix),
+    [UID],
+  );
+  assertEquals(
+    inventory.storage.filter((object) => object.bucket === "import-uploads"),
+    screenshots.map((path) => ({ bucket: "import-uploads", path })),
+  );
+
+  await adapter.removeStorageObjects(inventory.storage);
+  assertEquals(removed, [{ bucket: "import-uploads", paths: screenshots }]);
+});
+
+Deno.test("account inventory rejects an import screenshot path outside the user's own prefix", async () => {
+  const supabase = {
+    rpc: async () => ({
+      data: {
+        paths: ["22222222-2222-4222-8222-222222222222/1727000000000-zzz999.jpg"],
+        next_cursor: null,
+      },
+      error: null,
+    }),
+  };
+  await assertRejects(
+    () => listAllStoragePaths(supabase, UID, { bucket: "import-uploads", prefix: UID }),
+    Error,
+    "storage catalog returned an invalid import-uploads path",
+  );
 });

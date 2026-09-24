@@ -57,6 +57,7 @@ import {
     computeRelationship,
     decideTasteAggregateAccess,
     fetchBlockState,
+    hidesInternalProfile,
     strangerCanReadPalate,
     type BlockState,
     type ViewerRelationship,
@@ -221,22 +222,46 @@ function notFound(): Response {
 async function resolveProfile(
     supabase: any,
     identifier: string,
+    viewerId: string,
 ): Promise<ProfileRow | null> {
     const isUuid = UUID_REGEX.test(identifier);
     const { data, error } = isUuid
         ? await supabase
             .from('profiles')
-            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies')
+            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies, is_internal')
             .eq('user_id', identifier)
             .maybeSingle()
         : await supabase
             .from('profiles')
-            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies')
+            .select('user_id, username, display_name, bio, avatar_url, home_city, account_privacy, allow_public_replies, is_internal')
             .ilike('username', identifier)
             .maybeSingle();
 
     if (error) throw error;
-    return data ?? null;
+    if (!data) return null;
+    // TICKET-251: internal accounts read as not-found to real users on every
+    // profile surface (profile, diary, regulars, spots, reviews, taste).
+    const { is_internal: targetIsInternal, ...profile } = data as ProfileRow & { is_internal?: boolean };
+    if (targetIsInternal === true) {
+        const isSelf = profile.user_id === viewerId;
+        const viewerIsInternal = isSelf ? true : await isInternalViewer(supabase, viewerId);
+        if (hidesInternalProfile(true, isSelf, viewerIsInternal)) return null;
+    }
+    return profile as ProfileRow;
+}
+
+/**
+ * TICKET-251: internal (CI smoke / test) accounts are hidden from people
+ * search unless the viewer is internal too. Read once per search request.
+ */
+async function isInternalViewer(supabase: any, userId: string): Promise<boolean> {
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('is_internal')
+        .eq('user_id', userId)
+        .maybeSingle();
+    if (error) throw error;
+    return data?.is_internal === true;
 }
 
 /**
@@ -1194,7 +1219,7 @@ serve(async (req) => {
             }
 
             // 1. Resolve target profile
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
 
             // If target doesn't exist, always return not_found (no existence leak)
             if (!targetProfile) return notFound();
@@ -1452,7 +1477,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -1499,7 +1524,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -1534,7 +1559,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -1650,7 +1675,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -1698,7 +1723,7 @@ serve(async (req) => {
                 return fail('identifier is required', 400);
             }
 
-            const targetProfile = await resolveProfile(supabase, identifier);
+            const targetProfile = await resolveProfile(supabase, identifier, user.id);
             if (!targetProfile) return notFound();
 
             const callerId = user.id;
@@ -2043,6 +2068,9 @@ serve(async (req) => {
 
             const maxResults = Math.min(Math.max(rawLimit ?? 20, 1), 20);
             const pattern = `%${q.trim()}%`;
+            // TICKET-251: internal (smoke / test) accounts never surface to
+            // real users; internal viewers keep seeing each other.
+            const hideInternal = !(await isInternalViewer(supabase, user.id));
 
             if (mutualOnly) {
                 const rows = await searchProfilesWithMutualBackfill(
@@ -2050,16 +2078,18 @@ serve(async (req) => {
                     user.id,
                     pattern,
                     maxResults,
+                    { hideInternal },
                 );
                 return json({ data: rows });
             }
 
-            const { data: results, error: searchErr } = await supabase
+            let searchQuery = supabase
                 .from('profiles')
                 .select('user_id, display_name, avatar_url, created_at')
                 .ilike('display_name', pattern)
-                .neq('user_id', user.id)
-                .limit(maxResults);
+                .neq('user_id', user.id);
+            if (hideInternal) searchQuery = searchQuery.eq('is_internal', false);
+            const { data: results, error: searchErr } = await searchQuery.limit(maxResults);
 
             if (searchErr) throw searchErr;
 

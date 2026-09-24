@@ -83,6 +83,13 @@ export function allPerUserScopes(userId: string): StorageScope[] {
     { bucket: "avatars", prefix: userId },
     { bucket: "entry-photos", prefix: `approved/${userId}` },
     { bucket: "entry-photos", prefix: userId },
+    // Import screenshots (napkin-app/lib/imageDownscale.ts uploads to
+    // import-uploads/<user_id>/<timestamp>-<rand>.jpg). They never enter the
+    // image lifecycle registry, so this prefix is the only way they are
+    // inventoried, removed and stable-zero gated. fn_list_account_storage_paths
+    // allowlists the bucket (20260924130000); without that, every deletion
+    // would raise invalid_account_storage_scope here.
+    { bucket: "import-uploads", prefix: userId },
   ];
 }
 

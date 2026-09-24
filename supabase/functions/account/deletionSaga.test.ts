@@ -10,6 +10,7 @@ import {
   type DeletionAdapter,
   type DeletionInventory,
   scopesAreStableZero,
+  writerScopes,
 } from "./deletionSaga.ts";
 
 const UID = "11111111-1111-4111-8111-111111111111";
@@ -100,6 +101,49 @@ Deno.test("account deletion saga", async (t) => {
         call.startsWith("list:")
       );
       assertEquals(between.length, expectedScopes.length * 2);
+    },
+  );
+
+  await t.step(
+    "import screenshots are a post-inventory scope: inventoried, removed, stable-zero gated, never a writer scope",
+    async () => {
+      const importScope = { bucket: "import-uploads", prefix: UID };
+      assertEquals(
+        writerScopes(UID).some((scope) => scope.bucket === "import-uploads"),
+        false,
+      );
+      assertEquals(
+        allPerUserScopes(UID).filter((scope) => scope.bucket === "import-uploads"),
+        [importScope],
+      );
+
+      const { adapter, calls, inventory } = fixtureAdapter();
+      const screenshot = {
+        bucket: "import-uploads",
+        path: `${UID}/1727000000000-abc123.jpg`,
+      };
+      inventory.storage.push(screenshot);
+      const removed: Array<{ bucket: string; path: string }> = [];
+      const baseRemove = adapter.removeStorageObjects;
+      adapter.removeStorageObjects = async (objects) => {
+        removed.push(...objects);
+        await baseRemove(objects);
+      };
+
+      const result = await advanceAccountDeletion(row(), adapter);
+      assertEquals(result, { deleted: true, pending: false, state: "done" });
+      assertEquals(removed.includes(screenshot), true);
+
+      const listCall = `list:${importScope.bucket}:${importScope.prefix}`;
+      const inventoryIndex = calls.indexOf("inventory");
+      const remove = calls.indexOf("remove-storage");
+      const auth = calls.indexOf("delete-auth");
+      // Never part of the pre-inventory writer drain.
+      assertEquals(calls.slice(0, inventoryIndex).includes(listCall), false);
+      // Both all-prefix stable-zero passes list it, after purge and before Auth.
+      assertEquals(calls.filter((call) => call === listCall).length, 2);
+      assertEquals(calls.indexOf(listCall) > remove, true);
+      assertEquals(calls.lastIndexOf(listCall) < auth, true);
     },
   );
 

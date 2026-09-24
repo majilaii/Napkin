@@ -27,9 +27,10 @@
  *       secrets rot; password sign-in gives CI a fresh token every run).
  * Optional env:
  *   SMOKE_TEST_ENTRY_ID       — overrides the runtime-discovered entry id for
- *       the post-interactions check (must be a public-eligible entry of the
- *       smoke user). Unset in CI — TICKET-121 self-discovers from the smoke
- *       user's reviews instead.
+ *       the post-interactions check (must be a public-eligible entry by a
+ *       NON-internal author at SMOKE_TEST_RESTAURANT_ID; TICKET-251 made the
+ *       smoke account internal, so its own reviews never qualify). Unset in
+ *       CI: the suite self-discovers one from the restaurant's public reviews.
  *   PLACES_SMOKE=1            — enables the places-search check (REAL Google
  *       Places cost). Set only by prod-deploy.yml's smoke step, never by the
  *       scheduled smoke.
@@ -72,10 +73,12 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
 const RESTAURANT_ID = Deno.env.get('SMOKE_TEST_RESTAURANT_ID');
 // Optional OVERRIDE for the post-interactions read-path guard (TICKET-121):
-// must be a public-eligible entry of the smoke user. Unset in CI — the guard
-// self-discovers a fixture entry from the smoke user's reviews at runtime,
-// so the check always runs (it was inert for weeks when it depended on this
-// env being seeded).
+// must be a public-eligible entry by a NON-internal author at
+// SMOKE_TEST_RESTAURANT_ID (TICKET-251: the smoke account is internal, so its
+// own reviews are never publicly eligible). Unset in CI: the guard
+// self-discovers one from the restaurant's public reviews at runtime, so the
+// check always runs (it was inert for weeks when it depended on this env
+// being seeded).
 const ENTRY_ID = Deno.env.get('SMOKE_TEST_ENTRY_ID');
 const IMAGE_MODERATION_CANARY = Deno.env.get('IMAGE_MODERATION_CANARY') === '1';
 const MODERATION_CRON_TOKEN = Deno.env.get('MODERATION_CRON_TOKEN');
@@ -1106,28 +1109,39 @@ async function discoveryPost(fn: string, body: unknown): Promise<unknown> {
 // post-interactions read-path guard. This endpoint backs every reaction/comment
 // container on entries. It was NOT in the smoke list when the table-scope
 // entry react/comment fire was investigated (2026-06-15); per CLAUDE.md deploy
-// doctrine it was added — but stayed INERT because SMOKE_TEST_ENTRY_ID was
-// never set in CI. TICKET-121 activates it: self-discover a review-bearing
-// entry from the smoke user's own reviews. The ensure-fixtures entries are
-// feed-only + rated + note ≥ 20 chars — exactly the is_entry_publicly_eligible
-// predicate (smoke profile is public-default), so scope=public is the correct
-// read: scope=table resolves via entry_tables / entries.table_id, which a
-// feed-only entry doesn't have → 404, not 200.
+// doctrine it was added, but stayed INERT because SMOKE_TEST_ENTRY_ID was
+// never set in CI. TICKET-121 activated it by self-discovering one of the
+// smoke user's own reviews. TICKET-251 made the smoke account INTERNAL
+// (profiles.is_internal): its reviews are never publicly eligible any more, so
+// scope=public would 403 on them. The guard now discovers a public review by a
+// NON-internal author at SMOKE_TEST_RESTAURANT_ID through the restaurant page's
+// own reviews read (get_public_reviews_page applies is_entry_publicly_eligible,
+// so it can only return eligible, non-internal rows). On prod the current App
+// Review demo pair's reviews at the smoke restaurant satisfy this; an empty
+// page is a loud failure, never a skip. scope=public is the correct read:
+// scope=table resolves via entry_tables / entries.table_id, which a feed-only
+// entry doesn't have → 404, not 200.
 try {
     let entryId = ENTRY_ID ?? null;
     if (!entryId) {
-        const json = await discoveryPost('user-profile', {
-            action: 'reviews',
-            identifier: SMOKE_USER_ID,
-            limit: 10,
-        }) as { data?: { rows?: Array<{ entry_id?: string; note?: string }> } };
+        const json = await discoveryPost(
+            `restaurant-history?action=reviews&restaurant_id=${RESTAURANT_ID}`,
+            { restaurant_id: RESTAURANT_ID, limit: 10 },
+        ) as { data?: { rows?: Array<{ entry_id?: string; user_id?: string }> } };
         const rows = json?.data?.rows ?? [];
-        // Prefer the ensure-fixtures entries — guaranteed public-eligible.
-        const fixture = rows.find((r) => typeof r.note === 'string' && r.note.includes('Smoke fixture'));
-        entryId = fixture?.entry_id ?? rows[0]?.entry_id ?? null;
+        // Belt and braces: never the smoke user's own row, even if the
+        // eligibility predicate ever regressed.
+        const candidate = rows.find((r) =>
+            typeof r.entry_id === 'string' && r.user_id !== SMOKE_USER_ID
+        );
+        entryId = candidate?.entry_id ?? null;
     }
     if (!entryId) {
-        throw new Error('no review-bearing entry found — run scripts/smoke/ensure-fixtures.ts first');
+        throw new Error(
+            'no public review by a non-internal author at SMOKE_TEST_RESTAURANT_ID: the scope=public ' +
+                'post-interactions guard needs one (TICKET-251 made the smoke account internal, so its ' +
+                'own reviews no longer qualify)',
+        );
     }
     CHECKS.push({
         name: 'post-interactions GET target_type=entry scope=public (react/comment fire 2026-06-15; activated TICKET-121)',
