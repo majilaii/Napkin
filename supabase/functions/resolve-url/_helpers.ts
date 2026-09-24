@@ -9,6 +9,11 @@
 
 import { ExtractionError, isExtractionAbort } from '../_shared/importModel.ts';
 
+/** Google Maps links resolve without the model; every other link can reach it. */
+export function urlReachesImportModel(sourceType: string): boolean {
+  return sourceType !== 'google_maps' && sourceType !== 'instagram';
+}
+
 export function extractionFailureDecision(error: unknown): { code: string; message: string; status: number } | null {
   if (error instanceof ExtractionError) {
     return { code: error.code, message: error.message, status: error.code === 'EXTRACTION_NOT_CONFIGURED' ? 503 : 502 };

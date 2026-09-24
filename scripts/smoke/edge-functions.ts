@@ -34,6 +34,9 @@
  *   PLACES_SMOKE=1            — enables the places-search check (REAL Google
  *       Places cost). Set only by prod-deploy.yml's smoke step, never by the
  *       scheduled smoke.
+ *   EXTRACTION_SMOKE=1        : enables one real import-model call through
+ *       resolve-url (a few US cents). Set only by prod-deploy.yml's smoke step,
+ *       never by the scheduled smoke.
  *   IMAGE_MODERATION_CANARY=1 — enables the post-canonical, dedupe-proof
  *       Google Vision provider canary. Kept dark until the dedicated Vision
  *       credential is provisioned.
@@ -200,6 +203,36 @@ const CHECKS: Check[] = [
             (json as { error?: { code?: string } }).error?.code === 'INVALID_BODY'
                 ? null
                 : 'expected INVALID_BODY',
+    },
+    // Guideline 5.1.2(i): a model-bound import without consent to the server's
+    // provider is refused (426) before the rate limit, any storage read or any
+    // model call, so these cost nothing. Builds 263 to 266 send no version or
+    // an OpenAI one; if the guard ever falls away, they would reach the model.
+    {
+        name: 'resolve-url video text without AI consent → 426 (no model call)',
+        method: 'POST',
+        fn: 'resolve-url',
+        body: { extracted_text: 'consent guard check' },
+        expectedStatus: 426,
+        shape: (json) =>
+            (json as { error?: { code?: string } }).error?.code === 'AI_CONSENT_OUTDATED'
+                ? null
+                : 'expected AI_CONSENT_OUTDATED',
+    },
+    {
+        name: 'table-shares create_import screenshot without AI consent → 426 (no upload read, no model call)',
+        method: 'POST',
+        fn: 'table-shares',
+        body: {
+            action: 'create_import',
+            image_path: 'smoke-consent-guard/none.jpg',
+            destinations: { wishlist: true, table_ids: [] },
+        },
+        expectedStatus: 426,
+        shape: (json) =>
+            (json as { error?: { code?: string } }).error?.code === 'AI_CONSENT_OUTDATED'
+                ? null
+                : 'expected AI_CONSENT_OUTDATED',
     },
     {
         name: 'restaurant-history?action=page (the one that 500d on 2026-04-30)',
@@ -1028,6 +1061,37 @@ if (Deno.env.get('PLACES_SMOKE') === '1') {
                     return 'fartherAfield is not an optional boolean';
                 }
             }
+            return null;
+        },
+    });
+}
+
+// The import model is the only paid dependency no read check reaches: when the
+// provider rejects the request (a retired model name, a parameter the model no
+// longer takes), every import fails while everything above stays green. One
+// real call per deploy, never on the scheduled smoke. The text names no place,
+// so the answer is normally empty: no Places lookup and no cache row. The
+// per-run marker changes the extraction cache key, so even a run where the
+// model named a place (and that answer was cached) cannot let the next deploy
+// skip the provider. Any 502/503 (provider error, timeout, missing key) fails
+// the check.
+if (Deno.env.get('EXTRACTION_SMOKE') === '1') {
+    const run = crypto.randomUUID().slice(0, 8);
+    CHECKS.push({
+        name: 'resolve-url video text → real import model call (EXTRACTION_SMOKE=1, deploy-time only)',
+        method: 'POST',
+        fn: 'resolve-url',
+        body: {
+            caption: 'my morning routine',
+            extracted_text: `Stretching at home before work. Ten minutes, then a glass of water. (check ${run})`,
+            // The app's consent version (napkin-app/lib/aiConsent.ts); resolve-url
+            // refuses model work without one naming its provider. Pinned equal by
+            // napkin-app/lib/__tests__/aiConsentProviderParity.test.ts.
+            ai_consent_version: 'import-v2:anthropic',
+        },
+        shape: (json) => {
+            const data = (json as { data?: { candidates?: unknown } }).data;
+            if (!data || !Array.isArray(data.candidates)) return 'data.candidates is not an array';
             return null;
         },
     });

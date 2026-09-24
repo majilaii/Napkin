@@ -27,10 +27,10 @@ test('caption-only Instagram retains caption authority and the empty-result nudg
     const { result } = renderHook(useResolveUrl);
     await act(async () => { await result.current.resolve('https://www.instagram.com/reel/example/'); });
     expect(callEdgeFn).toHaveBeenNthCalledWith(1, 'resolve-url', expect.objectContaining({
-        body: { url: undefined, caption: 'Dinner at Lotta in Paris' },
+        body: { url: undefined, caption: 'Dinner at Lotta in Paris', ai_consent_version: 'import-v2:anthropic' },
     }));
     expect(callEdgeFn).toHaveBeenNthCalledWith(2, 'resolve-url', expect.objectContaining({
-        body: { url: 'https://www.instagram.com/reel/example/' },
+        body: { url: 'https://www.instagram.com/reel/example/', ai_consent_version: 'import-v2:anthropic' },
     }));
     expect(result.current.data?.ig_nudge).toBe(true);
 });
@@ -42,7 +42,7 @@ test('unreadable TikTok delegates to the existing URL recovery route', async () 
     await act(async () => { await result.current.resolve('https://vm.tiktok.com/ZN8YtVoyD/'); });
     expect(callEdgeFn).toHaveBeenCalledTimes(1);
     expect(callEdgeFn).toHaveBeenCalledWith('resolve-url', expect.objectContaining({
-        body: { url: 'https://vm.tiktok.com/ZN8YtVoyD/' },
+        body: { url: 'https://vm.tiktok.com/ZN8YtVoyD/', ai_consent_version: 'import-v2:anthropic' },
     }));
     expect(result.current.state).toBe('success');
 });

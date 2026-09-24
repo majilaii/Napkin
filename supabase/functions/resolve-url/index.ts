@@ -60,7 +60,13 @@ import {
   type PhotoExtractionContext,
   validPhotoSlideCount,
 } from "../_shared/visionExtract.ts";
-import { getExtractionModel, extractionCacheContract, isCurrentExtractionCache } from "../_shared/importModel.ts";
+import {
+  aiConsentRefused,
+  EXTRACTION_TIMEOUT_MS,
+  extractionCacheContract,
+  getExtractionModel,
+  isCurrentExtractionCache,
+} from "../_shared/importModel.ts";
 import {
   HASH_VERSION,
   hashImage,
@@ -129,6 +135,15 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 function extractionFailureResponse(error: unknown): Response | null {
   const failure = extractionFailureDecision(error);
   return failure ? errorResponse(failure.code, failure.message, failure.status) : null;
+}
+
+// Same 426 as the legacy save floor: the fix is always a newer build.
+function aiConsentOutdatedResponse(): Response {
+  return errorResponse(
+    "AI_CONSENT_OUTDATED",
+    "Please update Napkin before importing this",
+    426,
+  );
 }
 
 // ── Deadline helper (ARCH-REVIEW-2 #6) ───────────────────────────────────────
@@ -705,6 +720,7 @@ import {
   exhaustedInlineRoute,
   extractionFailureDecision,
   extractOptionalVision,
+  urlReachesImportModel,
   expectedImportOwnerDecision,
   filterUnauthorizedTableIds,
   type ImportPlaceSearchResult,
@@ -2999,7 +3015,9 @@ async function handleUrlResolve(
   // falling back to a raw 3-place caption search — the founder's "3 random
   // spots" runs. This path also serves the background import queue, where
   // wall time is invisible; the interactive sheet shows a spinner.
-  const deadline = new Deadline(12000);
+  // Opus 5.5 (2026-09-24): 12s → 45s so its slower text and image stages
+  // finish; each stage below keeps its own ceiling inside this one.
+  const deadline = new Deadline(45000);
 
   let query: string | null = null;
   let notePrefill = "";
@@ -3131,7 +3149,7 @@ async function handleUrlResolve(
     // Let failures propagate: they must not become caption-based Places matches.
     textCandidates = await extractFromTextMulti(
       oEmbedCaption,
-      deadline.stageSignal(5000),
+      deadline.stageSignal(25000),
     );
     contentEvaluated = true;
   }
@@ -3164,7 +3182,7 @@ async function handleUrlResolve(
           resized.base64,
           resized.mimeType,
           oEmbedCaption ?? undefined,
-          deadline.stageSignal(2500),
+          deadline.stageSignal(15000),
         ));
       contentEvaluated = true;
     }
@@ -3731,8 +3749,9 @@ async function handleVideoText(
     const extractAc = new AbortController();
     // 086c: 7s → 15s. A 12-candidate haiku response (now with a retry on
     // malformed JSON) can exceed 7s; an abort here silently returned []
-    // and the whole import read as "no spots found".
-    const extractTimer = setTimeout(() => extractAc.abort(), 15000);
+    // and the whole import read as "no spots found". Opus 5.5 writes a
+    // 12-place listicle slower still, so this is the shared model ceiling.
+    const extractTimer = setTimeout(() => extractAc.abort(), EXTRACTION_TIMEOUT_MS);
     try {
       textCandidates = await extractFromTextMulti(
         fullText,
@@ -3983,6 +4002,8 @@ serve(async (req) => {
     supports_large_lists?: boolean;
     /** Durable-manifest owner fence; optional only for deployed-client compatibility. */
     expected_owner_id?: unknown;
+    /** Consent version the app enforces before model-bound imports (Guideline 5.1.2(i)). */
+    ai_consent_version?: unknown;
   };
   try {
     body = await req.json();
@@ -4127,6 +4148,8 @@ serve(async (req) => {
     ? body.extracted_text.trim()
     : "";
   if (routesToVideoText(body)) {
+    // Always model-bound. Refused before the rate limit spends a slot.
+    if (aiConsentRefused(body?.ai_consent_version)) return aiConsentOutdatedResponse();
     // Fail-CLOSED (TICKET-091): RPC error or missing row denies.
     const { data: rlRows, error: rlErr } = await supabase.rpc(
       "check_and_increment_rate_limit",
@@ -4203,6 +4226,14 @@ serve(async (req) => {
       );
     }
     parsedUrl = urlResult.url;
+  }
+
+  // Screenshots and every non-Maps link can reach the model; Maps links and
+  // the Instagram nudge never do. Refused before the rate limit spends a slot.
+  const reachesImportModel = hasImage ||
+    (parsedUrl !== null && urlReachesImportModel(detectSourceType(parsedUrl)));
+  if (reachesImportModel && aiConsentRefused(body?.ai_consent_version)) {
+    return aiConsentOutdatedResponse();
   }
 
   // ── Rate limit ────────────────────────────────────────────────────────────

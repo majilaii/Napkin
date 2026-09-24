@@ -35,6 +35,13 @@ describe('AI consent provider parity', () => {
         expect(AI_IMPORT_CONSENT_VERSION.endsWith(`:${provider.id}`)).toBe(true);
     });
 
+    it('keeps the deploy smoke check sending the app consent version', () => {
+        // resolve-url refuses model work unless the version names its provider,
+        // so a stale smoke value fails every deploy's EXTRACTION_SMOKE check.
+        const smoke = fs.readFileSync(path.resolve(__dirname, '../../../scripts/smoke/edge-functions.ts'), 'utf8');
+        expect(smoke).toContain(`ai_consent_version: '${AI_IMPORT_CONSENT_VERSION}'`);
+    });
+
     it('keeps the privacy policy naming the same provider', () => {
         const policy = fs.readFileSync(path.resolve(__dirname, '../../../web/legal/privacy.html'), 'utf8');
         expect(policy).toContain(`<td>${AI_IMPORT_PROVIDER_LABEL}</td>`);
