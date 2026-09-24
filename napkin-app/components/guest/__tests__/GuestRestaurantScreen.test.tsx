@@ -1,6 +1,8 @@
 /* eslint-disable import/first -- Jest mocks must be registered before module imports. */
 const mockPush = jest.fn();
 const mockBack = jest.fn();
+const mockReplace = jest.fn();
+const mockCanGoBack = jest.fn(() => true);
 const mockOpenURL = jest.fn((_url: string) => Promise.resolve());
 const mockPage = jest.fn();
 const mockReviews = jest.fn();
@@ -36,7 +38,7 @@ jest.mock('react-native', () => {
 });
 jest.mock('expo-router', () => ({
     Stack: { Screen: () => null },
-    useRouter: () => ({ push: mockPush, back: mockBack }),
+    useRouter: () => ({ push: mockPush, back: mockBack, replace: mockReplace, canGoBack: mockCanGoBack }),
 }));
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
 jest.mock('expo-clipboard', () => ({ setStringAsync: (text: string) => mockSetString(text) }));
@@ -130,6 +132,23 @@ function pagedResult(rows: PublicReviewCard[], hasNextPage = false) {
 describe('GuestRestaurantScreen', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockCanGoBack.mockReturnValue(true);
+    });
+
+    it('backs out to guest Places when a cold deep link left nothing below', () => {
+        mockCanGoBack.mockReturnValue(false);
+        mockPage.mockReturnValue({
+            data: undefined,
+            isLoading: false,
+            isError: true,
+            fetchStatus: 'idle',
+            refetch: jest.fn(),
+        });
+        mockReviews.mockReturnValue(pagedResult([]));
+        const screen = render(<GuestRestaurantScreen restaurantId="restaurant-1" />);
+        fireEvent.press(screen.getByLabelText('back'));
+        expect(mockBack).not.toHaveBeenCalled();
+        expect(mockReplace).toHaveBeenCalledWith('/(tabs)/places');
     });
 
     it('renders the sign-in band and routes the pin affordance to /auth', () => {

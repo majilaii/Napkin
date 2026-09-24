@@ -5,7 +5,7 @@
  * action=page/reviews). Nothing here touches a signed-in hook: save routes
  * to `/auth`, review taps route to `/auth`, and the only write is a mailto.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -51,6 +51,12 @@ export function GuestRestaurantScreen({ restaurantId }: { restaurantId: string }
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const router = useRouter();
+    // A cold napkin://restaurant/<id> link opens this screen with nothing below
+    // it; back then lands on guest Places instead of doing nothing.
+    const goBack = useCallback(() => {
+        if (router.canGoBack()) router.back();
+        else router.replace('/(tabs)/places');
+    }, [router]);
     const insets = useSafeAreaInsets();
     const { height: windowHeight } = useWindowDimensions();
     const isFocused = useIsFocused();
@@ -80,7 +86,7 @@ export function GuestRestaurantScreen({ restaurantId }: { restaurantId: string }
                 <Stack.Screen options={{ headerShown: false }} />
                 {isFocused ? <StatusBar style="dark" /> : null}
                 <Pressable
-                    onPress={() => router.back()}
+                    onPress={goBack}
                     accessibilityRole="button"
                     accessibilityLabel="back"
                     style={[styles.errorBack, { marginTop: insets.top + Spacing.sm }]}
@@ -130,7 +136,7 @@ export function GuestRestaurantScreen({ restaurantId }: { restaurantId: string }
                                 : buildRestaurantMeta(restaurant, new Date(), undefined)}
                             saved={false}
                             saveDisabled={false}
-                            onBack={() => router.back()}
+                            onBack={goBack}
                             onSave={() => router.push('/auth')}
                             topInset={insets.top}
                             onMastheadHeightChange={setRenderedPhotoHeight}

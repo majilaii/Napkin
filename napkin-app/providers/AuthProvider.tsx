@@ -219,6 +219,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         return () => {
             gateReadGeneration.current += 1;
+            // The bump discards any in-flight read; without this a remount
+            // would see 'loading' for the same identity and never re-read.
+            gateStatus.current = 'idle';
             subscription.unsubscribe();
         };
         // The three guest helpers are stable useCallbacks, listed to keep
