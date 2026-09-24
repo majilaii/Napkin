@@ -60,7 +60,7 @@ describe('aiConsent', () => {
         await alerts(1);
         expect(mockAlert).toHaveBeenCalledTimes(1);
         expect(mockAlert.mock.calls[0][0]).toBe(AI_CONSENT_PROMPT.title);
-        expect(mockAlert.mock.calls[0][1]).toContain('OpenAI');
+        expect(mockAlert.mock.calls[0][1]).toContain('Anthropic');
         press('Allow');
         await expect(pending).resolves.toEqual({ granted: true, prompted: true });
 
@@ -103,9 +103,10 @@ describe('aiConsent', () => {
     });
 
     it('asks again when the stored grant names another provider', async () => {
+        // Build 266 stored OpenAI grants; they do not cover Anthropic.
         await AsyncStorage.setItem(
             'napkin.aiImportConsent.v1:user-a',
-            JSON.stringify({ version: 'import-v0:anthropic', at: '2026-09-01T00:00:00.000Z' }),
+            JSON.stringify({ version: 'import-v1:openai', at: '2026-09-24T00:00:00.000Z' }),
         );
         await expect(hasAiImportConsent('user-a')).resolves.toBe(false);
     });

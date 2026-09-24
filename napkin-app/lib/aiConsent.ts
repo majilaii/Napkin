@@ -5,7 +5,7 @@
  * data goes to a third-party AI, name who receives it, and get explicit
  * permission before sending it. Every import except a Google Maps link is read
  * by the extraction model behind resolve-url (supabase/functions/_shared/
- * importModel.ts, OpenAI `gpt-5.6-luna` by default): captions, on-screen text,
+ * importModel.ts, Anthropic `claude-opus-5-5` by default): captions, on-screen text,
  * speech transcripts and screenshots. Nothing AI-bound may leave the phone
  * until this user said yes on this device.
  *
@@ -22,8 +22,20 @@ import { Alert } from 'react-native';
 import { isMapsShareUrl } from '@/lib/mapsShare';
 
 /** Who receives import content. Must match the server's extraction provider. */
-export const AI_IMPORT_PROVIDER_LABEL = 'OpenAI';
-export const AI_IMPORT_CONSENT_VERSION = 'import-v1:openai';
+export const AI_IMPORT_PROVIDER_LABEL = 'Anthropic';
+// v1 named OpenAI; anyone who allowed that is asked again for Anthropic.
+export const AI_IMPORT_CONSENT_VERSION = 'import-v2:anthropic';
+
+/**
+ * Sent with every request that can reach the import model. This build asks
+ * before any such request, so the field states which provider it asked about;
+ * the server refuses model work unless it names the provider it uses, which
+ * keeps builds that asked about another provider (or never asked) from
+ * sending content to this one.
+ */
+export function aiConsentRequestFields(): { ai_consent_version: string } {
+    return { ai_consent_version: AI_IMPORT_CONSENT_VERSION };
+}
 
 /**
  * UIKit may still be animating the alert away when its button handler runs.

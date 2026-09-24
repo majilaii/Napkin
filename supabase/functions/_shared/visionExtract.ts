@@ -10,7 +10,8 @@
  *   extractFromText(caption) → ExtractedCandidate       (returns [0] ?? fallback)
  *   extractFromVision(imageBase64, mimeType, caption?) → ExtractedCandidate
  *
- * Model: gpt-5.6-luna by default; explicit Haiku rollback via EXTRACTION_MODEL.
+ * Model: claude-opus-5-5 by default (structured outputs); OpenAI Luna and the
+ * Haiku rollback via EXTRACTION_MODEL.
  * Returns content-derived fields ONLY — NO restaurant_id, NO already_wishlisted.
  * Provider/configuration errors propagate; a valid empty answer remains [].
  *
@@ -23,7 +24,7 @@
  *   - AbortSignal threading for budget compliance
  */
 
-import { callExtractionModel, ExtractionError, getExtractionProvider, isExtractionAbort, type ExtractionMessage } from './importModel.ts';
+import { callExtractionModel, ExtractionError, extractionOutputFormat, isExtractionAbort, type ExtractionMessage } from './importModel.ts';
 export { EXTRACTION_MODEL_DEFAULT } from './importModel.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -483,7 +484,7 @@ export async function extractFromTextMulti(
     const effectiveMax = photoSlideCount === null ? max : LISTICLE_CANDIDATE_CAP;
     // A higher listicle cap needs a matching prompt instruction
     // AND a bigger token budget so the JSON array isn't truncated.
-    const system = buildMultiSystemPrompt(max, context, getExtractionProvider() === 'openai' ? 'object' : 'array');
+    const system = buildMultiSystemPrompt(max, context, extractionOutputFormat());
     const maxTokens = effectiveMax > 6 ? 2560 : MAX_TOKENS;
 
     const messages: ExtractionMessage[] = [{
@@ -573,7 +574,7 @@ export async function extractFromVisionMulti(
     try {
         const raw = await callExtractionModel(
             [{ role: 'user', content: contentBlocks }],
-            buildMultiSystemPrompt(6, undefined, getExtractionProvider() === 'openai' ? 'object' : 'array'),
+            buildMultiSystemPrompt(6, undefined, extractionOutputFormat()),
             6, MAX_TOKENS, signal,
         );
         return parseMultiExtractionResponse(raw);

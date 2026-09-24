@@ -204,6 +204,36 @@ const CHECKS: Check[] = [
                 ? null
                 : 'expected INVALID_BODY',
     },
+    // Guideline 5.1.2(i): a model-bound import without consent to the server's
+    // provider is refused (426) before the rate limit, any storage read or any
+    // model call, so these cost nothing. Builds 263 to 266 send no version or
+    // an OpenAI one; if the guard ever falls away, they would reach the model.
+    {
+        name: 'resolve-url video text without AI consent → 426 (no model call)',
+        method: 'POST',
+        fn: 'resolve-url',
+        body: { extracted_text: 'consent guard check' },
+        expectedStatus: 426,
+        shape: (json) =>
+            (json as { error?: { code?: string } }).error?.code === 'AI_CONSENT_OUTDATED'
+                ? null
+                : 'expected AI_CONSENT_OUTDATED',
+    },
+    {
+        name: 'table-shares create_import screenshot without AI consent → 426 (no upload read, no model call)',
+        method: 'POST',
+        fn: 'table-shares',
+        body: {
+            action: 'create_import',
+            image_path: 'smoke-consent-guard/none.jpg',
+            destinations: { wishlist: true, table_ids: [] },
+        },
+        expectedStatus: 426,
+        shape: (json) =>
+            (json as { error?: { code?: string } }).error?.code === 'AI_CONSENT_OUTDATED'
+                ? null
+                : 'expected AI_CONSENT_OUTDATED',
+    },
     {
         name: 'restaurant-history?action=page (the one that 500d on 2026-04-30)',
         method: 'GET',
@@ -1054,6 +1084,10 @@ if (Deno.env.get('EXTRACTION_SMOKE') === '1') {
         body: {
             caption: 'my morning routine',
             extracted_text: `Stretching at home before work. Ten minutes, then a glass of water. (check ${run})`,
+            // The app's consent version (napkin-app/lib/aiConsent.ts); resolve-url
+            // refuses model work without one naming its provider. Pinned equal by
+            // napkin-app/lib/__tests__/aiConsentProviderParity.test.ts.
+            ai_consent_version: 'import-v2:anthropic',
         },
         shape: (json) => {
             const data = (json as { data?: { candidates?: unknown } }).data;
