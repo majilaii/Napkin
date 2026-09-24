@@ -7,11 +7,21 @@ import { searchCache } from '@/hooks/search/searchCache';
 import { placesScreenState } from '@/hooks/search/placesScreenState';
 import { setImportPushOwner, unlinkImportPushDevice, watchImportPushRegistration } from '@/lib/importPush';
 import { setBackgroundImportOwner, unlinkBackgroundImportIntake } from '@/lib/backgroundImportIntake';
+import { readGuestMode, writeGuestMode } from '@/lib/guestMode';
 
 interface AuthContextType {
     session: Session | null;
     user: User | null;
+    /** True until BOTH the initial getSession() and the guest flag read resolve. */
     isLoading: boolean;
+    /**
+     * TICKET-247 guest mode: signed out, but allowed on the public routes
+     * (see lib/guestRoutes). Cleared by any auth event that carries a session
+     * and by signOut(), so an account never lands in guest mode.
+     */
+    isGuest: boolean;
+    enterGuestMode: () => Promise<void>;
+    exitGuestMode: () => Promise<void>;
     /**
      * TICKET-107 onboarding gate — TRI-STATE so RootLayoutNav never flashes
      * the default signed-in route then bounces to /onboarding:
@@ -87,6 +97,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const gateUserId = useRef<string | null>(null);
     // Where the gate stands for gateUserId, readable from auth callbacks.
     const gateStatus = useRef<'idle' | 'loading' | 'resolved' | 'unresolved'>('idle');
+    const [isGuest, setIsGuest] = useState(false);
+    // Mirror of isGuest for non-render callbacks (auth listener, signOut).
+    const guestRef = useRef(false);
+    // isLoading releases only when both the session and the guest flag are known.
+    const sessionResolved = useRef(false);
+    const guestResolved = useRef(false);
+
+    // Stable (ref + setState only) so the mount effect can list them as deps
+    // without re-subscribing the auth listener.
+    const settleLoading = useCallback(() => {
+        if (sessionResolved.current && guestResolved.current) setIsLoading(false);
+    }, []);
+
+    const applyGuest = useCallback((value: boolean) => {
+        guestRef.current = value;
+        guestResolved.current = true;
+        setIsGuest(value);
+    }, []);
+
+    // A session makes the guest flag moot; drop it in state and storage.
+    const clearGuestForSession = useCallback(() => {
+        const wasGuest = guestRef.current;
+        applyGuest(false);
+        if (wasGuest) void writeGuestMode(false);
+    }, [applyGuest]);
 
     // Server-confirmed completion must win over any profile read that began
     // before the mutation committed. Invalidating the read generation here
@@ -142,6 +177,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, [loadOnboardedAt]);
 
     useEffect(() => {
+        // TICKET-247: the durable guest flag. A session arriving first (or an
+        // explicit enter/exit) wins over this slower read.
+        readGuestMode().then((value) => {
+            if (guestResolved.current) return;
+            applyGuest(value);
+            settleLoading();
+        });
+
         // Get initial session
         supabase.auth.getSession().then(({ data: { session } }) => {
             setImportPushOwner(session?.user?.id);
@@ -151,7 +194,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             placesScreenState.setActiveUser(session?.user?.id);
             setSession(session);
             setUser(session?.user ?? null);
-            setIsLoading(false);
+            if (session) clearGuestForSession();
+            sessionResolved.current = true;
+            settleLoading();
             syncOnboardingGate(session?.user?.id);
         });
 
@@ -165,7 +210,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 placesScreenState.setActiveUser(session?.user?.id);
                 setSession(session);
                 setUser(session?.user ?? null);
-                setIsLoading(false);
+                if (session) clearGuestForSession();
+                sessionResolved.current = true;
+                settleLoading();
                 syncOnboardingGate(session?.user?.id);
             }
         );
@@ -174,7 +221,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             gateReadGeneration.current += 1;
             subscription.unsubscribe();
         };
-    }, [syncOnboardingGate]);
+        // The three guest helpers are stable useCallbacks, listed to keep
+        // exhaustive-deps honest.
+    }, [syncOnboardingGate, applyGuest, clearGuestForSession, settleLoading]);
 
     useEffect(() => watchImportPushRegistration(), []);
 
@@ -194,6 +243,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         gateStatus.current = 'idle';
         setOnboardingGateUnresolved(false);
         setOnboardedAtState(undefined);
+        // Signing out of an account lands on /auth, never in guest mode.
+        applyGuest(false);
+        await writeGuestMode(false);
+    };
+
+    const enterGuestMode = async () => {
+        applyGuest(true);
+        await writeGuestMode(true);
+    };
+
+    const exitGuestMode = async () => {
+        applyGuest(false);
+        await writeGuestMode(false);
     };
 
     return (
@@ -202,6 +264,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 session,
                 user,
                 isLoading,
+                isGuest,
+                enterGuestMode,
+                exitGuestMode,
                 onboardedAt,
                 onboardingGateUnresolved,
                 retryOnboardingGate,
