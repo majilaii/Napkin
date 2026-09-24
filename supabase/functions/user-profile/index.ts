@@ -2383,16 +2383,24 @@ serve(async (req) => {
             const ids = rows.map((r) => r.following_id);
             const { data: profiles, error: profilesErr } = await supabase
                 .from('profiles')
-                .select('user_id, display_name, avatar_url')
+                .select('user_id, display_name, avatar_url, is_internal')
                 .in('user_id', ids);
 
             if (profilesErr) throw profilesErr;
 
+            // Internal (test) accounts drop out for real viewers, as in follow_list:
+            // these rows open profiles, which would read as not-found.
+            const followed = (profiles ?? []) as {
+                user_id: string;
+                display_name: string;
+                avatar_url: string | null;
+                is_internal: boolean | null;
+            }[];
+            const shown = followed.some((p) => p.is_internal === true)
+                ? visibleFollowListRows(followed, user.id, await isInternalViewer(supabase, user.id))
+                : followed;
             // Return in follow-recency order
-            const byId = new Map(
-                ((profiles ?? []) as { user_id: string; display_name: string; avatar_url: string | null }[])
-                    .map((p) => [p.user_id, p])
-            );
+            const byId = new Map(shown.map((p) => [p.user_id, p]));
 
             return json({
                 data: ids

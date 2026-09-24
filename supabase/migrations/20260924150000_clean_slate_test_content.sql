@@ -5,9 +5,10 @@
 -- reviews by the founder's test accounts ("So fucking good" was the first
 -- guest row), keyboard-mash reviews from his feature testing ("Gogoggig",
 -- "Fifur", "MIDDMIMDIDMDID"), a seeded New York review under his name, an
--- emoji-only test list, and two fake restaurants a guest search for "test"
--- or "heart" returns. Seeded persona and superseded demo accounts were already
--- private (TICKET-251) but still appeared in people search.
+-- emoji-only test list, and four fake restaurant rows that a guest search
+-- for "test", "heart", "debug" or "bleecker" returns. Seeded persona and
+-- superseded demo accounts were already private (TICKET-251) but still
+-- appeared in people search.
 --
 -- Nothing is deleted. Every change is one column on a row named by id here,
 -- so each is reversed by the same statement with the old value:
@@ -18,17 +19,22 @@
 --      superseded App Review demo accounts, the eight feed-fixture personas,
 --      and six test accounts on the founder's own email or his Sign in with
 --      Apple test day (three named "Jacky", "Hi", two unfinished "New User").
---   2. entries.visibility = 'private' on ten of the founder's reviews: the
---      mash and throwaway notes from repeated test logs, and two seeded reviews
---      (Tatiana, Apothéke). Private only takes a review off public paths;
+--   2. entries.visibility = 'private' on twelve of the founder's logs: the
+--      mash and throwaway notes from repeated test logs, two seeded reviews
+--      (Tatiana, Apothéke) and his ratings on two of the fake restaurants
+--      (public profiles list ratings-only logs under Spots and the diary).
+--      Private only takes a log off public paths;
 --      the author, Table-mates, companions and supper members still see it
 --      (can_view_entry branches 1 to 3 and 5). His other reviews stay public.
 --   3. lists.privacy = 'private' on the emoji-only test list.
 --   4. restaurants.verification = 'unverified', created_by = the founder, on
---      the two fake rows (external ids "test-curl-round..." and
---      "manual-heart...", no address, no coordinates). Canonical reads, guest
---      search and recent included, skip unverified rows; the founder keeps
---      his own test entry.
+--      the four fake rows (made-up external ids "test-curl-round...",
+--      "manual-heart...", "manual-bleecker..." and "manual-debug...", no
+--      address, no coordinates). Canonical reads, guest search and recent
+--      included, skip unverified rows; the founder keeps his own entries.
+--      "Paulette london" is also a manual row but a real place he logged, so
+--      it stays; the New York seed rows ("gp-...-nyc" ids) carry addresses
+--      and stay too.
 --
 -- The App Review demo pair (edf516b4, f2f4e458), the CI smoke accounts and
 -- the founder's main account (dcfce66a) are guarded by id. On a fresh replay
@@ -77,14 +83,21 @@ declare
         '7565a3d2-b5d6-474d-89b7-67b2b52e2afd',  -- Donia, "Really mid tbh" (5 Donia logs)
         '4e8e860a-31d6-4562-8e5d-68f6ce68313f',  -- AGORA souvla bar, supper test
         '743c62a6-e13b-4328-9fa0-82fdeafb6ba2',  -- Tatiana (New York), seeded
-        'fd6c4d57-1154-4446-904b-8ff6d5856fde'   -- Apothéke, seeded
+        'fd6c4d57-1154-4446-904b-8ff6d5856fde',  -- Apothéke, seeded
+        -- ratings on the fake restaurants below; public profiles list
+        -- ratings-only logs under Spots and the diary, and a demoted row
+        -- opens as an empty page
+        '45309de2-eb95-42bc-99bf-d4862f2d6890',  -- Test Round Restaurant
+        '14ceb41d-f387-4801-8d92-dc8b6acabf30'   -- Bleecker Burger (April seed batch)
     ]::uuid[];
     v_private_lists constant uuid[] := array[
         '08328966-8761-4014-bd00-4ff90fc9783a'   -- emoji-only title, 8 places
     ]::uuid[];
     v_fake_restaurants constant uuid[] := array[
         '08b1bcf6-72d6-4980-b913-84807924ef2c',  -- "Test Round Restaurant"
-        'b294ae4d-af70-4db3-ac47-aea1a93bc63e'   -- "Heart Test"
+        'b294ae4d-af70-4db3-ac47-aea1a93bc63e',  -- "Heart Test"
+        'b73fadb4-ea8e-4e24-bc14-29d0c1a6c696',  -- "Bleecker Burger" (manual row)
+        '5770b6c3-3d66-4123-b1d2-c89fb640a9e4'   -- "Debug Two" (manual row)
     ]::uuid[];
     v_protected constant uuid[] := array[
         'edf516b4-f8ea-4d2e-816f-cf4ca3f402f2',  -- App Review demo: alexreviewer
