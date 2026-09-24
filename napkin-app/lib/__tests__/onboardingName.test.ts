@@ -12,6 +12,7 @@ import {
     resolveProvidedName,
     MAX_DISPLAY_NAME,
     SERVER_PLACEHOLDER_NAME,
+    isPlaceholderName,
 } from '../onboardingName';
 
 describe('resolveProvidedName', () => {
@@ -85,5 +86,15 @@ describe('displayNameForCompletion', () => {
     it('trims and caps a real name', () => {
         expect(displayNameForCompletion('  Ada  ')).toBe('Ada');
         expect(displayNameForCompletion('y'.repeat(200))).toHaveLength(MAX_DISPLAY_NAME);
+    });
+});
+
+describe('isPlaceholderName (TICKET-250)', () => {
+    it('matches only the server placeholder, ignoring case and padding', () => {
+        expect(isPlaceholderName('New User')).toBe(true);
+        expect(isPlaceholderName('  new user ')).toBe(true);
+        expect(isPlaceholderName('New Users')).toBe(false);
+        expect(isPlaceholderName('Alex Reviewer')).toBe(false);
+        expect(isPlaceholderName(null)).toBe(false);
     });
 });

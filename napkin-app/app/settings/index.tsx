@@ -30,6 +30,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { useUserProfile } from '@/hooks/users';
 import { useDeleteAccount } from '@/hooks/account';
+import { useAiImportConsent } from '@/hooks/imports/useAiImportConsent';
+import { AI_IMPORT_PROVIDER_LABEL } from '@/lib/aiConsent';
 import { Avatar } from '@/components/feed/Avatar';
 import { LEGAL_URLS } from '@/constants/links';
 import { FRIEND_TEST } from '@/constants/flags';
@@ -144,6 +146,8 @@ export default function SettingsScreen() {
     const insets = useSafeAreaInsets();
     const { signOut, user } = useAuth();
     const router = useRouter();
+    // TICKET-250: the import model consent, shown where people look for privacy.
+    const aiConsent = useAiImportConsent(user?.id);
     const deleteAccount = useDeleteAccount();
 
     const { data: result } = useUserProfile(user?.id);
@@ -298,6 +302,12 @@ export default function SettingsScreen() {
                 </Section>
 
                 <Section title="privacy" palette={palette}>
+                    <Row
+                        label="Imports"
+                        value={aiConsent.allowed ? `read by ${AI_IMPORT_PROVIDER_LABEL}` : 'off'}
+                        palette={palette}
+                        onPress={goPrivacy}
+                    />
                     <Row
                         label="Blocked"
                         palette={palette}

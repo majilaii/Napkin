@@ -49,6 +49,7 @@ import { useUnreadCount } from '@/hooks/notifications';
 import { useAuth } from '@/providers/AuthProvider';
 import { profileStatSegments } from './statsLine';
 import { PressableScale } from '@/components/ui/napkin';
+import { isPlaceholderName } from '@/lib/onboardingName';
 
 interface Props {
     profile: UserProfileRow;
@@ -198,12 +199,16 @@ export function ProfileHeader({
                             { backgroundColor: palette.primaryContainer },
                         ]}
                     >
-                        <Text
-                            style={[styles.avatarInitials, { color: palette.textOnImage }]}
-                            maxFontSizeMultiplier={1.4}
-                        >
-                            {initials(profile.display_name)}
-                        </Text>
+                        {isPlaceholderName(profile.display_name) ? (
+                            <Ionicons name="person-outline" size={IconSize.lg} color={palette.textOnImage} />
+                        ) : (
+                            <Text
+                                style={[styles.avatarInitials, { color: palette.textOnImage }]}
+                                maxFontSizeMultiplier={1.4}
+                            >
+                                {initials(profile.display_name)}
+                            </Text>
+                        )}
                         {profile.avatar_url ? (
                             // Layer the photo OVER the monogram so a failed load falls
                             // through to the initials — no error state to track.
@@ -267,12 +272,27 @@ export function ProfileHeader({
                 </View>
 
                 <View style={[styles.identity, stacksIdentity ? styles.identityAccessible : null]}>
-                    <Text
-                        style={[styles.displayName, { color: palette.text }]}
-                        accessibilityRole="header"
-                    >
-                        {profile.display_name}
-                    </Text>
+                    {isPlaceholderName(profile.display_name) && isSelf ? (
+                        // Skipped the optional name step: invite it, never print "New User".
+                        <Pressable
+                            onPress={() => router.push('/settings/name')}
+                            accessibilityRole="button"
+                            hitSlop={8}
+                        >
+                            <Text style={[styles.displayName, { color: palette.textMuted }]}>
+                                Add your name
+                            </Text>
+                        </Pressable>
+                    ) : (
+                        <Text
+                            style={[styles.displayName, { color: palette.text }]}
+                            accessibilityRole="header"
+                        >
+                            {isPlaceholderName(profile.display_name)
+                                ? 'Napkin member'
+                                : profile.display_name}
+                        </Text>
+                    )}
                     {showUsername && profile.username && (
                         <Text
                             style={[styles.handle, { color: palette.textMuted }]}

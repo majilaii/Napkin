@@ -21,6 +21,12 @@ let mockSession = { user: { id: 'user-1' } };
 let mockSourceExists = true;
 let mockIntakeAvailable = false;
 let mockPreparedListener: ((event: { jobId: string }) => void) | undefined;
+// TICKET-250: most tests model a user who already allowed AI imports.
+let mockAiConsent = true;
+let mockAiDeclined = false;
+let mockAiRecentlyAnswered = false;
+const mockRequestAiConsent = jest.fn();
+const mockConsentListeners = new Set<() => void>();
 
 jest.mock('react-native', () => ({ get AppState() { return mockAppState; }, Platform: { OS: 'ios' } }));
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
@@ -39,6 +45,18 @@ jest.mock('@/lib/edgeInvoke', () => ({
     callEdgeFn: (...args: unknown[]) => mockEdge(...args),
     isAuthFailure: () => false,
     SessionExpiredError: class extends Error {},
+}));
+jest.mock('@/lib/aiConsent', () => ({
+    ...jest.requireActual('@/lib/aiConsent'),
+    AI_CONSENT_PROMPT_SETTLE_MS: 0,
+    aiConsentPromptRecentlyAnswered: () => mockAiRecentlyAnswered,
+    hasAiImportConsent: async () => mockAiConsent,
+    declinedAiImportConsentThisSession: () => mockAiDeclined,
+    requestAiImportConsent: (...args: unknown[]) => mockRequestAiConsent(...args),
+    subscribeAiImportConsent: (fn: () => void) => {
+        mockConsentListeners.add(fn);
+        return () => { mockConsentListeners.delete(fn); };
+    },
 }));
 jest.mock('@/lib/localNotify', () => ({
     presentImportNotification: (...args: unknown[]) => mockLocalNotification(...args),
@@ -62,7 +80,7 @@ jest.mock('@/modules/media-extract', () => ({
     },
 }));
 
-import { useProcessImportQueue } from '../useProcessImportQueue';
+import { useProcessImportQueue, __resetHeldImportNoticeForTests } from '../useProcessImportQueue';
 import { router } from 'expo-router';
 import { getImport, pokeImportQueue, releaseDrainLock, type ImportManifest } from '@/lib/importQueue';
 
@@ -97,6 +115,12 @@ describe('root import queue gallery integration', () => {
         mockAppState.currentState = 'active';
         mockSourceExists = true;
         mockIntakeAvailable = false;
+        mockAiConsent = true;
+        mockAiDeclined = false;
+        mockAiRecentlyAnswered = false;
+        __resetHeldImportNoticeForTests();
+        mockToast.mockReset();
+        mockRequestAiConsent.mockReset().mockResolvedValue({ granted: true, prompted: true });
         mockExtract.mockReset().mockResolvedValue(evidence);
         mockPerceive.mockReset().mockResolvedValue(null);
         mockSlideDownload.mockReset().mockResolvedValue(null);
@@ -124,6 +148,105 @@ describe('root import queue gallery integration', () => {
         await act(async () => { tree = TestRenderer.create(<Root showSheet={showSheet} />); });
         await flush();
     }
+
+    describe('AI consent gate (TICKET-250)', () => {
+        const tiktok = { kind: 'url' as const, url: 'https://www.tiktok.com/@chef/video/123',
+            videoPath: undefined, sourcePreparation: undefined };
+        function resolveCalls() {
+            return mockEdge.mock.calls.filter(([fn]) => fn === 'resolve-url');
+        }
+        function heldToasts() {
+            return mockToast.mock.calls.filter(([message]) => /waiting for your OK/.test(String(message)));
+        }
+
+        it('sends nothing from a background wake without consent, and neither asks nor toasts', async () => {
+            mockAiConsent = false;
+            mockAppState.currentState = 'background';
+            seed(tiktok);
+            await mount();
+            expect(mockRequestAiConsent).not.toHaveBeenCalled();
+            expect(heldToasts()).toHaveLength(0);
+            expect(mockPerceive).not.toHaveBeenCalled();
+            expect(resolveCalls()).toHaveLength(0);
+            expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+        });
+
+        it('holds a saved video too: its text and speech would go to the model', async () => {
+            mockAiConsent = false;
+            mockAppState.currentState = 'background';
+            seed();
+            await mount();
+            expect(mockExtract).not.toHaveBeenCalled();
+            expect(resolveCalls()).toHaveLength(0);
+            expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+        });
+
+        it('never raises the alert itself; its toast asks on tap and then runs the import', async () => {
+            mockAiConsent = false;
+            seed(tiktok);
+            await mount();
+            // The drain holds its lock here, so it must not present an alert.
+            expect(mockRequestAiConsent).not.toHaveBeenCalled();
+            expect(resolveCalls()).toHaveLength(0);
+            expect(heldToasts()).toHaveLength(1);
+
+            const [, action] = heldToasts()[0];
+            mockOfferNotifications.mockClear();
+            mockRequestAiConsent.mockImplementation(async () => {
+                // What lib/aiConsent does on Allow: store it, mark the alert as
+                // just answered, and notify subscribers.
+                mockAiConsent = true;
+                mockAiRecentlyAnswered = true;
+                mockConsentListeners.forEach((fn) => fn());
+                return { granted: true, prompted: true };
+            });
+            await act(async () => { action.onPress(); });
+            await flush();
+            expect(mockRequestAiConsent).toHaveBeenCalledWith('user-1');
+            expect(resolveCalls().length).toBeGreaterThan(0);
+            expect(getImport('job-1')).toMatchObject({ mode: 'review' });
+            // The notification sheet must not present while the alert leaves.
+            expect(mockOfferNotifications).not.toHaveBeenCalled();
+        });
+
+        it('keeps the import pending after Not now and offers the toast once per session', async () => {
+            mockAiConsent = false;
+            mockRequestAiConsent.mockResolvedValue({ granted: false, prompted: true });
+            seed(tiktok);
+            await mount();
+            const [, action] = heldToasts()[0];
+            await act(async () => { action.onPress(); });
+            await flush();
+            expect(resolveCalls()).toHaveLength(0);
+            expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+
+            await act(async () => { pokeImportQueue(); });
+            await flush();
+            expect(heldToasts()).toHaveLength(1);
+            expect(resolveCalls()).toHaveLength(0);
+        });
+
+        it('stays quiet after a Not now elsewhere this session', async () => {
+            mockAiConsent = false;
+            mockAiDeclined = true;
+            seed(tiktok);
+            await mount();
+            expect(heldToasts()).toHaveLength(0);
+            expect(resolveCalls()).toHaveLength(0);
+        });
+
+        it('runs a Google Maps import while an AI-bound one is held', async () => {
+            mockAiConsent = false;
+            seed(tiktok);
+            seed({ jobId: 'job-2', importNonce: 'nonce-2', kind: 'url', url: 'https://maps.app.goo.gl/abc123',
+                videoPath: undefined, sourcePreparation: undefined });
+            await mount();
+            const bodies = resolveCalls().map(([, options]) => JSON.stringify(options));
+            expect(bodies.some((b) => b.includes('maps.app.goo.gl/abc123'))).toBe(true);
+            expect(bodies.some((b) => b.includes('tiktok.com'))).toBe(false);
+            expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
+        });
+    });
 
     it('a server-lane share is processed on this device at once and its server job dismissed (TICKET-248)', async () => {
         seed({ kind: 'url', url: 'https://www.tiktok.com/@chef/video/123', remoteJobId: 'job-1',

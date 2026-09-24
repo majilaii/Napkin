@@ -56,7 +56,7 @@ import { usePostInteractions, usePostInteractionsRealtime } from '@/hooks/posts'
 import { useUpdateEntry } from '@/hooks/entries/useUpdateEntry';
 import { useDeleteEntry } from '@/hooks/entries/useDeleteEntry';
 import { useAddEntryPhoto, useRemoveEntryPhoto } from '@/hooks/entries/useEntryPhotoMutations';
-import { useReportContent, useBlockUser } from '@/hooks/account';
+import { useReportContent, useBlockUser, useCommentSafetyMenu } from '@/hooks/account';
 import { CompanionPickerSheet } from '@/components/logging';
 import { formatCompanions, reconcileAcceptedCompanions } from '@/lib/companions';
 import { getReviewFolioMode, hasReviewWriting } from '@/lib/reviewFolio';
@@ -2261,6 +2261,7 @@ function ReplyBubble({
     const [editBody, setEditBody] = useState(comment.body);
 
     const isAuthor = !!user && comment.user_id === user.id;
+    const openSafetyMenu = useCommentSafetyMenu({ targetType, targetId, scope });
     const ageMs = Date.now() - new Date(comment.created_at).getTime();
     const canEdit = isAuthor && ageMs < 5 * 60 * 1000 && !comment.pending;
     const canDelete = isAuthor && !comment.pending;
@@ -2273,6 +2274,8 @@ function ReplyBubble({
         : formatRelativeTime(comment.created_at);
     const muted = comment.pending || comment.failed;
     const interactive = !comment.pending && !comment.failed;
+    // Guideline 1.2: anyone else's reply can be reported, its author blocked.
+    const canReport = !!user && !isAuthor && interactive && !!comment.user_id;
     const liked = !!comment.viewer_liked;
     const likeCount = comment.like_count ?? 0;
 
@@ -2327,6 +2330,11 @@ function ReplyBubble({
                         </Text>
                         {isAuthor && canDelete && !isEditing ? (
                             <Pressable onPress={handleMenu} hitSlop={8} style={styles.rbMenuBtn} accessibilityLabel="Reply options">
+                                <Text style={[styles.rbMenuDots, { color: palette.textMuted }]}>•••</Text>
+                            </Pressable>
+                        ) : null}
+                        {canReport ? (
+                            <Pressable onPress={() => openSafetyMenu(comment)} hitSlop={8} style={styles.rbMenuBtn} accessibilityLabel="Report or block">
                                 <Text style={[styles.rbMenuDots, { color: palette.textMuted }]}>•••</Text>
                             </Pressable>
                         ) : null}

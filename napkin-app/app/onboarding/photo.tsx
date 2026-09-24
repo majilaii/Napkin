@@ -1,12 +1,17 @@
 /**
- * Onboarding S2 — MANDATORY moderated profile photo (TICKET-196 B-1).
+ * Onboarding S2: moderated profile photo (TICKET-196 B-1), skippable.
  *
  * Tap the circle to pick from the library; the picked image is square-cropped to
  * 512², privately staged, moderated, and its approved public URL is written to
- * the onboarding draft. Continue stays blocked until an approved photo exists.
+ * the onboarding draft. Continue needs an approved photo; "Maybe later" moves on
+ * without one (avatar_url stays null, which complete_onboarding accepts).
  *
- * NO SKIP — founder call 2026-07-25: faces are what make the app feel alive, so
- * nobody reaches the feed without one.
+ * TICKET-250 reversed the 2026-07-25 no-skip call for App Review: Guideline
+ * 5.1.1(v) (the rule behind rejection #4) forbids requiring personal information
+ * the app does not need to function, and a mandatory photo also forced every new
+ * user to send a picture of themselves to Google Cloud Vision (5.1.2(i)). To
+ * restore the mandate, remove the Maybe later control; the server-side
+ * avatar_required check stays flag-gated either way.
  *
  * Back is conditional: when a provider already supplied the name, S1 skips itself
  * with `router.replace`, which leaves this screen alone in the onboarding stack.
@@ -89,6 +94,11 @@ export default function OnboardingPhotoScreen() {
         router.push('/onboarding/city');
     };
 
+    const skip = () => {
+        if (uploading) return;
+        router.push('/onboarding/city');
+    };
+
     return (
         <SetupFrame
             palette={palette}
@@ -96,19 +106,33 @@ export default function OnboardingPhotoScreen() {
             onBack={router.canGoBack() ? () => router.back() : undefined}
             backDisabled={uploading}
             footer={
-                <Pressable
-                    onPress={goCity}
-                    disabled={uploading || !draft.avatar_url}
-                    style={({ pressed }) => [
-                        s.primaryBtn,
-                        { backgroundColor: palette.primary, opacity: uploading || !draft.avatar_url ? 0.5 : pressed ? 0.85 : 1 },
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Continue"
-                    accessibilityState={{ disabled: uploading || !draft.avatar_url }}
-                >
-                    <Text style={[s.primaryBtnText, { color: palette.textInverse }]}>Continue</Text>
-                </Pressable>
+                <>
+                    <Pressable
+                        onPress={goCity}
+                        disabled={uploading || !draft.avatar_url}
+                        style={({ pressed }) => [
+                            s.primaryBtn,
+                            { backgroundColor: palette.primary, opacity: uploading || !draft.avatar_url ? 0.5 : pressed ? 0.85 : 1 },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Continue"
+                        accessibilityState={{ disabled: uploading || !draft.avatar_url }}
+                    >
+                        <Text style={[s.primaryBtnText, { color: palette.textInverse }]}>Continue</Text>
+                    </Pressable>
+                    {!draft.avatar_url ? (
+                        <Pressable
+                            onPress={skip}
+                            disabled={uploading}
+                            style={s.skipButton}
+                            accessibilityRole="button"
+                            accessibilityLabel="Skip profile photo"
+                            accessibilityState={{ disabled: uploading }}
+                        >
+                            <Text style={[s.skip, { color: palette.textSecondary }]}>Maybe later</Text>
+                        </Pressable>
+                    ) : null}
+                </>
             }
         >
             <Stack.Screen options={{ headerShown: false }} />
@@ -149,6 +173,9 @@ export default function OnboardingPhotoScreen() {
                         {uploading ? 'Checking photo…' : draft.avatar_url ? 'Change photo' : 'Add a photo'}
                     </Text>
                 </Pressable>
+                <Text style={[styles.checkNote, { color: palette.textMuted }]}>
+                    Google Cloud Vision checks each photo before anyone sees it.
+                </Text>
             </View>
         </SetupFrame>
     );
@@ -189,4 +216,5 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     pickLabel: { ...Type.titleMedium },
+    checkNote: { ...Type.metadata, textAlign: 'center', marginTop: Spacing.md },
 });

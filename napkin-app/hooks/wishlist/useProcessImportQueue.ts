@@ -44,6 +44,15 @@ import {
     isBackgroundImportIntakeAvailable,
 } from '@/modules/media-extract';
 import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNotify';
+import {
+    AI_CONSENT_PROMPT_SETTLE_MS,
+    aiConsentPromptRecentlyAnswered,
+    declinedAiImportConsentThisSession,
+    hasAiImportConsent,
+    importNeedsAiConsent,
+    requestAiImportConsent,
+    subscribeAiImportConsent,
+} from '@/lib/aiConsent';
 import { markImportCompleted } from '@/lib/importActivation';
 import { importNoticeUrl } from '@/lib/importNotificationNavigation';
 import {
@@ -300,6 +309,15 @@ function safeDeleteMov(path: string | undefined): void {
     } catch {
         /* best-effort */
     }
+}
+
+// TICKET-250: user ids already offered the "waiting for your OK" toast this app
+// session. Module scope for the same reason as the drain lock below.
+const heldImportNoticeShown = new Set<string>();
+
+/** Test-only: forget which users were offered the held-import toast. */
+export function __resetHeldImportNoticeForTests(): void {
+    heldImportNoticeShown.clear();
 }
 
 // TICKET-164 [R10]: set when a drain is requested while another drain holds the
@@ -1958,15 +1976,57 @@ export function useProcessImportQueue() {
                 const claimed = claimImportOwner(manifest.jobId, userId);
                 return claimed ? [claimed] : [];
             });
+            // TICKET-250 (Guideline 5.1.2(i)): an AI-bound import waits for the
+            // user's OK and a background wake sends nothing. The drain never
+            // raises the consent alert itself: it holds this lock, and an alert
+            // UIKit drops mid-presentation would never answer, stalling every
+            // import. Instead, while the user is looking, it offers a non-modal
+            // toast once per session (not after a "Not now"); tapping Allow asks
+            // from a settled screen. /import-progress keeps an "allow" line.
+            const aiAllowed = await hasAiImportConsent(userId);
+            if (activeUserIdRef.current !== userId) return;
+            const held = aiAllowed ? [] : pending.filter(importNeedsAiConsent);
+            if (
+                held.length > 0 &&
+                AppState.currentState === 'active' &&
+                !declinedAiImportConsentThisSession(userId) &&
+                !heldImportNoticeShown.has(userId)
+            ) {
+                heldImportNoticeShown.add(userId);
+                toast.show(
+                    held.length === 1
+                        ? 'a shared import is waiting for your OK'
+                        : `${held.length} shared imports are waiting for your OK`,
+                    {
+                        label: 'Allow',
+                        onPress: () => {
+                            if (userId !== activeUserIdRef.current) return;
+                            // A grant wakes the queue through the consent
+                            // subscription below, after the alert has left.
+                            void requestAiImportConsent(userId);
+                        },
+                    },
+                    { title: 'Imports', icon: 'information-circle-outline' },
+                );
+            }
+            const runnable = aiAllowed ? pending : pending.filter((m) => !importNeedsAiConsent(m));
             // TICKET-120: actively draining ≥1 import while the user is here is the
             // demonstrated-value beat to (quietly, cadence-gated) offer notifications.
             // Gallery capture asks only after its native picker and tray close.
             // Even a very fast preparation event must not present a sibling
             // permission modal while that handoff is still dismissing.
-            if (pending.some((m) => m.sourcePreparation === undefined) && AppState.currentState === 'active') {
+            // TICKET-250: never right after a consent alert. Its exit, or the
+            // Photos picker the sheet presents next, would collide with the
+            // notification sheet's Modal (the freeze class ImportLinkSheet
+            // documents). The next import's drain offers it instead.
+            if (
+                runnable.some((m) => m.sourcePreparation === undefined) &&
+                AppState.currentState === 'active' &&
+                !aiConsentPromptRecentlyAnswered()
+            ) {
                 maybeOfferNotifPrompt();
             }
-            for (const m of pending) {
+            for (const m of runnable) {
                 if (!session) break;
                 try {
                     await processOne(m);
@@ -2043,7 +2103,7 @@ export function useProcessImportQueue() {
                 setTimeout(() => pokeImportQueue(), 0);
             }
         }
-    }, [userId, session, processOne, announceImportOutcome, failAndAnnounceImport]);
+    }, [userId, session, processOne, announceImportOutcome, failAndAnnounceImport, toast]);
 
     useEffect(() => {
         drain();
@@ -2052,11 +2112,21 @@ export function useProcessImportQueue() {
         });
         const unsub = onImportEnqueued(() => drain());
         const unsubPrepared = onVideoImportPrepared(() => pokeImportQueue());
+        // A grant anywhere (sheet, toast, progress hub, Settings) releases held
+        // imports, once the consent alert has finished leaving the screen.
+        const unsubConsent = subscribeAiImportConsent(() => {
+            const timer = setTimeout(() => {
+                retryTimersRef.current.delete(timer);
+                pokeImportQueue();
+            }, AI_CONSENT_PROMPT_SETTLE_MS);
+            retryTimersRef.current.add(timer);
+        });
         const retryTimers = retryTimersRef.current;
         return () => {
             sub.remove();
             unsub();
             unsubPrepared();
+            unsubConsent();
             retryTimers.forEach((timer) => clearTimeout(timer));
             retryTimers.clear();
         };

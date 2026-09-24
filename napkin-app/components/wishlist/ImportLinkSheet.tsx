@@ -91,6 +91,11 @@ import {
 } from '@/lib/importEditMatch';
 
 import { safeRandomUUID } from '@/lib/uuid';
+import {
+    AI_CONSENT_PROMPT_SETTLE_MS,
+    isAiBoundUrl,
+    requestAiImportConsent,
+} from '@/lib/aiConsent';
 import { queuePickedVideo } from '@/lib/queuePickedVideo';
 import { pokeImportQueue, getImportForUser } from '@/lib/importQueue';
 import { maybeOfferNotifPrompt } from '@/lib/localNotify';
@@ -185,6 +190,19 @@ export function ImportLinkSheet({
     const { user } = useAuth();
     const activeUserIdRef = useRef(user?.id);
     activeUserIdRef.current = user?.id;
+
+    // TICKET-250 (Guideline 5.1.2(i)): nothing AI-bound leaves the phone until
+    // this user allowed it (lib/aiConsent). Resolves true with no prompt once
+    // allowed. After any prompt (Allow or Not now), wait for the alert to finish
+    // animating out: the next step presents the picker or dismisses this Modal,
+    // and UIKit can drop either while the alert is still leaving.
+    const ensureAiConsent = useCallback(async (): Promise<boolean> => {
+        const answer = await requestAiImportConsent(activeUserIdRef.current);
+        if (answer.prompted) {
+            await new Promise((resolve) => setTimeout(resolve, AI_CONSENT_PROMPT_SETTLE_MS));
+        }
+        return answer.granted;
+    }, []);
     const queuedVideoRef = useRef<string | null>(null);
     const directMediaStart = !initialUrl && !initialVideoPath && (
         openTo === 'screenshot' || (openTo === 'video' && VIDEO_IMPORT_AVAILABLE)
@@ -325,6 +343,18 @@ export function ImportLinkSheet({
             setTickedKeys(new Set()); // re-initialized when resolver succeeds
             setChosenTable(null);
             resetSaveError();
+            if (isAiBoundUrl(trimmed)) {
+                // Ask first; a "Not now" leaves the link in the field.
+                let cancelled = false;
+                void ensureAiConsent().then((allowed) => {
+                    if (cancelled) return;
+                    if (allowed) resolve(trimmed);
+                    else setSheetState('idle');
+                });
+                return () => {
+                    cancelled = true;
+                };
+            }
             resolve(trimmed);
         } else {
             setErrorCode('INVALID_URL');
@@ -394,13 +424,14 @@ export function ImportLinkSheet({
         : null;
 
     // ── Handlers ───────────────────────────────────────────────────────
-    const handleFindIt = useCallback(() => {
+    const handleFindIt = useCallback(async () => {
         resetSaveError();
         if (!inputOk) {
             setTouched(true);
             return;
         }
         const url = inputValue.trim();
+        if (isAiBoundUrl(url) && !(await ensureAiConsent())) return;
         setLastUrl(url);
         // Fresh nonce per new URL resolve — also clear per-spot nonce map.
         importNonceRef.current = safeRandomUUID();
@@ -414,7 +445,7 @@ export function ImportLinkSheet({
         setTickedKeys(new Set()); // candidates not yet known; re-initialized on success
         setChosenTable(null);
         resolve(url);
-    }, [inputOk, inputValue, resolve, resetSaveError]);
+    }, [inputOk, inputValue, resolve, resetSaveError, ensureAiConsent]);
 
     const handleDismiss = useCallback(() => {
         videoReqRef.current++;
@@ -701,6 +732,11 @@ export function ImportLinkSheet({
     const runVideoExtraction = useCallback(async (uri: string) => {
         resetSaveError();
         const myId = ++videoReqRef.current;
+        if (!(await ensureAiConsent())) {
+            if (videoReqRef.current === myId) setSheetState('menu');
+            return;
+        }
+        if (videoReqRef.current !== myId) return; // dismissed while asking
         // Defensive guard for stale/deferred iOS deep links opened on another
         // platform. The normal Android UI cannot reach this function because the
         // video row is absent, but a crafted route must not touch the missing module.
@@ -725,7 +761,7 @@ export function ImportLinkSheet({
             setErrorCode('VIDEO_FAILED');
             setSheetState('error');
         }
-    }, [resolve, resetSaveError]);
+    }, [resolve, resetSaveError, ensureAiConsent]);
 
     // ── Edit-match inline search ───────────────────────────────────────
     const runEditMatchSearch = useCallback(async (
@@ -788,6 +824,11 @@ export function ImportLinkSheet({
 
     // TICKET-060: handle screenshot/photo pick from OS image picker
     const handlePickScreenshot = useCallback(async () => {
+        // Ask before the picker opens: the screenshot itself goes to the model.
+        if (!(await ensureAiConsent())) {
+            if (directMediaStart) handleDismiss();
+            return;
+        }
         const picked = await pickMedia('screenshot');
         if (!picked || picked.request !== mediaPickerReqRef.current) return;
         const { asset, request } = picked;
@@ -805,12 +846,17 @@ export function ImportLinkSheet({
             setErrorCode('UPLOAD_FAILED');
             setSheetState('error');
         }
-    }, [user?.id, resolve, resetSaveError, pickMedia]);
+    }, [user?.id, resolve, resetSaveError, pickMedia, ensureAiConsent, directMediaStart, handleDismiss]);
 
     // Gallery videos use the same durable review-first queue as shared videos.
     // Only local capture is awaited here; OCR and matching outlive this sheet.
     const handlePickVideo = useCallback(async () => {
         const expectedOwner = user?.id;
+        // Ask before the picker opens: the clip's text and speech go to the model.
+        if (!(await ensureAiConsent())) {
+            if (directMediaStart) handleDismiss();
+            return;
+        }
         if (isBackgroundVideoCaptureAvailable()) {
             const request = ++mediaPickerReqRef.current;
             lastPickerKindRef.current = 'video';
@@ -858,9 +904,9 @@ export function ImportLinkSheet({
             setErrorCode('VIDEO_CAPTURE_FAILED');
             setSheetState('error');
         }
-    }, [user?.id, directMediaStart, pickMedia, handleDismiss]);
+    }, [user?.id, directMediaStart, pickMedia, handleDismiss, ensureAiConsent]);
 
-    const handleRetry = useCallback(() => {
+    const handleRetry = useCallback(async () => {
         if (errorCode === 'MEDIA_PICKER_FAILED' || errorCode === 'VIDEO_CAPTURE_FAILED') {
             if (lastPickerKindRef.current === 'video') void handlePickVideo();
             else void handlePickScreenshot();
@@ -875,10 +921,11 @@ export function ImportLinkSheet({
             runVideoExtraction(lastVideoUriRef.current);
             return;
         }
+        if (isAiBoundUrl(lastUrl) && !(await ensureAiConsent())) return;
         setSheetState('idle');
         resetSaveError();
         resolve(lastUrl);
-    }, [resolve, lastUrl, errorCode, runVideoExtraction, resetSaveError, handlePickVideo, handlePickScreenshot]);
+    }, [resolve, lastUrl, errorCode, runVideoExtraction, resetSaveError, handlePickVideo, handlePickScreenshot, ensureAiConsent]);
 
     // TICKET-082: share-extension video path → kick off extraction once on open.
     const videoStartedRef = useRef(false);

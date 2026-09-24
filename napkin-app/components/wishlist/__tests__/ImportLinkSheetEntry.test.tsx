@@ -17,6 +17,8 @@ const mockToast = jest.fn();
 const mockOfferNotifications = jest.fn();
 let mockBackgroundCapture = false;
 let mockUserId = 'owner-1';
+// TICKET-250: most tests model a user who already allowed AI imports.
+const mockRequestAiConsent = jest.fn();
 
 jest.mock('react-native', () => ({
     Modal: 'Modal', View: 'View', Text: 'Text', TextInput: 'TextInput',
@@ -44,6 +46,11 @@ jest.mock('@/providers/ToastProvider', () => ({ useToast: () => ({ show: mockToa
 jest.mock('@/lib/queuePickedVideo', () => ({ queuePickedVideo: (...args: unknown[]) => mockQueueVideo(...args) }));
 jest.mock('@/lib/importQueue', () => ({ pokeImportQueue: jest.fn(), getImportForUser: () => ({ userId: mockUserId }) }));
 jest.mock('@/lib/localNotify', () => ({ maybeOfferNotifPrompt: () => mockOfferNotifications() }));
+jest.mock('@/lib/aiConsent', () => ({
+    AI_CONSENT_PROMPT_SETTLE_MS: 0,
+    isAiBoundUrl: (url: string | null | undefined) => !/maps\.app\.goo\.gl/.test(url ?? ''),
+    requestAiImportConsent: (...args: unknown[]) => mockRequestAiConsent(...args),
+}));
 jest.mock('@/hooks/wishlist/useResolveUrl', () => ({
     useResolveUrl: () => ({ resolve: mockResolve, cancel: mockCancel, state: 'idle' }),
 }));
@@ -87,6 +94,8 @@ describe('ImportLinkSheet direct media entry', () => {
         props = { visible: true, openTo: 'video', onDismiss: jest.fn() };
         mockBackgroundCapture = false;
         mockUserId = 'owner-1';
+        mockRequestAiConsent.mockReset().mockResolvedValue({ granted: true, prompted: false });
+        mockResolve.mockReset();
         mockNativePick.mockReset();
         mockQueueVideo.mockReset().mockResolvedValue({ jobId: 'job-1' });
         mockPick.mockReset().mockImplementation(() => new Promise(() => {}));
@@ -110,6 +119,54 @@ describe('ImportLinkSheet direct media entry', () => {
     function modal() { return tree.root.findByType('Modal'); }
     function text() { return JSON.stringify(tree.toJSON()); }
     async function shown() { await act(async () => { modal().props.onShow(); }); }
+
+    it.each(['video', 'screenshot'] as const)('asks before opening the %s picker and closes on Not now (TICKET-250)', async (openTo) => {
+        mockRequestAiConsent.mockResolvedValue({ granted: false, prompted: true });
+        await render({ openTo });
+        await shown();
+        // Not now also waits out the alert's exit before dismissing the Modal.
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+        expect(mockRequestAiConsent).toHaveBeenCalledWith('owner-1');
+        expect(mockPick).not.toHaveBeenCalled();
+        expect(mockNativePick).not.toHaveBeenCalled();
+        expect(mockUpload).not.toHaveBeenCalled();
+        expect(props.onDismiss).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['video', 'screenshot'] as const)('opens the %s picker after an Allow (TICKET-250)', async (openTo) => {
+        mockRequestAiConsent.mockResolvedValue({ granted: true, prompted: true });
+        await render({ openTo });
+        await shown();
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+        expect(mockPick).toHaveBeenCalledTimes(1);
+    });
+
+    describe('shared links (TICKET-250)', () => {
+        const tiktok = 'https://www.tiktok.com/@chef/video/123';
+
+        it('asks before a TikTok link goes out and keeps it in the field on Not now', async () => {
+            mockRequestAiConsent.mockResolvedValue({ granted: false, prompted: true });
+            await render({ openTo: undefined, initialUrl: tiktok });
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+            expect(mockRequestAiConsent).toHaveBeenCalledWith('owner-1');
+            expect(mockResolve).not.toHaveBeenCalled();
+            expect(text()).toContain('paste a link');
+        });
+
+        it('resolves the link once allowed', async () => {
+            await render({ openTo: undefined, initialUrl: tiktok });
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+            expect(mockResolve).toHaveBeenCalledWith(tiktok);
+        });
+
+        it('never asks for a Google Maps link, which no model reads', async () => {
+            const maps = 'https://maps.app.goo.gl/yMEXGo9h9PAqKQfZ6';
+            await render({ openTo: undefined, initialUrl: maps });
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+            expect(mockRequestAiConsent).not.toHaveBeenCalled();
+            expect(mockResolve).toHaveBeenCalledWith(maps);
+        });
+    });
 
     it.each(['video', 'screenshot'] as const)('opens %s only after host presentation, without source content or another scrim', async (openTo) => {
         await render({ visible: false });
