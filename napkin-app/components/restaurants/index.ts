@@ -29,6 +29,7 @@ export {
     FeaturedListsSection,
     RestaurantDetails,
     SectionHeading,
+    QuoteCard,
 } from './RestaurantPageV3';
 
 export { RestaurantOverview } from './RestaurantOverview';

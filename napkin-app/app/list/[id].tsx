@@ -7,6 +7,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
+import { GuestListScreen } from '@/components/guest/GuestListScreen';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import {
     useList,
@@ -50,7 +51,7 @@ import { PressableScale } from '@/components/ui/napkin/PressableScale';
 const NO_FILTERS = { city: null, cuisine: null, price: null } as const;
 type Overlay = 'none' | 'share' | 'import' | 'repair';
 
-export default function ListDetailScreen() {
+function SignedInListDetailScreen() {
     const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
@@ -576,3 +577,11 @@ const styles = StyleSheet.create({
         fontSize: 13,
     },
 });
+
+/** TICKET-247: a signed-out guest gets the read-only public-list view for the same id. */
+export default function ListDetailScreen() {
+    const { user } = useAuth();
+    const { id } = useLocalSearchParams<{ id: string }>();
+    if (!user) return id ? <GuestListScreen listId={id} /> : null;
+    return <SignedInListDetailScreen />;
+}

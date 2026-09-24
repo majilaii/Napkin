@@ -298,6 +298,16 @@ export const queryKeys = {
         isAdmin: (userId: string) => ['admin', 'isAdmin', userId] as const,
     },
 
+    // Guest browse: signed-out reads off the `public-browse` edge function
+    // (TICKET-247). No viewer key: every guest sees the same public slice.
+    guest: {
+        search: (q: string) => ['guest', 'search', q] as const,
+        recent: () => ['guest', 'recent'] as const,
+        page: (id: string) => ['guest', 'restaurantPage', id] as const,
+        reviews: (id: string) => ['guest', 'reviews', id] as const,
+        list: (id: string) => ['guest', 'list', id] as const,
+    },
+
     // Handoff — wishlist share link resolve (TICKET-072)
     handoff: {
         resolve: (token: string) => ['handoff', 'resolve', token] as const,

@@ -15,8 +15,16 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/providers/AuthProvider';
 import { ProfileScreenBody } from '@/components/profile/ProfileScreenBody';
+import { GuestPlate } from '@/components/guest/GuestPlate';
 
+// TICKET-247: guests (no session) get the sign-in plate.
 export default function ProfileTab() {
+    const { user } = useAuth();
+    if (!user) return <GuestPlate surface="profile" />;
+    return <ProfileTabBody />;
+}
+
+function ProfileTabBody() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
