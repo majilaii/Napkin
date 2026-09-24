@@ -240,6 +240,20 @@ async function resolveProfile(
 }
 
 /**
+ * TICKET-251: internal (CI smoke / test) accounts are hidden from people
+ * search unless the viewer is internal too. Read once per search request.
+ */
+async function isInternalViewer(supabase: any, userId: string): Promise<boolean> {
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('is_internal')
+        .eq('user_id', userId)
+        .maybeSingle();
+    if (error) throw error;
+    return data?.is_internal === true;
+}
+
+/**
  * Fetch shared table IDs between caller and target.
  */
 async function fetchSharedTableIds(
@@ -2043,6 +2057,9 @@ serve(async (req) => {
 
             const maxResults = Math.min(Math.max(rawLimit ?? 20, 1), 20);
             const pattern = `%${q.trim()}%`;
+            // TICKET-251: internal (smoke / test) accounts never surface to
+            // real users; internal viewers keep seeing each other.
+            const hideInternal = !(await isInternalViewer(supabase, user.id));
 
             if (mutualOnly) {
                 const rows = await searchProfilesWithMutualBackfill(
@@ -2050,16 +2067,18 @@ serve(async (req) => {
                     user.id,
                     pattern,
                     maxResults,
+                    { hideInternal },
                 );
                 return json({ data: rows });
             }
 
-            const { data: results, error: searchErr } = await supabase
+            let searchQuery = supabase
                 .from('profiles')
                 .select('user_id, display_name, avatar_url, created_at')
                 .ilike('display_name', pattern)
-                .neq('user_id', user.id)
-                .limit(maxResults);
+                .neq('user_id', user.id);
+            if (hideInternal) searchQuery = searchQuery.eq('is_internal', false);
+            const { data: results, error: searchErr } = await searchQuery.limit(maxResults);
 
             if (searchErr) throw searchErr;
 

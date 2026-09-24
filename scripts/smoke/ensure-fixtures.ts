@@ -26,6 +26,16 @@
  *   user-profile action=update_privacy) so the scope=public post-interactions
  *   check can never 403 on a fresh/reset account.
  *
+ *   TICKET-251: both smoke accounts are INTERNAL (profiles.is_internal, set by
+ *   migration, never by this script). Their reviews are never publicly
+ *   eligible and their saves show only to internal viewers, so nothing seeded
+ *   here reaches a guest or a real user. The self reads this script and the
+ *   keyset walks depend on (user-profile diary / reviews as self) are
+ *   unaffected, and the feed-socials check still sees the +socials saver's
+ *   clip because the smoke user is internal too. The scope=public
+ *   post-interactions check now discovers a non-internal author's review at
+ *   SMOKE_TEST_RESTAURANT_ID instead of a smoke fixture.
+ *
  * Required env (same set as the smoke step in prod-deploy.yml):
  *   SUPABASE_URL, SUPABASE_ANON_KEY
  *   SMOKE_TEST_EMAIL + SMOKE_TEST_PASSWORD  — smoke-user credentials
@@ -68,9 +78,11 @@ const FIXTURES = [
         rating: 4,
         content: 'Smoke fixture — first of two entries that keep the diary keyset walk honest.',
         visited_at: '2025-01-01T12:00:00.000Z',
-        // TICKET-173: is_entry_publicly_eligible now rejects visibility='private'
-        // (the entry-fn default). The scope=public smoke check needs these rows
-        // publicly eligible, so pin a non-private ring visibility explicitly.
+        // TICKET-173 pinned a non-private ring visibility so these rows were
+        // publicly eligible. TICKET-251 made the smoke account internal, so they
+        // never are any more (the scope=public smoke check discovers a real
+        // author's review instead); the visibility stays as the diary and
+        // reviews self reads expect it.
         visibility: 'table',
     },
     {
@@ -152,10 +164,11 @@ async function ensureTable(token: string): Promise<void> {
     console.log(`  ✓ table ${created.id} created`);
 }
 
-// ── TICKET-121 fix-pass: the activated post-interactions scope=public smoke
-// check requires is_entry_publicly_eligible, which requires the smoke profile
-// to be account_privacy='public' — the DB default is 'private', so a fresh (or
-// founder-reset) smoke account would 403 that check. Self-heal through the
+// ── TICKET-121 fix-pass: the smoke profiles must be account_privacy='public'.
+// Originally for the scope=public post-interactions check (superseded by
+// TICKET-251: the smoke account is internal, so that check now targets a real
+// author's review); still required for the +socials saver, because the socials
+// candidate compute admits public accounts only. Self-heal through the
 // user-profile edge fn (app write path, never direct DB). Idempotent: no-op
 // once public. The first flip to public atomically requires a username in the
 // same call; send a fixed deterministic one only when the profile has none.
