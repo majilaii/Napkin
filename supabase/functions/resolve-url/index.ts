@@ -61,6 +61,7 @@ import {
   validPhotoSlideCount,
 } from "../_shared/visionExtract.ts";
 import {
+  aiConsentRefused,
   EXTRACTION_TIMEOUT_MS,
   extractionCacheContract,
   getExtractionModel,
@@ -134,6 +135,15 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 function extractionFailureResponse(error: unknown): Response | null {
   const failure = extractionFailureDecision(error);
   return failure ? errorResponse(failure.code, failure.message, failure.status) : null;
+}
+
+// Same 426 as the legacy save floor: the fix is always a newer build.
+function aiConsentOutdatedResponse(): Response {
+  return errorResponse(
+    "AI_CONSENT_OUTDATED",
+    "Please update Napkin before importing this",
+    426,
+  );
 }
 
 // ── Deadline helper (ARCH-REVIEW-2 #6) ───────────────────────────────────────
@@ -710,6 +720,7 @@ import {
   exhaustedInlineRoute,
   extractionFailureDecision,
   extractOptionalVision,
+  urlReachesImportModel,
   expectedImportOwnerDecision,
   filterUnauthorizedTableIds,
   type ImportPlaceSearchResult,
@@ -3991,6 +4002,8 @@ serve(async (req) => {
     supports_large_lists?: boolean;
     /** Durable-manifest owner fence; optional only for deployed-client compatibility. */
     expected_owner_id?: unknown;
+    /** Consent version the app enforces before model-bound imports (Guideline 5.1.2(i)). */
+    ai_consent_version?: unknown;
   };
   try {
     body = await req.json();
@@ -4135,6 +4148,8 @@ serve(async (req) => {
     ? body.extracted_text.trim()
     : "";
   if (routesToVideoText(body)) {
+    // Always model-bound. Refused before the rate limit spends a slot.
+    if (aiConsentRefused(body?.ai_consent_version)) return aiConsentOutdatedResponse();
     // Fail-CLOSED (TICKET-091): RPC error or missing row denies.
     const { data: rlRows, error: rlErr } = await supabase.rpc(
       "check_and_increment_rate_limit",
@@ -4211,6 +4226,14 @@ serve(async (req) => {
       );
     }
     parsedUrl = urlResult.url;
+  }
+
+  // Screenshots and every non-Maps link can reach the model; Maps links and
+  // the Instagram nudge never do. Refused before the rate limit spends a slot.
+  const reachesImportModel = hasImage ||
+    (parsedUrl !== null && urlReachesImportModel(detectSourceType(parsedUrl)));
+  if (reachesImportModel && aiConsentRefused(body?.ai_consent_version)) {
+    return aiConsentOutdatedResponse();
   }
 
   // ── Rate limit ────────────────────────────────────────────────────────────

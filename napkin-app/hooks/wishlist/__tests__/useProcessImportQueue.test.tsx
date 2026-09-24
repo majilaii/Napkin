@@ -261,6 +261,13 @@ describe('root import queue gallery integration', () => {
         expect(getImport('job-1')).toMatchObject({ mode: 'review', remoteState: 'needs_device',
             spots: [expect.objectContaining({ resolution_id: 'resolution-1', restaurant_name: 'Salvo Bakehouse' })] });
         expect(mockPerceive).toHaveBeenCalled();
+        // The plain resolve can reach the import model, so it states the
+        // consent this build asked for; the server refuses model work without it.
+        const resolveCalls = mockEdge.mock.calls.filter(([fn, options]) => fn === 'resolve-url' && !options.action);
+        expect(resolveCalls.length).toBeGreaterThan(0);
+        for (const [, options] of resolveCalls) {
+            expect(options.body.ai_consent_version).toBe('import-v2:anthropic');
+        }
         const serverCalls = mockEdge.mock.calls.filter(([fn]) => fn === 'background-imports');
         expect(serverCalls).toHaveLength(1);
         expect(serverCalls[0][1]).toEqual(expect.objectContaining({ action: 'dismiss', body: {

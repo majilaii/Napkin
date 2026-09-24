@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { ExtractionError } from '../_shared/importModel.ts';
-import { allowsCaptionPlacesFallback, extractOptionalVision, extractionFailureDecision, runAsyncImportExtraction } from './_helpers.ts';
+import { allowsCaptionPlacesFallback, extractOptionalVision, extractionFailureDecision, runAsyncImportExtraction, urlReachesImportModel } from './_helpers.ts';
 
 Deno.test('background extraction settles placeholders before exposing a typed provider error', async () => {
   const failure = new ExtractionError('EXTRACTION_UNAVAILABLE', 'Provider unavailable');
@@ -62,4 +62,12 @@ Deno.test('optional image failure preserves real text candidates but never creat
   assertEquals(extracted, [{ name: 'Keiko Uchida' }]);
   assertEquals(await assertRejects(() => extractOptionalVision([], () => Promise.reject(failure))), failure);
   assertEquals(await extractOptionalVision([], () => Promise.resolve(extracted)), extracted);
+});
+
+Deno.test('only Google Maps links and the Instagram nudge stay off the consent guard', () => {
+  assertEquals(urlReachesImportModel('google_maps'), false);
+  assertEquals(urlReachesImportModel('instagram'), false);
+  for (const source of ['tiktok', 'web', 'reddit', 'substack', 'screenshot']) {
+    assertEquals(urlReachesImportModel(source), true);
+  }
 });

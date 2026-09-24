@@ -54,6 +54,24 @@ export function extractionOutputFormat(model = getExtractionModel()): 'object' |
     return getExtractionProvider(model) === 'openai' || ANTHROPIC_STRUCTURED_MODELS.includes(model) ? 'object' : 'array';
 }
 
+/**
+ * Guideline 5.1.2(i): the app asks before any import reaches the model and
+ * sends the consent version it enforces (`import-v2:anthropic`). A request that
+ * would reach the model is refused unless that version names the provider the
+ * server uses now, so a build that asked about another provider (266 asked
+ * about OpenAI) or never asked (263 to 265) cannot send content to this one.
+ * A misconfigured model is left to fail as EXTRACTION_NOT_CONFIGURED.
+ */
+export function aiConsentRefused(consentVersion: unknown, model = getExtractionModel()): boolean {
+    let provider: string;
+    try {
+        provider = getExtractionProvider(model);
+    } catch {
+        return false;
+    }
+    return !(typeof consentVersion === 'string' && consentVersion.endsWith(`:${provider}`));
+}
+
 export function extractionKeyName(model = getExtractionModel()): string {
     return getExtractionProvider(model) === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
 }

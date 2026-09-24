@@ -47,6 +47,7 @@ import { presentImportNotification, maybeOfferNotifPrompt } from '@/lib/localNot
 import {
     AI_CONSENT_PROMPT_SETTLE_MS,
     aiConsentPromptRecentlyAnswered,
+    aiConsentRequestFields,
     declinedAiImportConsentThisSession,
     hasAiImportConsent,
     importNeedsAiConsent,
@@ -360,7 +361,13 @@ export function useProcessImportQueue() {
             runOwnerBound(manifest, (expectedOwnerId) =>
                 callEdgeFn<T>('resolve-url', {
                     action,
-                    body: { ...body, expected_owner_id: expectedOwnerId },
+                    body: {
+                        ...body,
+                        // The plain resolve (no action) is the one that can reach
+                        // the model; saves and Places-only actions never do.
+                        ...(action === undefined ? aiConsentRequestFields() : {}),
+                        expected_owner_id: expectedOwnerId,
+                    },
                 })
             ),
         [runOwnerBound],

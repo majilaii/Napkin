@@ -24,6 +24,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { reportError } from '../_shared/report.ts';
 import { hashImage, hashTextSource, HASH_VERSION } from '../_shared/contentHash.ts';
 import { isUuid } from './utils.ts';
+import { aiConsentRefused } from '../_shared/importModel.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ interface CreateImportBody {
     };
     // Optional note to attach to the share card
     note?: string;
+    // Consent version the app enforces before model-bound imports (Guideline 5.1.2(i))
+    ai_consent_version?: unknown;
 }
 
 interface CorrectImportBody {
@@ -155,6 +158,13 @@ async function handleCreateImport(
 ): Promise<Response> {
     const { image_path, source_url, caption, destinations, note } = body;
     const { wishlist = true, table_ids = [] } = destinations ?? {};
+
+    // A screenshot or link here goes to the import model (resolve-url's async
+    // extract), so it needs consent to the model's provider, as in resolve-url.
+    // Same 426 as there: the fix is always a newer build.
+    if ((image_path || source_url) && aiConsentRefused(body.ai_consent_version)) {
+        return err('AI_CONSENT_OUTDATED', 'Please update Napkin before importing this', 426);
+    }
 
     // ── Upload validation (R9/M1/N3) — THE SINGLE pre-extraction block ────────
     // Validate before ANY row is written. Only runs if an image path is provided.

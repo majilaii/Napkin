@@ -8,6 +8,7 @@
  * - signal is passed to callEdgeFn which routes to postWithFetch() for real abort
  */
 import { useRef, useCallback, useState } from 'react';
+import { aiConsentRequestFields } from '@/lib/aiConsent';
 import { callEdgeFn, isAuthFailure } from '@/lib/edgeInvoke';
 import { deleteCachedTikTokVideo, downloadTikTokVideo, fetchTikTokPerception, isTikTokUrl } from '@/lib/tiktokPerception';
 import { fetchInstagramPerception, isInstagramUrl } from '@/lib/instagramPerception';
@@ -153,7 +154,10 @@ export function useResolveUrl() {
                     remove: deleteCachedTikTokVideo,
                     available: isVideoImportAvailable,
                     isAuthFailure,
-                    resolve: (body, signal) => callEdgeFn<ResolveUrlData>('resolve-url', { body, signal }),
+                    resolve: (body, signal) => callEdgeFn<ResolveUrlData>('resolve-url', {
+                        body: { ...body, ...aiConsentRequestFields() },
+                        signal,
+                    }),
                 }, caption);
                 if (myId !== currentRequestIdRef.current) return;
                 if (result) {
@@ -187,6 +191,7 @@ export function useResolveUrl() {
                     ...(imagePath ? { image_path: imagePath } : {}),
                     ...(caption ? { caption } : {}),
                     ...(tierText ? { extracted_text: tierText } : {}),
+                    ...aiConsentRequestFields(),
                 },
                 signal: controller.signal,
             });
@@ -203,7 +208,7 @@ export function useResolveUrl() {
                 (result?.candidates?.length ?? 0) === 0
             ) {
                 const fallback = await callEdgeFn<ResolveUrlData>('resolve-url', {
-                    body: { url },
+                    body: { url, ...aiConsentRequestFields() },
                     signal: controller.signal,
                 });
                 if (myId !== currentRequestIdRef.current) return;

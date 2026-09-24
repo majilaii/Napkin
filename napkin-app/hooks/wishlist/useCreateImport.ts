@@ -12,6 +12,7 @@
  * onSuccess invalidates table activity for all ticked Tables (M-2 fix).
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { aiConsentRequestFields } from '@/lib/aiConsent';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { queryKeys } from '@/lib/queryKeys';
 import type { InfiniteData } from '@tanstack/react-query';
@@ -62,9 +63,10 @@ export function useCreateImport(userId: string | null | undefined) {
 
     return useMutation({
         mutationFn: async (input: CreateImportInput): Promise<CreateImportResult> => {
+            // The screenshot or link goes to the import model server-side.
             return callEdgeFn<CreateImportResult>('table-shares', {
                 action: 'create_import',
-                body: input,
+                body: { ...input, ...aiConsentRequestFields() },
             });
         },
 

@@ -27,6 +27,17 @@ export const AI_IMPORT_PROVIDER_LABEL = 'Anthropic';
 export const AI_IMPORT_CONSENT_VERSION = 'import-v2:anthropic';
 
 /**
+ * Sent with every request that can reach the import model. This build asks
+ * before any such request, so the field states which provider it asked about;
+ * the server refuses model work unless it names the provider it uses, which
+ * keeps builds that asked about another provider (or never asked) from
+ * sending content to this one.
+ */
+export function aiConsentRequestFields(): { ai_consent_version: string } {
+    return { ai_consent_version: AI_IMPORT_CONSENT_VERSION };
+}
+
+/**
  * UIKit may still be animating the alert away when its button handler runs.
  * Presenting or dismissing another controller in that window can be dropped
  * silently, so a caller that does either after a prompt (Allow or Not now)

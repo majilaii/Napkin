@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import {
-    ExtractionError, EXTRACTION_TIMEOUT_MS, extractionCacheContract, extractionOutputFormat, getExtractionModel,
+    aiConsentRefused, ExtractionError, EXTRACTION_TIMEOUT_MS, extractionCacheContract, extractionOutputFormat, getExtractionModel,
     isCurrentExtractionCache, parseAnthropicStructuredExtraction, parseOpenAIExtraction,
 } from './importModel.ts';
 import { extractFromText, extractFromTextMulti, extractFromVisionMulti } from './visionExtract.ts';
@@ -298,4 +298,19 @@ Deno.test('cache validity requires exact model and extraction contract for every
     assertEquals(isCurrentExtractionCache({ model, extracted: { ...row.extracted, contract: 'old' } }, model), false);
     assertEquals(isCurrentExtractionCache({ model, extracted: { ...row.extracted, contract: 'featured-destinations-v2:low' } }, model), false);
     assertEquals(isCurrentExtractionCache(null, model), false);
+});
+
+Deno.test('model work needs consent that names the provider the server uses now', () => {
+    const opus = 'claude-opus-5-5';
+    // Builds 263 to 265 send nothing; build 266 asked about OpenAI.
+    assertEquals(aiConsentRefused(undefined, opus), true);
+    assertEquals(aiConsentRefused('import-v1:openai', opus), true);
+    assertEquals(aiConsentRefused({ version: 'import-v2:anthropic' }, opus), true);
+    assertEquals(aiConsentRefused('import-v2:anthropic', opus), false);
+    assertEquals(aiConsentRefused('import-v2:anthropic', 'claude-haiku-4-5-20251001'), false);
+    // A rollback to OpenAI refuses Anthropic-only consent and honours 266's.
+    assertEquals(aiConsentRefused('import-v2:anthropic', 'gpt-5.6-luna'), true);
+    assertEquals(aiConsentRefused('import-v1:openai', 'gpt-5.6-luna'), false);
+    // A misconfigured model fails later as EXTRACTION_NOT_CONFIGURED instead.
+    assertEquals(aiConsentRefused(undefined, 'claude-opus-5'), false);
 });
