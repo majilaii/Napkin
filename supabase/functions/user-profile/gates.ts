@@ -197,3 +197,18 @@ export function hidesInternalProfile(
 ): boolean {
     return targetIsInternal && !isSelf && !viewerIsInternal;
 }
+
+/**
+ * Follower and following lists drop internal (test) accounts for real
+ * viewers, as every other profile surface does, so no row opens onto a
+ * not-found profile. The viewer's own row always stays.
+ */
+export function visibleFollowListRows<T extends { user_id: string; is_internal?: boolean | null }>(
+    rows: T[],
+    viewerId: string,
+    viewerIsInternal: boolean,
+): T[] {
+    return rows.filter((row) =>
+        !hidesInternalProfile(row.is_internal === true, row.user_id === viewerId, viewerIsInternal)
+    );
+}

@@ -18,6 +18,7 @@ import {
     type BlockState,
     type ViewerRelationship,
     hidesInternalProfile,
+    visibleFollowListRows,
 } from './gates.ts';
 
 const VIEWER = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -173,4 +174,19 @@ Deno.test('hidesInternalProfile: internal profiles read as not-found to real use
     // Real profiles are never affected.
     assertEquals(hidesInternalProfile(false, false, false), false);
     assertEquals(hidesInternalProfile(false, false, true), false);
+});
+
+Deno.test('visibleFollowListRows: internal accounts leave follow lists for real viewers only', () => {
+    const rows = [
+        { user_id: TARGET, is_internal: false },
+        { user_id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', is_internal: true },
+        { user_id: VIEWER, is_internal: true },
+        { user_id: 'dddddddd-dddd-dddd-dddd-dddddddddddd', is_internal: null },
+    ];
+    // A real viewer sees real accounts, and always their own row.
+    assertEquals(visibleFollowListRows(rows, VIEWER, false).map((r) => r.user_id), [
+        TARGET, VIEWER, 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+    ]);
+    // Internal viewers (the smoke accounts) keep the whole list.
+    assertEquals(visibleFollowListRows(rows, VIEWER, true).length, 4);
 });

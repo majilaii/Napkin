@@ -61,6 +61,7 @@ import {
     strangerCanReadPalate,
     type BlockState,
     type ViewerRelationship,
+    visibleFollowListRows,
 } from './gates.ts';
 import {
     computeRatingHistogram,
@@ -2430,15 +2431,25 @@ serve(async (req) => {
             const callerId = user.id;
             const isSelf = callerId === target_user_id;
 
+            // Read once, only when an internal account is involved.
+            let viewerIsInternal: boolean | null = null;
+            const viewerInternal = async () =>
+                viewerIsInternal ??= await isInternalViewer(supabase, callerId);
+
             // Privacy gate — same access rules as the rest of the palate.
             if (!isSelf) {
                 const { data: targetRow, error: targetErr } = await supabase
                     .from('profiles')
-                    .select('account_privacy')
+                    .select('account_privacy, is_internal')
                     .eq('user_id', target_user_id)
                     .maybeSingle();
                 if (targetErr) throw targetErr;
                 if (!targetRow) return notFound();
+                // An internal (test) account's lists read as not-found, like its profile.
+                if (targetRow.is_internal === true &&
+                    hidesInternalProfile(true, false, await viewerInternal())) {
+                    return notFound();
+                }
 
                 if (targetRow.account_privacy !== 'public') {
                     const sharedTableIds = await fetchSharedTableIds(supabase, callerId, target_user_id);
@@ -2467,7 +2478,7 @@ serve(async (req) => {
             const [profilesRes, callerFollowsRes] = await Promise.all([
                 supabase
                     .from('profiles')
-                    .select('user_id, display_name, username, avatar_url')
+                    .select('user_id, display_name, username, avatar_url, is_internal')
                     .in('user_id', ids),
                 // Resolve is_following (caller → each listed user) in one query
                 supabase
@@ -2484,14 +2495,17 @@ serve(async (req) => {
                     .map((f) => f.following_id),
             );
 
-            const byId = new Map(
-                ((profilesRes.data ?? []) as {
-                    user_id: string;
-                    display_name: string;
-                    username: string | null;
-                    avatar_url: string | null;
-                }[]).map((p) => [p.user_id, p]),
-            );
+            const listedProfiles = (profilesRes.data ?? []) as {
+                user_id: string;
+                display_name: string;
+                username: string | null;
+                avatar_url: string | null;
+                is_internal: boolean | null;
+            }[];
+            const shownProfiles = listedProfiles.some((p) => p.is_internal === true)
+                ? visibleFollowListRows(listedProfiles, callerId, await viewerInternal())
+                : listedProfiles;
+            const byId = new Map(shownProfiles.map((p) => [p.user_id, p]));
 
             return json({
                 data: ids
