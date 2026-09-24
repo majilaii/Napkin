@@ -68,7 +68,7 @@ export function CommentRow({
     const editComment = useEditComment();
     const deleteComment = useDeleteComment();
     const toggleLike = useToggleCommentLike();
-    const openSafetyMenu = useCommentSafetyMenu();
+    const openSafetyMenu = useCommentSafetyMenu({ targetType, targetId, scope });
 
     const [isEditing, setIsEditing] = useState(false);
     const [editBody, setEditBody] = useState(comment.body);

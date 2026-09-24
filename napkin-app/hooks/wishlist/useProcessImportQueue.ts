@@ -309,6 +309,15 @@ function safeDeleteMov(path: string | undefined): void {
     }
 }
 
+// TICKET-250: user ids already offered the "waiting for your OK" toast this app
+// session. Module scope for the same reason as the drain lock below.
+const heldImportNoticeShown = new Set<string>();
+
+/** Test-only: forget which users were offered the held-import toast. */
+export function __resetHeldImportNoticeForTests(): void {
+    heldImportNoticeShown.clear();
+}
+
 // TICKET-164 [R10]: set when a drain is requested while another drain holds the
 // lock (an enqueue/poke that lands mid-drain). The in-flight drain rescans on
 // release — otherwise that wakeup is LOST (nothing re-triggers until the next
@@ -1966,19 +1975,38 @@ export function useProcessImportQueue() {
                 return claimed ? [claimed] : [];
             });
             // TICKET-250 (Guideline 5.1.2(i)): an AI-bound import waits for the
-            // user's OK. Ask only while they are looking at the app, and not
-            // again this session after a "Not now"; a background wake leaves the
-            // import pending and sends nothing. /import-progress offers "allow".
-            let aiAllowed = await hasAiImportConsent(userId);
-            if (
-                !aiAllowed &&
-                pending.some(importNeedsAiConsent) &&
-                AppState.currentState === 'active' &&
-                !declinedAiImportConsentThisSession(userId)
-            ) {
-                aiAllowed = (await requestAiImportConsent(userId)).granted;
-            }
+            // user's OK and a background wake sends nothing. The drain never
+            // raises the consent alert itself: it holds this lock, and an alert
+            // UIKit drops mid-presentation would never answer, stalling every
+            // import. Instead, while the user is looking, it offers a non-modal
+            // toast once per session (not after a "Not now"); tapping Allow asks
+            // from a settled screen. /import-progress keeps an "allow" line.
+            const aiAllowed = await hasAiImportConsent(userId);
             if (activeUserIdRef.current !== userId) return;
+            const held = aiAllowed ? [] : pending.filter(importNeedsAiConsent);
+            if (
+                held.length > 0 &&
+                AppState.currentState === 'active' &&
+                !declinedAiImportConsentThisSession(userId) &&
+                !heldImportNoticeShown.has(userId)
+            ) {
+                heldImportNoticeShown.add(userId);
+                toast.show(
+                    held.length === 1
+                        ? 'A shared import is waiting for your OK'
+                        : `${held.length} shared imports are waiting for your OK`,
+                    {
+                        label: 'Allow',
+                        onPress: () => {
+                            if (userId !== activeUserIdRef.current) return;
+                            void requestAiImportConsent(userId).then(({ granted }) => {
+                                if (granted) pokeImportQueue();
+                            });
+                        },
+                    },
+                    { title: 'Imports', icon: 'information-circle-outline' },
+                );
+            }
             const runnable = aiAllowed ? pending : pending.filter((m) => !importNeedsAiConsent(m));
             // TICKET-120: actively draining ≥1 import while the user is here is the
             // demonstrated-value beat to (quietly, cadence-gated) offer notifications.
@@ -2065,7 +2093,7 @@ export function useProcessImportQueue() {
                 setTimeout(() => pokeImportQueue(), 0);
             }
         }
-    }, [userId, session, processOne, announceImportOutcome, failAndAnnounceImport]);
+    }, [userId, session, processOne, announceImportOutcome, failAndAnnounceImport, toast]);
 
     useEffect(() => {
         drain();

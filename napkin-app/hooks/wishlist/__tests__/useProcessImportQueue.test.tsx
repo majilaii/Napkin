@@ -73,7 +73,7 @@ jest.mock('@/modules/media-extract', () => ({
     },
 }));
 
-import { useProcessImportQueue } from '../useProcessImportQueue';
+import { useProcessImportQueue, __resetHeldImportNoticeForTests } from '../useProcessImportQueue';
 import { router } from 'expo-router';
 import { getImport, pokeImportQueue, releaseDrainLock, type ImportManifest } from '@/lib/importQueue';
 
@@ -110,6 +110,8 @@ describe('root import queue gallery integration', () => {
         mockIntakeAvailable = false;
         mockAiConsent = true;
         mockAiDeclined = false;
+        __resetHeldImportNoticeForTests();
+        mockToast.mockReset();
         mockRequestAiConsent.mockReset().mockResolvedValue({ granted: true, prompted: true });
         mockExtract.mockReset().mockResolvedValue(evidence);
         mockPerceive.mockReset().mockResolvedValue(null);
@@ -145,13 +147,17 @@ describe('root import queue gallery integration', () => {
         function resolveCalls() {
             return mockEdge.mock.calls.filter(([fn]) => fn === 'resolve-url');
         }
+        function heldToasts() {
+            return mockToast.mock.calls.filter(([message]) => /waiting for your OK/.test(String(message)));
+        }
 
-        it('sends nothing from a background wake without consent, and does not ask', async () => {
+        it('sends nothing from a background wake without consent, and neither asks nor toasts', async () => {
             mockAiConsent = false;
             mockAppState.currentState = 'background';
             seed(tiktok);
             await mount();
             expect(mockRequestAiConsent).not.toHaveBeenCalled();
+            expect(heldToasts()).toHaveLength(0);
             expect(mockPerceive).not.toHaveBeenCalled();
             expect(resolveCalls()).toHaveLength(0);
             expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
@@ -167,29 +173,63 @@ describe('root import queue gallery integration', () => {
             expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
         });
 
-        it('asks while the app is open and runs the import after Allow', async () => {
+        it('never raises the alert itself; its toast asks on tap and then runs the import', async () => {
             mockAiConsent = false;
             seed(tiktok);
             await mount();
+            // The drain holds its lock here, so it must not present an alert.
+            expect(mockRequestAiConsent).not.toHaveBeenCalled();
+            expect(resolveCalls()).toHaveLength(0);
+            expect(heldToasts()).toHaveLength(1);
+
+            const [, action] = heldToasts()[0];
+            mockRequestAiConsent.mockImplementation(async () => {
+                mockAiConsent = true;
+                return { granted: true, prompted: true };
+            });
+            await act(async () => { action.onPress(); });
+            await flush();
             expect(mockRequestAiConsent).toHaveBeenCalledWith('user-1');
             expect(resolveCalls().length).toBeGreaterThan(0);
             expect(getImport('job-1')).toMatchObject({ mode: 'review' });
         });
 
-        it('keeps the import pending after Not now and does not ask again this session', async () => {
+        it('keeps the import pending after Not now and offers the toast once per session', async () => {
             mockAiConsent = false;
             mockRequestAiConsent.mockResolvedValue({ granted: false, prompted: true });
             seed(tiktok);
             await mount();
-            expect(mockRequestAiConsent).toHaveBeenCalledTimes(1);
+            const [, action] = heldToasts()[0];
+            await act(async () => { action.onPress(); });
+            await flush();
             expect(resolveCalls()).toHaveLength(0);
             expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
 
-            mockAiDeclined = true;
             await act(async () => { pokeImportQueue(); });
             await flush();
-            expect(mockRequestAiConsent).toHaveBeenCalledTimes(1);
+            expect(heldToasts()).toHaveLength(1);
             expect(resolveCalls()).toHaveLength(0);
+        });
+
+        it('stays quiet after a Not now elsewhere this session', async () => {
+            mockAiConsent = false;
+            mockAiDeclined = true;
+            seed(tiktok);
+            await mount();
+            expect(heldToasts()).toHaveLength(0);
+            expect(resolveCalls()).toHaveLength(0);
+        });
+
+        it('runs a Google Maps import while an AI-bound one is held', async () => {
+            mockAiConsent = false;
+            seed(tiktok);
+            seed({ jobId: 'job-2', importNonce: 'nonce-2', kind: 'url', url: 'https://maps.app.goo.gl/abc123',
+                videoPath: undefined, sourcePreparation: undefined });
+            await mount();
+            const bodies = resolveCalls().map(([, options]) => JSON.stringify(options));
+            expect(bodies.some((b) => b.includes('maps.app.goo.gl/abc123'))).toBe(true);
+            expect(bodies.some((b) => b.includes('tiktok.com'))).toBe(false);
+            expect(getImport('job-1')).toMatchObject({ status: 'pending', attempts: 0 });
         });
     });
 

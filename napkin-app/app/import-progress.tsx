@@ -105,7 +105,10 @@ export default function ImportProgressScreen() {
     // TICKET-250: shared imports wait here until the user allows the model.
     const aiConsent = useAiImportConsent(user?.id);
     const heldForConsent = aiConsent.allowed === false && active.some(
-        (a) => a.manifest.status === 'pending' && importNeedsAiConsent(a.manifest),
+        (a) => a.manifest.status === 'pending'
+            && a.manifest.sourcePreparation !== 'pending'
+            && a.manifest.sourcePreparation !== 'failed'
+            && importNeedsAiConsent(a.manifest),
     );
     const allowHeldImports = React.useCallback(async () => {
         if (await aiConsent.request()) pokeImportQueue();

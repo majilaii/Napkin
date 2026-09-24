@@ -26,9 +26,10 @@ export const AI_IMPORT_PROVIDER_LABEL = 'OpenAI';
 export const AI_IMPORT_CONSENT_VERSION = 'import-v1:openai';
 
 /**
- * UIKit is still animating the alert away when its button handler runs.
- * Presenting a picker in that window is dropped silently, so a caller that
- * presents a controller after a prompt waits this long first.
+ * UIKit may still be animating the alert away when its button handler runs.
+ * Presenting or dismissing another controller in that window can be dropped
+ * silently, so a caller that does either after a prompt (Allow or Not now)
+ * waits this long first.
  */
 export const AI_CONSENT_PROMPT_SETTLE_MS = 450;
 
@@ -69,10 +70,17 @@ export function isAiBoundUrl(url: string | null | undefined): boolean {
 }
 
 /**
- * Does this queued import need consent before it runs? Every import except a
- * Google Maps link is read by the model: shared links and saved videos alike.
+ * Does this queued import still need consent before it runs? Every import
+ * except a Google Maps link is read by the model: shared links and saved videos
+ * alike. One that already carries resolved spots is past the model (a held
+ * review only saves), so it never waits on consent.
  */
-export function importNeedsAiConsent(manifest: { kind: 'video' | 'url'; url?: string | null }): boolean {
+export function importNeedsAiConsent(manifest: {
+    kind: 'video' | 'url';
+    url?: string | null;
+    spots?: readonly unknown[] | null;
+}): boolean {
+    if (Array.isArray(manifest.spots) && manifest.spots.length > 0) return false;
     return manifest.kind !== 'url' || isAiBoundUrl(manifest.url);
 }
 
@@ -96,10 +104,15 @@ export async function hasAiImportConsent(userId: string | null | undefined): Pro
     return granted;
 }
 
-/** Record a grant, or withdraw it (Settings). Persists best-effort. */
+/**
+ * Record a grant, or withdraw it (Settings). Persists best-effort. A withdrawal
+ * also counts as "Not now" for the session, so nothing re-offers the prompt
+ * the moment the user turned it off.
+ */
 export async function setAiImportConsent(userId: string, granted: boolean): Promise<void> {
     cache.set(userId, granted);
     if (granted) declinedThisSession.delete(userId);
+    else declinedThisSession.add(userId);
     notify();
     try {
         if (granted) {

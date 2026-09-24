@@ -193,11 +193,12 @@ export function ImportLinkSheet({
 
     // TICKET-250 (Guideline 5.1.2(i)): nothing AI-bound leaves the phone until
     // this user allowed it (lib/aiConsent). Resolves true with no prompt once
-    // allowed. After a prompt, wait for the alert to finish animating out so a
-    // picker presented next is not dropped by UIKit.
+    // allowed. After any prompt (Allow or Not now), wait for the alert to finish
+    // animating out: the next step presents the picker or dismisses this Modal,
+    // and UIKit can drop either while the alert is still leaving.
     const ensureAiConsent = useCallback(async (): Promise<boolean> => {
         const answer = await requestAiImportConsent(activeUserIdRef.current);
-        if (answer.granted && answer.prompted) {
+        if (answer.prompted) {
             await new Promise((resolve) => setTimeout(resolve, AI_CONSENT_PROMPT_SETTLE_MS));
         }
         return answer.granted;

@@ -1,5 +1,5 @@
 /**
- * Onboarding S2 — moderated profile photo (TICKET-196 B-1), skippable.
+ * Onboarding S2: moderated profile photo (TICKET-196 B-1), skippable.
  *
  * Tap the circle to pick from the library; the picked image is square-cropped to
  * 512², privately staged, moderated, and its approved public URL is written to

@@ -124,6 +124,8 @@ describe('ImportLinkSheet direct media entry', () => {
         mockRequestAiConsent.mockResolvedValue({ granted: false, prompted: true });
         await render({ openTo });
         await shown();
+        // Not now also waits out the alert's exit before dismissing the Modal.
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
         expect(mockRequestAiConsent).toHaveBeenCalledWith('owner-1');
         expect(mockPick).not.toHaveBeenCalled();
         expect(mockNativePick).not.toHaveBeenCalled();

@@ -2261,7 +2261,7 @@ function ReplyBubble({
     const [editBody, setEditBody] = useState(comment.body);
 
     const isAuthor = !!user && comment.user_id === user.id;
-    const openSafetyMenu = useCommentSafetyMenu();
+    const openSafetyMenu = useCommentSafetyMenu({ targetType, targetId, scope });
     const ageMs = Date.now() - new Date(comment.created_at).getTime();
     const canEdit = isAuthor && ageMs < 5 * 60 * 1000 && !comment.pending;
     const canDelete = isAuthor && !comment.pending;

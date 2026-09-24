@@ -132,9 +132,9 @@
         <li><strong>Things you make.</strong> Restaurant logs — ratings, written notes, dates, tagged companions — the photos you attach, wishlist saves, lists, your Table memberships and activity, comments, and emoji reactions.</li>
         <li><strong>Location — optional, foreground only.</strong> If you allow it, your coordinates are used to find restaurants near you and to sort saved spots by distance. They serve the search in front of you and nothing else: we don't record where you've been or build a location history. Restaurant coordinates come from Google, not from tracking you.</li>
         <li><strong>Search text.</strong> What you type into restaurant search is sent to Google Places to return results.</li>
-        <li><strong>Imports.</strong> When you import a link, a saved video or a screenshot, Napkin reads it to find the restaurants in it. On-screen text and speech in a video are read on your device, and the video itself is never uploaded. The first time you import, Napkin asks your permission; only if you allow it, the post's caption, the on-screen text and speech we read, or the screenshot you picked, are sent to our server and to OpenAI to identify the restaurants. Google Maps links never need it. You can withdraw that permission in Settings → privacy → Imports.</li>
+        <li><strong>Imports.</strong> When you import a link, a saved video or a screenshot, Napkin reads it to find the restaurants in it. On-screen text and speech in a video are read on your device, and the video itself is never uploaded. When you share a link to Napkin, the link itself reaches our server. The first time you import, Napkin asks your permission; only if you allow it are the post's caption, the on-screen text and speech we read, or the screenshot you picked sent to OpenAI to identify the restaurants. Google Maps links never need it. You can withdraw that permission in Settings → privacy → Imports.</li>
         <li><strong>Usage events.</strong> First-party events like "logged a meal", tied to your account id and stored in our own database. There is no third-party analytics SDK in the app.</li>
-        <li><strong>Crash reports.</strong> If the app crashes, Sentry receives technical details of the crash (device model, system and app version, the error) so we can fix it. They are not linked to your account.</li>
+        <li><strong>Crash and error reports.</strong> If the app crashes or hits an error, Sentry receives technical details (device model, system and app version, the error) so we can fix it. They are not linked to your account.</li>
     </ul>
 
     <h2><span class="no">2.</span>How we use it</h2>
@@ -167,7 +167,7 @@
                 <tr><td>Google Places</td><td>Restaurant search and restaurant details.</td><td>Your search text; transient coordinates for nearby search.</td></tr>
                 <tr><td>Google Cloud Vision</td><td>Safety-checks avatars and meal photos before publication.</td><td>The standardized JPEG being checked. Google says online Vision images are processed in memory, not persisted to disk, not used to train Cloud Vision, and not shared publicly or with another third party.</td></tr>
                 <tr><td>OpenAI</td><td>Identifies the restaurants in what you import, only after you allow it in the app.</td><td>A post's caption, the on-screen text and speech read on your device, or the screenshot you picked. Never your name, email or account, and never the video. Under OpenAI's API terms this data is not used to train its models.</td></tr>
-                <tr><td>Sentry</td><td>Crash reports.</td><td>Technical details of a crash. Not linked to your account.</td></tr>
+                <tr><td>Sentry</td><td>Crash and error reports.</td><td>Technical details of a crash or error. Not linked to your account.</td></tr>
                 <tr><td>Vercel</td><td>Hosts these pages and Table invite links.</td><td>Standard web request data (such as IP address and browser) when you open a page or an invite link.</td></tr>
                 <tr><td>Apple</td><td>App Store distribution.</td><td>Nothing from inside Napkin.</td></tr>
             </tbody>

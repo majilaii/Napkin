@@ -289,7 +289,7 @@ export function ProfileHeader({
                             accessibilityRole="header"
                         >
                             {isPlaceholderName(profile.display_name)
-                                ? (profile.username ? `@${profile.username}` : 'Napkin member')
+                                ? 'Napkin member'
                                 : profile.display_name}
                         </Text>
                     )}

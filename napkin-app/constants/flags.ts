@@ -59,7 +59,7 @@ export const FRIEND_TEST = {
     hideSuppers: false,
     /** Hide the settings-only onboarding preview switch. TRUE for store builds
      *  (TICKET-250: it shipped to every user in Settings > help and replays
-     *  onboarding on each launch); flip FALSE locally to use it. Gates JSX only —
+     *  onboarding on each launch); flip FALSE locally to use it. Gates JSX only:
      *  the local preference and launch route stay compiled. */
     hideOnboardingPreviewToggle: true,
 } as const;

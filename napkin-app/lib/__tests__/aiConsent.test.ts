@@ -13,6 +13,7 @@ import {
     __resetAiConsentForTests,
     declinedAiImportConsentThisSession,
     hasAiImportConsent,
+    importNeedsAiConsent,
     isAiBoundUrl,
     requestAiImportConsent,
     setAiImportConsent,
@@ -116,6 +117,22 @@ describe('aiConsent', () => {
         await expect(hasAiImportConsent('user-a')).resolves.toBe(false);
         expect(await AsyncStorage.getItem('napkin.aiImportConsent.v1:user-a')).toBeNull();
         expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it('treats a withdrawal as Not now for the rest of the session', async () => {
+        await setAiImportConsent('user-a', true);
+        await setAiImportConsent('user-a', false);
+        expect(declinedAiImportConsentThisSession('user-a')).toBe(true);
+    });
+
+    it('holds only imports that still have to reach the model', () => {
+        const tiktok = 'https://www.tiktok.com/@a/video/1';
+        expect(importNeedsAiConsent({ kind: 'url', url: tiktok })).toBe(true);
+        expect(importNeedsAiConsent({ kind: 'video' })).toBe(true);
+        expect(importNeedsAiConsent({ kind: 'url', url: 'https://maps.app.goo.gl/abc' })).toBe(false);
+        // A held review already carries resolved spots: confirming it only saves.
+        expect(importNeedsAiConsent({ kind: 'url', url: tiktok, spots: [{}] })).toBe(false);
+        expect(importNeedsAiConsent({ kind: 'url', url: tiktok, spots: [] })).toBe(true);
     });
 
     it('never prompts without a signed-in user', async () => {

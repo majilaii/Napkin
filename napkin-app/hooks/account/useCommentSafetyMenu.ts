@@ -8,7 +8,10 @@
  */
 import { useCallback } from 'react';
 import { Alert } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
 
+import { queryKeys } from '@/lib/queryKeys';
+import { isPlaceholderName } from '@/lib/onboardingName';
 import { useBlockUser } from './useBlocking';
 import { useReportContent } from './useReportContent';
 
@@ -18,12 +21,24 @@ export interface SafetyMenuComment {
     profiles?: { display_name?: string | null } | null;
 }
 
-export function useCommentSafetyMenu() {
+/** The thread the comment sits in, so a block removes it from view at once. */
+export interface SafetyMenuThread {
+    targetType: string;
+    targetId: string;
+    scope?: 'table' | 'public';
+}
+
+export function useCommentSafetyMenu(thread?: SafetyMenuThread) {
     const reportContent = useReportContent();
     const blockUser = useBlockUser();
+    const queryClient = useQueryClient();
+    const threadType = thread?.targetType;
+    const threadId = thread?.targetId;
+    const threadScope = thread?.scope ?? 'table';
 
     return useCallback((comment: SafetyMenuComment) => {
-        const authorName = comment.profiles?.display_name || 'this person';
+        const rawName = comment.profiles?.display_name;
+        const authorName = rawName && !isPlaceholderName(rawName) ? rawName : 'this person';
         const fileReport = (reason: string) => {
             reportContent.mutate(
                 { targetType: 'comment', targetId: comment.id, reason },
@@ -59,6 +74,15 @@ export function useCommentSafetyMenu() {
                                 style: 'destructive',
                                 onPress: () =>
                                     blockUser.mutate(comment.user_id, {
+                                        // The server filters blocked authors on the next read;
+                                        // refetch this thread so the comment leaves now.
+                                        onSuccess: () => {
+                                            if (threadType && threadId) {
+                                                void queryClient.invalidateQueries({
+                                                    queryKey: queryKeys.postInteractions.all(threadType, threadId, threadScope),
+                                                });
+                                            }
+                                        },
                                         onError: () => Alert.alert('Something went wrong', 'Try again in a moment.'),
                                     }),
                             },
@@ -67,5 +91,5 @@ export function useCommentSafetyMenu() {
             },
             { text: 'Cancel', style: 'cancel' },
         ]);
-    }, [reportContent, blockUser]);
+    }, [reportContent, blockUser, queryClient, threadType, threadId, threadScope]);
 }

@@ -3,6 +3,7 @@ type AlertButton = { text: string; style?: string; onPress?: () => void };
 const mockAlert = jest.fn();
 const mockReport = jest.fn();
 const mockBlock = jest.fn();
+const mockInvalidate = jest.fn();
 
 jest.mock('react-native', () => ({
     Alert: { alert: (...args: unknown[]) => mockAlert(...args) },
@@ -16,6 +17,9 @@ jest.mock('../useReportContent', () => ({
 }));
 jest.mock('../useBlocking', () => ({
     useBlockUser: () => ({ mutate: (...args: unknown[]) => mockBlock(...args) }),
+}));
+jest.mock('@tanstack/react-query', () => ({
+    useQueryClient: () => ({ invalidateQueries: (...args: unknown[]) => mockInvalidate(...args) }),
 }));
 
 import { useCommentSafetyMenu } from '../useCommentSafetyMenu';
@@ -37,6 +41,7 @@ describe('useCommentSafetyMenu', () => {
         mockAlert.mockReset();
         mockReport.mockReset();
         mockBlock.mockReset();
+        mockInvalidate.mockReset();
     });
 
     it('reports the exact comment with the chosen reason', () => {
@@ -59,6 +64,22 @@ describe('useCommentSafetyMenu', () => {
         expect(mockAlert.mock.calls[1][0]).toBe('Block Billie?');
         press(1, 'Block');
         expect(mockBlock).toHaveBeenCalledWith('billie', expect.any(Object));
+    });
+
+    it('refetches the thread after a block so the comment leaves at once', () => {
+        const open = useCommentSafetyMenu({ targetType: 'entry', targetId: 'entry-9', scope: 'public' });
+        open(comment);
+        press(0, 'Block Billie');
+        press(1, 'Block');
+        const [, options] = mockBlock.mock.calls[0];
+        (options as { onSuccess: () => void }).onSuccess();
+        expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: ['postInteractions', 'entry', 'entry-9', 'public'] });
+    });
+
+    it('never titles the menu with the "New User" placeholder', () => {
+        const open = useCommentSafetyMenu();
+        open({ id: 'comment-3', user_id: 'someone', profiles: { display_name: 'New User' } });
+        expect(mockAlert.mock.calls[0][0]).toBe('this person');
     });
 
     it('names an author with no display name neutrally', () => {
