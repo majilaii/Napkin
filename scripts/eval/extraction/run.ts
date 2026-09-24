@@ -9,7 +9,8 @@
  * import becomes a fixture by copying `raw_text` out of extraction_cache.
  *
  * Run:
- *   OPENAI_API_KEY=<configured securely> npm run eval:extraction
+ *   ANTHROPIC_API_KEY=<configured securely> npm run eval:extraction
+ *   # OpenAI: EXTRACTION_MODEL=gpt-5.6-luna with OPENAI_API_KEY
  *   # rollback: EXTRACTION_MODEL=claude-haiku-4-5-20251001 with ANTHROPIC_API_KEY
  *
  * Requires a key. A missing credential is not a successful model evaluation.
