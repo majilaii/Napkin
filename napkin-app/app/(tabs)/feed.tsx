@@ -25,8 +25,17 @@ import { useFriendsFeed } from '@/hooks/feed';
 import { FeedHeader, FollowingFeed, ForYouFeed } from '@/components/feed';
 import type { FeedMode } from '@/components/feed';
 import { DiscoveryTip } from '@/components/onboarding/DiscoveryTip';
+import { GuestPlate } from '@/components/guest/GuestPlate';
 
+// TICKET-247: guests (no session) get the sign-in plate; the wrapper calls
+// only useAuth so the body's hooks never run half-authed.
 export default function FeedScreen() {
+    const { user } = useAuth();
+    if (!user) return <GuestPlate surface="feed" />;
+    return <FeedScreenBody />;
+}
+
+function FeedScreenBody() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const { user } = useAuth();

@@ -124,6 +124,9 @@ jest.mock('react-native-reanimated', () => {
 });
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
+// TICKET-247: the route branches to the guest screen when signed out; this
+// suite is signed-in only, so keep the guest chain (and its supabase import) out.
+jest.mock('@/components/guest/GuestPlacesScreen', () => ({ GuestPlacesScreen: () => null }));
 jest.mock('expo-router', () => ({
     useLocalSearchParams: () => mockRouteParams,
     useRouter: () => ({ setParams: mockSetParams, push: mockPush }),

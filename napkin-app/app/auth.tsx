@@ -28,12 +28,13 @@ import {
     Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Radius, Spacing, Type } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/providers/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import * as postAuthResume from '@/lib/postAuthResume';
 import { appleIdToken, googleIdToken, OAuthCancelledError } from '@/lib/oauth';
@@ -160,8 +161,12 @@ export default function AuthScreen() {
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    // TICKET-247: GuestPlate's "Create an account" opens this screen in sign-up.
+    const params = useLocalSearchParams<{ mode?: string }>();
+    // A guest who tapped an account feature gets a "not now" way back.
+    const { isGuest, enterGuestMode } = useAuth();
 
-    const [mode, setMode] = useState<Mode>('sign-in');
+    const [mode, setMode] = useState<Mode>(params.mode === 'sign-up' ? 'sign-up' : 'sign-in');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
@@ -324,6 +329,17 @@ export default function AuthScreen() {
         }
     };
 
+    // TICKET-247: guest browse doorway. A pending share/handoff/invite stash is
+    // left untouched, so signing in later (before it expires) still resumes it.
+    const lookAround = async () => {
+        await enterGuestMode();
+        router.replace('/(tabs)/places');
+    };
+    const notNow = () => {
+        if (router.canGoBack()) router.back();
+        else router.replace('/(tabs)/places');
+    };
+
     const ctaLabel = loading ? '' : mode === 'sign-in' ? 'Sign in' : 'Create account';
     const toggleLabel =
         mode === 'sign-in'
@@ -337,6 +353,35 @@ export default function AuthScreen() {
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                 style={{ flex: 1, backgroundColor: palette.background }}
             >
+                {isGuest && (
+                    <Pressable
+                        onPress={notNow}
+                        hitSlop={12}
+                        accessibilityRole="button"
+                        accessibilityLabel="not now"
+                        style={[styles.guestBack, { top: insets.top + Spacing.sm }]}
+                    >
+                        <Ionicons name="chevron-back" size={24} color={palette.textMuted} />
+                    </Pressable>
+                )}
+                {/* TICKET-247 (App Store 5.1.1(v)): the no-account doorway sits in
+                    the top-right corner so it is visible without scrolling on
+                    every device. It stays available while a share, handoff or
+                    invite waits for an account: browsing never requires one, and
+                    the pending item is left stashed for a later sign-in. Hidden
+                    for a guest (the chevron above already returns them) and
+                    while an auth call runs. */}
+                {!isGuest && !loading && (
+                    <Pressable
+                        onPress={lookAround}
+                        hitSlop={12}
+                        accessibilityRole="button"
+                        accessibilityLabel="Look around without an account"
+                        style={[styles.lookAround, { top: insets.top + Spacing.sm }]}
+                    >
+                        <Text style={[Type.label, { color: palette.primary }]}>Look around</Text>
+                    </Pressable>
+                )}
                 <ScrollView
                     style={styles.scroll}
                     contentContainerStyle={[
@@ -531,6 +576,7 @@ export default function AuthScreen() {
                                 </Text>
                             </Pressable>
                         )}
+
                     </View>
 
                     {/* Footer flourish */}
@@ -637,6 +683,19 @@ const styles = StyleSheet.create({
     forgot: {
         marginTop: Spacing.md,
         alignItems: 'center',
+    },
+    guestBack: {
+        position: 'absolute',
+        left: Spacing.md,
+        zIndex: 1,
+        padding: Spacing.xs,
+    },
+    lookAround: {
+        position: 'absolute',
+        right: Spacing.lg,
+        zIndex: 1,
+        minHeight: 44,
+        justifyContent: 'center',
     },
     footer: {
         textAlign: 'center',

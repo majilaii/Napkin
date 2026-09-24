@@ -370,7 +370,7 @@ export function RestaurantActions({
     );
 }
 
-function QuoteCard({
+export function QuoteCard({
     note,
     name,
     rating,

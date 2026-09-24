@@ -79,6 +79,7 @@ import {
     type TableSegment,
 } from '@/components/tables';
 import { Top4EditedCard } from '@/components/tables/Top4EditedCard';
+import { GuestPlate } from '@/components/guest/GuestPlate';
 import { useTableDetail } from '@/hooks/tables/useTableDetail';
 import { useTableTopFour } from '@/hooks/tables/useTableTopFour';
 // TICKET-060: new feed cards
@@ -151,7 +152,14 @@ function buildMergedReceiptWhisper(item: TableNightActivity, viewerUserId: strin
 
 // ── Screen ─────────────────────────────────────────────────────────────────
 
+// TICKET-247: guests (no session) get the sign-in plate.
 export default function TablesScreen() {
+    const { user } = useAuth();
+    if (!user) return <GuestPlate surface="tables" />;
+    return <TablesScreenBody />;
+}
+
+function TablesScreenBody() {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme];
     const insets = useSafeAreaInsets();
