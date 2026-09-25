@@ -220,6 +220,17 @@ const CHECKS: Check[] = [
                 : 'expected AI_CONSENT_OUTDATED',
     },
     {
+        name: 'resolve-url pasted text without AI consent → 426 (no model call)',
+        method: 'POST',
+        fn: 'resolve-url',
+        body: { extracted_text: 'consent guard check', source_kind: 'text' },
+        expectedStatus: 426,
+        shape: (json) =>
+            (json as { error?: { code?: string } }).error?.code === 'AI_CONSENT_OUTDATED'
+                ? null
+                : 'expected AI_CONSENT_OUTDATED',
+    },
+    {
         name: 'table-shares create_import screenshot without AI consent → 426 (no upload read, no model call)',
         method: 'POST',
         fn: 'table-shares',

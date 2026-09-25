@@ -98,10 +98,30 @@ export interface VideoExtractionContext {
     captionCap: number | null;
 }
 
-export type ExtractionContext = PhotoExtractionContext | VideoExtractionContext;
+/**
+ * Pasted text or a screenshot of one (a WhatsApp chat, a Notes list, a
+ * friend's message). No creator, no video: every named place the writer lists
+ * or recommends is a destination, bare names included.
+ */
+export interface ListExtractionContext {
+    sourceKind: 'list';
+}
+
+export type ExtractionContext = PhotoExtractionContext | VideoExtractionContext | ListExtractionContext;
 
 /** Shared numeric ceiling for video and photo listicles. */
 export const LISTICLE_CANDIDATE_CAP = 12;
+
+/** Ceiling for pasted text and screenshots of lists: a friend's list runs long.
+ * Never above V2_SAVE_SPOT_CAP (resolve-url/_helpers.ts): the picker ticks
+ * every row and saves them in one request. Parity test in visionExtract.test.ts. */
+export const LIST_CANDIDATE_CAP = 20;
+
+/** Output budget that fits `cap` candidates with populated fields. */
+export function extractionMaxTokens(cap: number): number {
+    if (cap > LISTICLE_CANDIDATE_CAP) return cap * 200;
+    return cap > 6 ? 2560 : MAX_TOKENS;
+}
 
 // Separate transport/context bound. It happens to equal the listicle ceiling,
 // but changing the number of downloaded slides must never change candidate cap.
@@ -191,6 +211,30 @@ const VIDEO_NOISE_RULES =
 - No caption is required. A featured location reveal or explicit spoken venue
   remains valid when the caption is empty. If a name appears without enough
   context to decide whether it is a venue or a product, OMIT it.`;
+
+/**
+ * Pasted text / screenshots of lists. The video and creator rules above assume
+ * a produced post; a friend's chat message has none of that, and a bare list of
+ * names IS the recommendation.
+ */
+const LIST_MODE_BLOCK = `
+
+LIST MODE: the evidence is text a person pasted, or a screenshot of it (a chat
+such as WhatsApp or iMessage, a notes app, an email, a message, a list). These
+rules OVERRIDE the creator/video rules above:
+- Every restaurant, bar, cafe, bakery or other food/drink place the writer names
+  as somewhere to go is a destination, including bare names in a list with no
+  commentary. Extract ALL of them, in the order they appear. Do not stop early.
+- Names may be separated by commas, new lines, bullets, numbers, "and", or run
+  together; split them into separate places.
+- A city, area or neighbourhood mentioned anywhere (a heading, "in Soho:",
+  "for Tokyo", a street) applies to the names under or near it.
+- Ignore app interface text: sender names, phone numbers, timestamps, "read",
+  delivery ticks, reactions, "typing…", reply previews, buttons, the keyboard,
+  status bar, and link-preview chrome.
+- A name the writer warns against ("skip X", "X was awful") gets stance
+  "warned"; still extract it.
+- Dishes, menu items, people and cities on their own are not places.`;
 
 export function buildMultiSystemPrompt(
     cap: number,
@@ -307,7 +351,7 @@ Rules:
 - city_inferred: set true when you inferred the city from context clues (hashtags, handle, phrases like "in soho", "my nyc picks") rather than an explicit label. Set false when the city is stated outright.
 - booking_url: only if explicitly visible (Resy, OpenTable URL). Otherwise null.
 - google_place_id: only if a Google Maps place_id is visible. Otherwise null.
-- If no restaurant is identifiable, return ${outputFormat === 'object' ? '{"candidates":[]}' : 'an empty array: []'}${videoModeBlock}${photoModeBlock}
+- If no restaurant is identifiable, return ${outputFormat === 'object' ? '{"candidates":[]}' : 'an empty array: []'}${videoModeBlock}${photoModeBlock}${context?.sourceKind === 'list' ? LIST_MODE_BLOCK : ''}
 - Cap at ${effectiveCap} restaurants. If more are present, include only the first ${effectiveCap} mentioned.
 - Output ONLY the JSON ${outputFormat === 'object' ? 'object with candidates' : 'array'}. No explanation. No markdown fences.`;
 }
@@ -485,7 +529,7 @@ export async function extractFromTextMulti(
     // A higher listicle cap needs a matching prompt instruction
     // AND a bigger token budget so the JSON array isn't truncated.
     const system = buildMultiSystemPrompt(max, context, extractionOutputFormat());
-    const maxTokens = effectiveMax > 6 ? 2560 : MAX_TOKENS;
+    const maxTokens = extractionMaxTokens(effectiveMax);
 
     const messages: ExtractionMessage[] = [{
         role: 'user',
@@ -537,7 +581,7 @@ export async function extractFromTextMulti(
 
 /**
  * Extract ALL restaurant info from an image (± caption text).
- * Image must be pre-downscaled to ≤768px long edge, normalized to JPEG.
+ * Image must be pre-downscaled (≤1568px long edge, the model's own ceiling), normalized to JPEG.
  * Returns content-derived fields only; confidence is at most 'high' (never 'exact').
  * Provider errors propagate; a valid empty extraction returns [].
  *
@@ -548,6 +592,8 @@ export async function extractFromVisionMulti(
     mimeType: string = 'image/jpeg',
     caption?: string,
     signal?: AbortSignal,
+    max = 6,
+    context?: ListExtractionContext,
 ): Promise<ExtractedCandidate[]> {
     signal?.throwIfAborted();
 
@@ -574,10 +620,10 @@ export async function extractFromVisionMulti(
     try {
         const raw = await callExtractionModel(
             [{ role: 'user', content: contentBlocks }],
-            buildMultiSystemPrompt(6, undefined, extractionOutputFormat()),
-            6, MAX_TOKENS, signal,
+            buildMultiSystemPrompt(max, context, extractionOutputFormat()),
+            max, extractionMaxTokens(max), signal,
         );
-        return parseMultiExtractionResponse(raw);
+        return parseMultiExtractionResponse(raw, max);
     } catch (e) {
         if (isExtractionAbort(e)) throw e;
         if (e instanceof ExtractionError) throw e;

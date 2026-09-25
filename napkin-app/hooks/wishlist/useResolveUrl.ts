@@ -22,7 +22,7 @@ import type { WishlistSourceTikTok } from '@/lib/types/wishlistSource';
 // TICKET-079: reddit/substack widen the union. They route through the same 'web'
 // extraction path server-side but carry a finer label so copy can say "from reddit" /
 // "from substack" and pick the right noun (post / page).
-type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'reddit' | 'substack' | 'screenshot' | 'vision' | 'video';
+type SourceType = 'tiktok' | 'google_maps' | 'web' | 'instagram' | 'reddit' | 'substack' | 'screenshot' | 'vision' | 'video' | 'text';
 type Confidence = 'exact' | 'high' | 'low';
 
 export interface ResolvedCandidate {
@@ -127,6 +127,8 @@ export function useResolveUrl() {
         caption?: string,
         /** TICKET-082: on-device video OCR + transcript text (URL-less path). */
         extractedText?: string,
+        /** 'text': extractedText is pasted text (a message or list of places). */
+        sourceKind?: 'text',
     ) => {
         // Abort any in-flight request
         abortControllerRef.current?.abort();
@@ -188,9 +190,11 @@ export function useResolveUrl() {
             const result = await callEdgeFn<ResolveUrlData>('resolve-url', {
                 body: {
                     url: tierText || (caption && !imagePath && isInstagramUrl(url)) ? undefined : url || undefined,
-                    ...(imagePath ? { image_path: imagePath } : {}),
+                    // list_mode: this client shows every place from a screenshot.
+                    ...(imagePath ? { image_path: imagePath, list_mode: true } : {}),
                     ...(caption ? { caption } : {}),
                     ...(tierText ? { extracted_text: tierText } : {}),
+                    ...(sourceKind ? { source_kind: sourceKind } : {}),
                     ...aiConsentRequestFields(),
                 },
                 signal: controller.signal,

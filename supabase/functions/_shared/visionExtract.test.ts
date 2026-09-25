@@ -597,3 +597,37 @@ Deno.test('buildMultiSystemPrompt: caption-free video retains noise and ending r
         assertEquals(noCaption.includes('PHOTO CAROUSEL MODE'), false);
     }
 });
+
+// ── List mode (pasted text / screenshots of lists, 2026-09-25) ────────────────
+
+Deno.test('list mode prompt reads every named place and caps at the list cap', async () => {
+    const { buildMultiSystemPrompt, LIST_CANDIDATE_CAP } = await import('./visionExtract.ts');
+    const prompt = buildMultiSystemPrompt(LIST_CANDIDATE_CAP, { sourceKind: 'list' }, 'object');
+    assertStringIncludes(prompt, 'LIST MODE');
+    assertStringIncludes(prompt, 'including bare names in a list');
+    assertStringIncludes(prompt, 'Ignore app interface text');
+    assertStringIncludes(prompt, `Cap at ${LIST_CANDIDATE_CAP} restaurants`);
+});
+
+Deno.test('list cap never exceeds what one v2 save accepts (the picker saves every row at once)', async () => {
+    const { LIST_CANDIDATE_CAP } = await import('./visionExtract.ts');
+    const { V2_SAVE_SPOT_CAP } = await import('../resolve-url/_helpers.ts');
+    assertEquals(LIST_CANDIDATE_CAP <= V2_SAVE_SPOT_CAP, true);
+});
+
+Deno.test('list mode block stays out of video and generic prompts', async () => {
+    const { buildMultiSystemPrompt } = await import('./visionExtract.ts');
+    assertEquals(buildMultiSystemPrompt(6).includes('LIST MODE'), false);
+    assertEquals(
+        buildMultiSystemPrompt(12, { sourceKind: 'video', captionPresent: false, hasVideoText: true, captionCap: null })
+            .includes('LIST MODE'),
+        false,
+    );
+});
+
+Deno.test('extraction output budget grows with the list cap and keeps existing budgets', async () => {
+    const { extractionMaxTokens } = await import('./visionExtract.ts');
+    assertEquals(extractionMaxTokens(6), 2048);
+    assertEquals(extractionMaxTokens(12), 2560);
+    assertEquals(extractionMaxTokens(20), 4000);
+});

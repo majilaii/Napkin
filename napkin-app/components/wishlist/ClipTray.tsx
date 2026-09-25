@@ -23,11 +23,12 @@ import {
 import Animated from 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Radius, Shadow, Spacing, Type } from '@/constants/theme';
-import { validateUrl } from '@/lib/urlValidation';
+import { classifyImportInput } from '@/lib/importInput';
 import { isVideoImportAvailable } from '@/modules/media-extract';
 import type { ClipLedgerRow } from './clipTrayUtils';
 import { ImportLinkSheet } from './ImportLinkSheet';
@@ -65,6 +66,7 @@ export function ClipTray({
     const [inputValue, setInputValue] = useState('');
     const [importOpen, setImportOpen] = useState(false);
     const [pendingUrl, setPendingUrl] = useState<string | undefined>();
+    const [pendingText, setPendingText] = useState<string | undefined>();
     const [pendingOpenTo, setPendingOpenTo] = useState<ImportOpenTo>('menu');
     const sheetRef = useRef<SnapSheetHandle>(null);
     const [trayHeight, setTrayHeight] = useState(0);
@@ -74,7 +76,9 @@ export function ClipTray({
     }), [insets.top, trayHeight]);
     const pendingRouteRef = useRef<string | null>(null);
     const androidFrameRef = useRef<number | null>(null);
-    const inputOk = validateUrl(inputValue.trim()).ok;
+    // A link, or a pasted message/list of places (read for every name in it).
+    const input = classifyImportInput(inputValue);
+    const inputOk = input.kind !== 'empty';
 
     const finishNavigation = useCallback(() => {
         if (queuedVideoRef.current) {
@@ -104,16 +108,17 @@ export function ClipTray({
         }
     }, [finishNavigation, onDismiss]);
 
-    const openImport = useCallback((openTo: ImportOpenTo, url?: string) => {
+    const openImport = useCallback((openTo: ImportOpenTo, url?: string, text?: string) => {
         setPendingOpenTo(openTo);
         setPendingUrl(url);
+        setPendingText(text);
         setImportOpen(true);
     }, []);
 
     const openLink = useCallback(() => {
-        if (!inputOk) return;
-        openImport('menu', inputValue.trim());
-    }, [inputOk, inputValue, openImport]);
+        if (input.kind === 'url') openImport('menu', input.url);
+        else if (input.kind === 'text') openImport('menu', undefined, input.text);
+    }, [input, openImport]);
 
     useEffect(() => () => {
         if (androidFrameRef.current !== null) {
@@ -203,6 +208,7 @@ export function ClipTray({
                     visible={importOpen}
                     onDismiss={() => setImportOpen(false)}
                     initialUrl={pendingUrl}
+                    initialText={pendingText}
                     openTo={pendingOpenTo}
                     onVideoQueued={() => {
                         queuedVideoRef.current = true;
@@ -239,13 +245,17 @@ function StartBand({
                 clip a place
             </Text>
             <View style={[styles.linkCard, { backgroundColor: palette.surfaceNote }, Shadow.clip]}>
-                <Ionicons name="link-outline" size={22} color={palette.primary} />
+                <Ionicons
+                    name="clipboard-outline"
+                    size={22}
+                    color={palette.primary}
+                    style={styles.linkIcon}
+                />
                 <TextInput
                     value={inputValue}
                     onChangeText={onChangeText}
                     onFocus={onFocus}
-                    onSubmitEditing={onOpenLink}
-                    placeholder="paste a place link"
+                    placeholder="paste a link or a list"
                     placeholderTextColor={palette.textFaint}
                     style={[
                         Type.body,
@@ -254,32 +264,47 @@ function StartBand({
                     ]}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    keyboardType="url"
-                    returnKeyType="go"
-                    accessibilityLabel="place link"
+                    multiline
+                    scrollEnabled
+                    accessibilityLabel="place link or list"
                 />
-                <Pressable
-                    onPress={onOpenLink}
-                    disabled={!inputOk}
-                    style={({ pressed }) => [
-                        styles.goButton,
-                        {
-                            backgroundColor: inputOk
-                                ? palette.primary
-                                : palette.surfaceContainerHigh,
-                            opacity: pressed ? 0.8 : 1,
-                        },
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="find places in link"
-                    accessibilityState={{ disabled: !inputOk }}
-                >
-                    <Ionicons
-                        name="arrow-forward-outline"
-                        size={20}
-                        color={inputOk ? palette.textInverse : palette.textFaint}
-                    />
-                </Pressable>
+                {inputValue.length === 0 ? (
+                    <PasteButton palette={palette} onPaste={onChangeText} />
+                ) : (
+                    <View style={styles.inputActions}>
+                        <Pressable
+                            onPress={() => onChangeText('')}
+                            hitSlop={8}
+                            style={styles.clearButton}
+                            accessibilityRole="button"
+                            accessibilityLabel="clear"
+                        >
+                            <Ionicons name="close-outline" size={20} color={palette.textFaint} />
+                        </Pressable>
+                        <Pressable
+                            onPress={onOpenLink}
+                            disabled={!inputOk}
+                            style={({ pressed }) => [
+                                styles.goButton,
+                                {
+                                    backgroundColor: inputOk
+                                        ? palette.primary
+                                        : palette.surfaceContainerHigh,
+                                    opacity: pressed ? 0.8 : 1,
+                                },
+                            ]}
+                            accessibilityRole="button"
+                            accessibilityLabel="find places"
+                            accessibilityState={{ disabled: !inputOk }}
+                        >
+                            <Ionicons
+                                name="arrow-forward-outline"
+                                size={20}
+                                color={inputOk ? palette.textInverse : palette.textFaint}
+                            />
+                        </Pressable>
+                    </View>
+                )}
             </View>
             <View style={styles.startActions}>
                 {onOpenVideo ? (
@@ -298,6 +323,54 @@ function StartBand({
                 />
             </View>
         </View>
+    );
+}
+
+/**
+ * One tap from "copied in WhatsApp" to a filled field. iOS's own paste control
+ * reads the clipboard without the "Allow Paste" prompt; elsewhere a plain
+ * button reads it (Android never prompts).
+ */
+function PasteButton({ palette, onPaste }: { palette: Palette; onPaste: (text: string) => void }) {
+    if (Clipboard.isPasteButtonAvailable) {
+        return (
+            <Clipboard.ClipboardPasteButton
+                // url too: a lone copied link must enable the control.
+                acceptedContentTypes={['plain-text', 'url']}
+                onPress={(data) => {
+                    if (data.type === 'text' && data.text) onPaste(data.text);
+                }}
+                // Icon only: the system "Paste" label grows with language and
+                // text size, and a clipped UIPasteControl silently ignores taps.
+                displayMode="iconOnly"
+                cornerStyle="capsule"
+                backgroundColor={palette.primary}
+                foregroundColor={palette.textInverse}
+                style={styles.pasteButton}
+                accessibilityLabel="paste"
+            />
+        );
+    }
+    return (
+        <Pressable
+            onPress={async () => {
+                try {
+                    const text = await Clipboard.getStringAsync();
+                    if (text) onPaste(text);
+                } catch {
+                    // Paste declined; leave the field empty.
+                }
+            }}
+            style={({ pressed }) => [
+                styles.pasteButton,
+                styles.pasteFallback,
+                { backgroundColor: palette.primary, opacity: pressed ? 0.8 : 1 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="paste"
+        >
+            <Ionicons name="clipboard-outline" size={20} color={palette.textInverse} />
+        </Pressable>
     );
 }
 
@@ -492,22 +565,51 @@ const styles = StyleSheet.create({
         marginBottom: Spacing.sm,
     },
     linkCard: {
-        minHeight: 68,
         borderRadius: Radius.lg,
         paddingHorizontal: Spacing.md,
+        paddingVertical: 12,
         flexDirection: 'row',
-        alignItems: 'center',
+        // Grows with the paste; the actions sit at the bottom where the text ends.
+        alignItems: 'flex-end',
         gap: Spacing.sm,
+    },
+    linkIcon: {
+        // Level with the first line, however far the paste grows.
+        alignSelf: 'flex-start',
+        marginTop: 11,
     },
     linkInput: {
         flex: 1,
         minHeight: 44,
+        // About five lines, then it scrolls inside.
+        maxHeight: 132,
         paddingVertical: Spacing.sm,
         borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    inputActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.xs,
+    },
+    clearButton: {
+        width: 32,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     goButton: {
         width: 44,
         height: 44,
+        borderRadius: Radius.full,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    pasteButton: {
+        width: 44,
+        height: 44,
+        alignSelf: 'center',
+    },
+    pasteFallback: {
         borderRadius: Radius.full,
         alignItems: 'center',
         justifyContent: 'center',
