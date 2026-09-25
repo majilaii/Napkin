@@ -17,8 +17,8 @@
  *   'zero'                → resolver returned 0 candidates → "search manually"
  *   'error'               → retryable network/5xx error
  *   'rate-limited'        → 429 from resolver
- *   'screenshot-uploading'→ uploading + running resolve-url with image_path
- *   'destination'         → DestinationPicker for async capture fan-out
+ *   'screenshot-uploading'→ uploading + running resolve-url with image_path;
+ *                           every place read from the image lands in 'picking'
  *   'ig-nudge'            → Instagram link detected — show screenshot suggestion
  *
  * TICKET-063 changes:
@@ -62,12 +62,12 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useNearbyLocation } from '@/hooks/useNearbyLocation';
 import { useAuth } from '@/providers/AuthProvider';
 import { validateUrl } from '@/lib/urlValidation';
+import { classifyImportInput } from '@/lib/importInput';
 import {
     useResolveUrl,
     type ResolvedCandidate,
     type ResolveUrlData,
 } from '@/hooks/wishlist/useResolveUrl';
-import { useCreateImport } from '@/hooks/wishlist/useCreateImport';
 import { useSaveImportSpots } from '@/hooks/wishlist/useSaveImportSpots';
 import { callEdgeFn } from '@/lib/edgeInvoke';
 import { classifyImportFailure, importFailureTags } from '@/lib/importFailureCopy';
@@ -123,7 +123,6 @@ type SheetState =
     | 'screenshot-uploading'
     | 'video-extracting'      // TICKET-082: on-device OCR + voiceover in progress
     | 'video-queueing'        // own a durable copy, then let the root queue inspect it
-    | 'destination'
     | 'share-destination'     // TICKET-063b: single-table picker launched from picking
     | 'ig-nudge';
 
@@ -168,9 +167,19 @@ export interface ImportLinkSheetProps {
      * share extension. When set, the sheet opens straight into on-device OCR.
      */
     initialVideoPath?: string;
+    /**
+     * Pasted text (a message or list of places) from the clip tray. The sheet
+     * skips the menu and reads every place in it.
+     */
+    initialText?: string;
 }
 
 type Palette = typeof Colors.light;
+
+type LastAttempt =
+    | { kind: 'url' }
+    | { kind: 'text'; text: string }
+    | { kind: 'screenshot'; path: string | null };
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -182,6 +191,7 @@ export function ImportLinkSheet({
     initialUrl,
     initialImportNonce,
     initialVideoPath,
+    initialText,
 }: ImportLinkSheetProps) {
     const scheme = useColorScheme() ?? 'light';
     const palette = Colors[scheme] as Palette;
@@ -204,7 +214,7 @@ export function ImportLinkSheet({
         return answer.granted;
     }, []);
     const queuedVideoRef = useRef<string | null>(null);
-    const directMediaStart = !initialUrl && !initialVideoPath && (
+    const directMediaStart = !initialUrl && !initialVideoPath && !initialText && (
         openTo === 'screenshot' || (openTo === 'video' && VIDEO_IMPORT_AVAILABLE)
     );
 
@@ -221,6 +231,9 @@ export function ImportLinkSheet({
     const [resolvedData, setResolvedData] = useState<ResolveUrlData | null>(null);
     const [noteText, setNoteText] = useState('');
     const [lastUrl, setLastUrl] = useState('');
+    // What the current attempt reads, so "try again" repeats it and the
+    // spinner names it. A screenshot's path is null until its upload lands.
+    const [lastAttempt, setLastAttempt] = useState<LastAttempt>({ kind: 'url' });
     const [errorCode, setErrorCode] = useState<string | null>(null);
     const [retryAfter, setRetryAfter] = useState<number>(0);
 
@@ -285,7 +298,6 @@ export function ImportLinkSheet({
     // (video errors carry no URL to re-resolve).
     const lastVideoUriRef = useRef<string | null>(null);
     const { resolve, cancel, state: resolverState, data: resolverData, error: resolverError } = useResolveUrl();
-    const createImport = useCreateImport(user?.id);
     const saveImportSpots = useSaveImportSpots(user?.id);
     const {
         coords: editMatchCoords,
@@ -313,11 +325,11 @@ export function ImportLinkSheet({
     // gesture), where one prompt is expected and acceptable.
     useEffect(() => {
         if (!visible) return;
-        if (initialUrl) return;
+        if (initialUrl || initialText) return;
         Clipboard.hasStringAsync()
             .then(setClipboardHasText)
             .catch(() => setClipboardHasText(false));
-    }, [visible, initialUrl]);
+    }, [visible, initialUrl, initialText]);
 
     // ── initialUrl (share extension deep-link) effect ─────────────────
     // Fires from the freshly-opened menu state — a deep-linked URL skips the
@@ -327,6 +339,7 @@ export function ImportLinkSheet({
         const trimmed = initialUrl.trim();
         const validation = validateUrl(trimmed);
         if (validation.ok) {
+            setLastAttempt({ kind: 'url' });
             setLastUrl(trimmed);
             setInputValue(trimmed);
             // Fix 9: use initialImportNonce from prop if provided (preserves job-level
@@ -381,12 +394,9 @@ export function ImportLinkSheet({
                 return;
             }
 
-            // TICKET-060: screenshot/vision path goes to destination picker
-            if (resolverData.source_type === 'screenshot' || resolverData.source_type === 'vision') {
-                setSheetState('destination');
-                return;
-            }
-
+            // Screenshots and pasted text land in the picker like every other
+            // source: each place read from them is a row (2026-09-25; the old
+            // screenshot path saved one place and dropped the rest).
             if (resolverData.candidates.length === 0) {
                 setSheetState('zero');
             } else {
@@ -416,24 +426,15 @@ export function ImportLinkSheet({
     }, [resolverState, resolverError]);
 
     // ── Input validation ───────────────────────────────────────────────
-    const validationResult = validateUrl(inputValue.trim());
-    const inputOk = validationResult.ok;
+    const inputOk = classifyImportInput(inputValue).kind !== 'empty';
 
     const validationMessage = touched && !inputOk
-        ? "that doesn't look like a link — paste a tiktok, maps, or restaurant url."
+        ? 'paste a link or a list of places.'
         : null;
 
     // ── Handlers ───────────────────────────────────────────────────────
-    const handleFindIt = useCallback(async () => {
-        resetSaveError();
-        if (!inputOk) {
-            setTouched(true);
-            return;
-        }
-        const url = inputValue.trim();
-        if (isAiBoundUrl(url) && !(await ensureAiConsent())) return;
-        setLastUrl(url);
-        // Fresh nonce per new URL resolve — also clear per-spot nonce map.
+    // Fresh nonce per new resolve; also clear the per-spot nonce maps.
+    const beginNewAttempt = useCallback(() => {
         importNonceRef.current = safeRandomUUID();
         spotNonceMapRef.current.clear();
         savedCandidateIdsRef.current.clear();
@@ -444,8 +445,59 @@ export function ImportLinkSheet({
         setFailedCandidateKeys(new Set());
         setTickedKeys(new Set()); // candidates not yet known; re-initialized on success
         setChosenTable(null);
+    }, []);
+
+    // Pasted text always reaches the model: ask first. Resolves false on "Not now".
+    const startTextImport = useCallback(async (
+        text: string,
+        isCurrent: () => boolean = () => true,
+    ): Promise<boolean> => {
+        resetSaveError();
+        if (!(await ensureAiConsent()) || !isCurrent()) return false;
+        setLastUrl('');
+        setLastAttempt({ kind: 'text', text });
+        beginNewAttempt();
+        resolve('', undefined, undefined, text, 'text');
+        return true;
+    }, [resolve, resetSaveError, ensureAiConsent, beginNewAttempt]);
+
+    const handleFindIt = useCallback(async () => {
+        resetSaveError();
+        const input = classifyImportInput(inputValue);
+        if (input.kind === 'empty') {
+            setTouched(true);
+            return;
+        }
+        if (input.kind === 'text') {
+            await startTextImport(input.text);
+            return;
+        }
+        const url = input.url;
+        if (isAiBoundUrl(url) && !(await ensureAiConsent())) return;
+        setLastAttempt({ kind: 'url' });
+        setLastUrl(url);
+        setInputValue(url);
+        beginNewAttempt();
         resolve(url);
-    }, [inputOk, inputValue, resolve, resetSaveError, ensureAiConsent]);
+    }, [inputValue, resolve, resetSaveError, ensureAiConsent, startTextImport, beginNewAttempt]);
+
+    // Clip tray paste: read the text straight away, like a deep-linked URL.
+    useEffect(() => {
+        if (!visible || !initialText || initialUrl || sheetState !== 'menu') return;
+        const text = initialText.trim();
+        if (!text) return;
+        let cancelled = false;
+        void startTextImport(text, () => !cancelled).then((started) => {
+            if (cancelled || started) return;
+            // "Not now": leave the text in the field.
+            setInputValue(text);
+            setSheetState('idle');
+        });
+        return () => {
+            cancelled = true;
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visible, initialText, initialUrl]);
 
     const handleDismiss = useCallback(() => {
         videoReqRef.current++;
@@ -460,6 +512,7 @@ export function ImportLinkSheet({
         setPatchedCandidates(null);
         setNoteText('');
         setLastUrl('');
+        setLastAttempt({ kind: 'url' });
         setErrorCode(null);
         resetSaveError();
         setEditMatchQuery('');
@@ -585,7 +638,7 @@ export function ImportLinkSheet({
             };
         });
 
-        const source = buildSource(inputValue.trim(), resolvedData);
+        const source = buildSource(inputValue.trim(), resolvedData, screenshotStoragePath);
         const selection = {
             wishlist: true,
             tableIds: chosenTable ? [chosenTable.id] : [],
@@ -708,7 +761,7 @@ export function ImportLinkSheet({
                 },
             },
         );
-    }, [user?.id, inputValue, resolvedData, saveImportSpots, handleDismiss, chosenTable, toast, resetSaveError]);
+    }, [user?.id, inputValue, resolvedData, screenshotStoragePath, saveImportSpots, handleDismiss, chosenTable, toast, resetSaveError]);
 
     const handleSearchManually = useCallback((query?: string) => {
         handleDismiss();
@@ -737,6 +790,7 @@ export function ImportLinkSheet({
             return;
         }
         if (videoReqRef.current !== myId) return; // dismissed while asking
+        setLastAttempt({ kind: 'url' });
         // Defensive guard for stale/deferred iOS deep links opened on another
         // platform. The normal Android UI cannot reach this function because the
         // video row is absent, but a crafted route must not touch the missing module.
@@ -834,19 +888,22 @@ export function ImportLinkSheet({
         const { asset, request } = picked;
 
         resetSaveError();
+        setLastAttempt({ kind: 'screenshot', path: null });
         setSheetState('screenshot-uploading');
         try {
             if (!user?.id) throw new Error('Not authenticated');
             const { storagePath } = await downscaleAndUpload(asset.uri, user.id);
             if (request !== mediaPickerReqRef.current) return;
+            setLastAttempt({ kind: 'screenshot', path: storagePath });
             setScreenshotStoragePath(storagePath);
+            beginNewAttempt();
             resolve('', storagePath);
         } catch {
             if (request !== mediaPickerReqRef.current) return;
             setErrorCode('UPLOAD_FAILED');
             setSheetState('error');
         }
-    }, [user?.id, resolve, resetSaveError, pickMedia, ensureAiConsent, directMediaStart, handleDismiss]);
+    }, [user?.id, resolve, resetSaveError, pickMedia, ensureAiConsent, directMediaStart, handleDismiss, beginNewAttempt]);
 
     // Gallery videos use the same durable review-first queue as shared videos.
     // Only local capture is awaited here; OCR and matching outlive this sheet.
@@ -921,11 +978,27 @@ export function ImportLinkSheet({
             runVideoExtraction(lastVideoUriRef.current);
             return;
         }
+        if (lastAttempt.kind === 'text') {
+            void startTextImport(lastAttempt.text);
+            return;
+        }
+        if (lastAttempt.kind === 'screenshot') {
+            // Upload never landed: pick again. Otherwise re-read the same image.
+            if (!lastAttempt.path) {
+                void handlePickScreenshot();
+                return;
+            }
+            if (!(await ensureAiConsent())) return;
+            resetSaveError();
+            beginNewAttempt();
+            resolve('', lastAttempt.path);
+            return;
+        }
         if (isAiBoundUrl(lastUrl) && !(await ensureAiConsent())) return;
         setSheetState('idle');
         resetSaveError();
         resolve(lastUrl);
-    }, [resolve, lastUrl, errorCode, runVideoExtraction, resetSaveError, handlePickVideo, handlePickScreenshot, ensureAiConsent]);
+    }, [resolve, lastUrl, lastAttempt, errorCode, runVideoExtraction, resetSaveError, handlePickVideo, handlePickScreenshot, ensureAiConsent, startTextImport, beginNewAttempt]);
 
     // TICKET-082: share-extension video path → kick off extraction once on open.
     const videoStartedRef = useRef(false);
@@ -982,29 +1055,6 @@ export function ImportLinkSheet({
             void maybeOfferNotifPrompt();
         }
     }, [onVideoQueued, toast, router]);
-
-    // TICKET-060: handle destination confirm (async capture fan-out)
-    const handleDestinationConfirm = useCallback((selection: DestinationSelection) => {
-        resetSaveError();
-        if (!user?.id) return;
-        const attempt = saveAttemptRef.current;
-        createImport.mutate(
-            {
-                image_path: screenshotStoragePath ?? undefined,
-                source_url: lastUrl || undefined,
-                destinations: selection,
-            },
-            {
-                onSuccess: () => { handleDismiss(); },
-                onError: (err) => {
-                    if (attempt !== saveAttemptRef.current) return;
-                    const { message } = classifyImportFailure(err);
-                    setSaveError(message);
-                    track('import_save_failed', importFailureTags(err, 'destination_confirm'));
-                },
-            },
-        );
-    }, [user?.id, createImport, screenshotStoragePath, lastUrl, handleDismiss, resetSaveError]);
 
     const handleEditMatchQueryChange = useCallback((q: string) => {
         setEditMatchQuery(q);
@@ -1088,9 +1138,14 @@ export function ImportLinkSheet({
     }, [editCorrectionForCandidate, patchedCandidates, resolvedData, user?.id]);
 
     // ── Source builder ─────────────────────────────────────────────────
-    function buildSource(url: string, data: ResolveUrlData | null) {
+    function buildSource(url: string, data: ResolveUrlData | null, uploadPath: string | null) {
         if (!data) return undefined;
         const ps = data.partial_source;
+        if (data.source_type === 'screenshot' || data.source_type === 'vision') {
+            return uploadPath ? { type: 'screenshot', upload_path: uploadPath } : { type: 'vision' };
+        }
+        // Pasted text can be a private conversation: keep none of it as provenance.
+        if (data.source_type === 'text') return undefined;
         if (data.source_type === 'tiktok') {
             const src: Record<string, string> = { type: 'tiktok', url };
             if (ps?.thumbnail_url) src.thumbnail_url = ps.thumbnail_url;
@@ -1129,6 +1184,7 @@ export function ImportLinkSheet({
             case 'substack': return 'from substack';
             case 'screenshot':
             case 'vision': return 'from a screenshot';
+            case 'text': return 'from pasted text';
             case 'video': {
                 // extracted_text tier hides the origin from the server — infer
                 // the label from the pasted URL so a reel doesn't read "video".
@@ -1207,7 +1263,11 @@ export function ImportLinkSheet({
                             <LoadingPanel
                                 palette={palette}
                                 onCancel={handleCancel}
-                                copy={`reading the ${noun}…`}
+                                copy={lastAttempt.kind === 'text'
+                                    ? 'reading the list…'
+                                    : lastAttempt.kind === 'screenshot'
+                                      ? 'reading the screenshot…'
+                                      : `reading the ${noun}…`}
                             />
                         )}
 
@@ -1326,16 +1386,6 @@ export function ImportLinkSheet({
                             />
                         )}
 
-                        {/* ── DESTINATION ──────────────────────────── */}
-                        {sheetState === 'destination' && (
-                            <DestinationPicker
-                                onConfirm={handleDestinationConfirm}
-                                onCancel={handleCancel}
-                                isSaving={createImport.isPending}
-                                errorText={saveError}
-                            />
-                        )}
-
                         {/* ── SHARE DESTINATION (TICKET-063b) ──────── */}
                         {/* Single-table picker launched from the picking panel. */}
                         {sheetState === 'share-destination' && (
@@ -1391,8 +1441,8 @@ function SourceMenuPanel({
         {
             key: 'link',
             icon: 'link-outline',
-            title: 'paste a link',
-            subtitle: 'tiktok, google maps, or a website',
+            title: 'paste a link or list',
+            subtitle: 'a tiktok, a maps link, or a message of places',
             onPress: onPasteLink,
         },
         {
@@ -1499,7 +1549,7 @@ function IdlePanel({
                 <Text style={[Type.bodySmall, { color: palette.textMuted }]}>back</Text>
             </Pressable>
 
-            <Text style={[styles.sheetTitle, { color: palette.text }]}>paste a link</Text>
+            <Text style={[styles.sheetTitle, { color: palette.text }]}>paste a link or list</Text>
 
             {clipboardHasText ? (
                 <Pressable
@@ -1511,10 +1561,10 @@ function IdlePanel({
                             opacity: pressed ? 0.8 : 1,
                         },
                     ]}
-                    accessibilityLabel="Paste copied link"
+                    accessibilityLabel="Paste copied text"
                 >
                     <Text style={[Type.caption, { color: palette.textSecondary }]}>
-                        paste copied link
+                        paste what you copied
                     </Text>
                 </Pressable>
             ) : null}
@@ -1523,15 +1573,14 @@ function IdlePanel({
                 ref={inputRef}
                 value={inputValue}
                 onChangeText={onChangeText}
-                onSubmitEditing={onFindIt}
-                placeholder="https://..."
+                placeholder="a link, or a list of places"
                 placeholderTextColor={palette.textMuted}
-                keyboardType="url"
                 autoCapitalize="none"
                 autoCorrect={false}
                 spellCheck={false}
-                returnKeyType="go"
-                accessibilityLabel="paste a restaurant link"
+                multiline
+                scrollEnabled
+                accessibilityLabel="paste a link or a list of places"
                 style={[
                     styles.urlInput,
                     {
@@ -1548,7 +1597,7 @@ function IdlePanel({
                 </Text>
             ) : (
                 <Text style={[Type.bodySmall, styles.helperText, { color: palette.textMuted }]}>
-                    tiktok, google maps, or any restaurant link.
+                    names in a message work too.
                 </Text>
             )}
 
@@ -1921,6 +1970,7 @@ const styles = StyleSheet.create({
     },
     urlInput: {
         ...Type.body,
+        maxHeight: 160,
         paddingVertical: Spacing.sm,
         borderBottomWidth: 1,
         marginBottom: Spacing.xs,

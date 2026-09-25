@@ -64,7 +64,9 @@ export type SourceType =
   | "substack"
   | "screenshot"
   | "vision"
-  | "video";
+  | "video"
+  // Pasted text (a message, a notes list): no URL, no image.
+  | "text";
 
 export interface PlacesSearchLocality {
   city?: string | null;
@@ -910,6 +912,18 @@ export function isV2SaveProtocolRequest(
 }
 
 /** Complete v2 shape validation shared by the live handler and unit tests. */
+/** One v2 save carries at most this many spots. Every extraction cap that
+ * feeds the picker must stay at or under it (visionExtract parity test). */
+export const V2_SAVE_SPOT_CAP = 20;
+
+/** `<uid>/<file>.jpg` exactly: no dot segments, no nesting (fetch collapses `..`). */
+export function isOwnImportUploadPath(path: string, userId: string): boolean {
+  const [owner, file, ...rest] = path.split("/");
+  return owner === userId && rest.length === 0 &&
+    /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.jpe?g$/.test(file ?? "") &&
+    !file.includes("..");
+}
+
 export function validateV2SaveProtocol(
   importNonce: unknown,
   spots: SaveProtocolSpot[] | undefined,
@@ -923,8 +937,11 @@ export function validateV2SaveProtocol(
   if (typeof importNonce !== "string" || !uuid.test(importNonce)) {
     return "import_nonce must be a UUID";
   }
-  if (!Array.isArray(spots) || spots.length < 1 || spots.length > 20) {
-    return "spots must contain 1..20 items";
+  if (
+    !Array.isArray(spots) || spots.length < 1 ||
+    spots.length > V2_SAVE_SPOT_CAP
+  ) {
+    return `spots must contain 1..${V2_SAVE_SPOT_CAP} items`;
   }
   if (
     spots.some((spot) =>
@@ -1230,6 +1247,19 @@ export function deriveCaptionCap(
   if (countRaw === null || !Number.isInteger(countRaw)) return null;
   if (countRaw < 2 || countRaw > LISTICLE_CANDIDATE_CAP) return null;
   return Math.min(LISTICLE_CANDIDATE_CAP, countRaw);
+}
+
+/**
+ * Pasted text (clip tray / paste field). Opt-in by `source_kind: "text"`, which
+ * only the list-aware client sends, and checked BEFORE routesToVideoText so the
+ * same `extracted_text` never reaches the video prompt.
+ */
+export function routesToListText(
+  body: Record<string, unknown> | null | undefined,
+): boolean {
+  return body?.source_kind === "text" &&
+    typeof body?.extracted_text === "string" &&
+    body.extracted_text.trim().length > 0;
 }
 
 /**

@@ -32,7 +32,14 @@ jest.mock('react-native-reanimated', () => ({ ScrollView: 'Animated.ScrollView' 
 jest.mock('react-native-gesture-handler', () => ({ GestureHandlerRootView: 'GestureHandlerRootView' }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
-jest.mock('expo-clipboard', () => ({ hasStringAsync: jest.fn(async () => false) }));
+const mockGetString = jest.fn(async () => '');
+let mockPasteButtonAvailable = true;
+jest.mock('expo-clipboard', () => ({
+    hasStringAsync: jest.fn(async () => false),
+    getStringAsync: () => mockGetString(),
+    get isPasteButtonAvailable() { return mockPasteButtonAvailable; },
+    ClipboardPasteButton: 'ClipboardPasteButton',
+}));
 jest.mock('expo-image-picker', () => ({
     MediaTypeOptions: { Images: 'Images', Videos: 'Videos' },
     launchImageLibraryAsync: (...args: unknown[]) => mockPick(...args),
@@ -51,10 +58,13 @@ jest.mock('@/lib/aiConsent', () => ({
     isAiBoundUrl: (url: string | null | undefined) => !/maps\.app\.goo\.gl/.test(url ?? ''),
     requestAiImportConsent: (...args: unknown[]) => mockRequestAiConsent(...args),
 }));
+let mockResolverState: 'idle' | 'success' = 'idle';
+let mockResolverData: unknown = null;
 jest.mock('@/hooks/wishlist/useResolveUrl', () => ({
-    useResolveUrl: () => ({ resolve: mockResolve, cancel: mockCancel, state: 'idle' }),
+    useResolveUrl: () => ({
+        resolve: mockResolve, cancel: mockCancel, state: mockResolverState, data: mockResolverData,
+    }),
 }));
-jest.mock('@/hooks/wishlist/useCreateImport', () => ({ useCreateImport: () => ({ mutate: jest.fn() }) }));
 jest.mock('@/hooks/wishlist/useSaveImportSpots', () => ({ useSaveImportSpots: () => ({ mutate: jest.fn() }) }));
 jest.mock('@/lib/edgeInvoke', () => ({ callEdgeFn: jest.fn() }));
 jest.mock('@/lib/track', () => ({ track: jest.fn() }));
@@ -101,6 +111,8 @@ describe('ImportLinkSheet direct media entry', () => {
         mockPick.mockReset().mockImplementation(() => new Promise(() => {}));
         mockExtract.mockReset().mockImplementation(() => new Promise(() => {}));
         mockUpload.mockReset().mockImplementation(() => new Promise(() => {}));
+        mockResolverState = 'idle';
+        mockResolverData = null;
     });
 
     afterEach(async () => {
@@ -326,5 +338,151 @@ describe('ImportLinkSheet direct media entry', () => {
         expect(child.props.openTo).toBe(kind);
         expect(child.props.visible).toBe(true);
         expect(child.findByType('Modal').children).toHaveLength(0);
+    });
+});
+
+describe('pasted text and screenshot lists (2026-09-25)', () => {
+    let tree: any;
+    const list = 'my london list:\n1. Bao Soho\n2. Kiln\n3. Brat\nskip Sketch';
+
+    beforeEach(() => {
+        mockUserId = 'owner-1';
+        mockRequestAiConsent.mockReset().mockResolvedValue({ granted: true, prompted: false });
+        mockResolve.mockReset();
+        mockResolverState = 'idle';
+        mockResolverData = null;
+    });
+
+    afterEach(async () => {
+        if (tree) await act(async () => { tree.unmount(); });
+        tree = undefined;
+        mockResolverState = 'idle';
+        mockResolverData = null;
+    });
+
+    async function openTray() {
+        await act(async () => {
+            tree = TestRenderer.create(<ClipTray visible onDismiss={jest.fn()} palette={Colors.light}
+                rows={[]} hasOlder={false} isEmpty />);
+        });
+        await act(async () => {
+            tree.root.findAllByType('View').find((node: any) => node.props.onLayout)
+                .props.onLayout({ nativeEvent: { layout: { height: 900 } } });
+        });
+    }
+
+    async function pasteIntoTray(value: string) {
+        await act(async () => {
+            tree.root.findByProps({ accessibilityLabel: 'place link or list' }).props.onChangeText(value);
+        });
+        const go = tree.root.findByProps({ accessibilityLabel: 'find places' });
+        expect(go.props.disabled).toBe(false);
+        await act(async () => { go.props.onPress(); });
+    }
+
+    it('reads every place in a pasted list from the clip tray', async () => {
+        await openTray();
+        await pasteIntoTray(list);
+        const child = tree.root.findByType(ImportLinkSheet);
+        expect(child.props.initialText).toBe(list);
+        expect(child.props.initialUrl).toBeUndefined();
+        expect(mockRequestAiConsent).toHaveBeenCalled();
+        expect(mockResolve).toHaveBeenCalledWith('', undefined, undefined, list, 'text');
+    });
+
+    it('offers one-tap paste while empty, then clear and go', async () => {
+        await openTray();
+        const paste = tree.root.findByType('ClipboardPasteButton');
+        expect(paste.props.acceptedContentTypes).toEqual(['plain-text', 'url']);
+        expect(tree.root.findAllByProps({ accessibilityLabel: 'find places' })).toHaveLength(0);
+        await act(async () => { paste.props.onPress({ type: 'text', text: list }); });
+        expect(tree.root.findByProps({ accessibilityLabel: 'place link or list' }).props.value).toBe(list);
+        expect(tree.root.findAllByType('ClipboardPasteButton')).toHaveLength(0);
+        await act(async () => { tree.root.findByProps({ accessibilityLabel: 'clear' }).props.onPress(); });
+        expect(tree.root.findByProps({ accessibilityLabel: 'place link or list' }).props.value).toBe('');
+    });
+
+    it('falls back to a plain paste button where the native control is missing', async () => {
+        mockPasteButtonAvailable = false;
+        mockGetString.mockResolvedValueOnce(list).mockRejectedValueOnce(new Error('declined'));
+        try {
+            await openTray();
+            expect(tree.root.findAllByType('ClipboardPasteButton')).toHaveLength(0);
+            await act(async () => { await tree.root.findByProps({ accessibilityLabel: 'paste' }).props.onPress(); });
+            expect(tree.root.findByProps({ accessibilityLabel: 'place link or list' }).props.value).toBe(list);
+            await act(async () => { tree.root.findByProps({ accessibilityLabel: 'clear' }).props.onPress(); });
+            await act(async () => { await tree.root.findByProps({ accessibilityLabel: 'paste' }).props.onPress(); });
+            expect(tree.root.findByProps({ accessibilityLabel: 'place link or list' }).props.value).toBe('');
+        } finally {
+            mockPasteButtonAvailable = true;
+        }
+    });
+
+    it('still resolves a pasted link as a link', async () => {
+        await openTray();
+        await pasteIntoTray('https://maps.app.goo.gl/AbC123');
+        const child = tree.root.findByType(ImportLinkSheet);
+        expect(child.props.initialUrl).toBe('https://maps.app.goo.gl/AbC123');
+        expect(child.props.initialText).toBeUndefined();
+        expect(mockResolve).toHaveBeenCalledWith('https://maps.app.goo.gl/AbC123');
+    });
+
+    it('sends nothing on Not now and leaves the text in the field', async () => {
+        mockRequestAiConsent.mockResolvedValue({ granted: false, prompted: true });
+        await act(async () => {
+            tree = TestRenderer.create(<ImportLinkSheet visible onDismiss={jest.fn()} initialText={list} />);
+        });
+        // The consent prompt settles on a timer before the sheet moves on.
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+        expect(mockResolve).not.toHaveBeenCalled();
+        expect(tree.root.findByProps({ accessibilityLabel: 'paste a link or a list of places' }).props.value).toBe(list);
+    });
+
+    it('reads a list typed into the paste step as text', async () => {
+        await act(async () => {
+            tree = TestRenderer.create(<ImportLinkSheet visible onDismiss={jest.fn()} />);
+        });
+        await act(async () => { tree.root.findByProps({ accessibilityLabel: 'paste a link or list' }).props.onPress(); });
+        await act(async () => {
+            tree.root.findByProps({ accessibilityLabel: 'paste a link or a list of places' }).props.onChangeText(list);
+        });
+        await act(async () => { tree.root.findByProps({ accessibilityLabel: 'find it' }).props.onPress(); });
+        expect(mockResolve).toHaveBeenCalledWith('', undefined, undefined, list, 'text');
+    });
+
+    it('reads an uploaded screenshot as a screenshot', async () => {
+        mockPick.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///chat.png' }] });
+        mockUpload.mockResolvedValue({ storagePath: 'owner-1/chat.jpg' });
+        await act(async () => {
+            tree = TestRenderer.create(<ImportLinkSheet visible onDismiss={jest.fn()} openTo="screenshot" />);
+        });
+        await act(async () => { tree.root.findByType('Modal').props.onShow(); });
+        expect(mockResolve).toHaveBeenCalledWith('', 'owner-1/chat.jpg');
+        expect(JSON.stringify(tree.toJSON())).toContain('reading the screenshot');
+    });
+
+    it('puts every place from a screenshot in the picker', async () => {
+        const candidate = (name: string) => ({
+            candidate_id: name,
+            restaurant: { id: '', name, external_id: null },
+            confidence: 'high',
+            google_place_id: null,
+            restaurant_id: null,
+            already_wishlisted: false,
+        });
+        mockResolverState = 'success';
+        mockResolverData = {
+            source_type: 'screenshot',
+            best_query: 'Bao Soho',
+            note_prefill: '',
+            candidates: [candidate('Bao Soho'), candidate('Kiln'), candidate('Brat')],
+            partial_source: null,
+        };
+        await act(async () => {
+            tree = TestRenderer.create(<ImportLinkSheet visible onDismiss={jest.fn()} />);
+        });
+        const picker = tree.root.findByType('CandidatePickerPanel');
+        expect(picker.props.candidates).toHaveLength(3);
+        expect(tree.root.findAllByType('DestinationPicker')).toHaveLength(0);
     });
 });

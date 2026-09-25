@@ -17,6 +17,7 @@
  *   substack          → "page"
  *   web               → "page"
  *   screenshot/vision → "screenshot"
+ *   text              → "list"
  *   (unknown)         → "link"
  */
 
@@ -30,7 +31,8 @@ export type SourceNounType =
     | 'substack'
     | 'screenshot'
     | 'vision'
-    | 'video';
+    | 'video'
+    | 'text';
 
 /**
  * Map a known `source_type` to its copy noun.
@@ -59,6 +61,8 @@ export function sourceNoun(
         case 'screenshot':
         case 'vision':
             return 'screenshot';
+        case 'text':
+            return 'list';
         default:
             // Unknown / not-yet-resolved: infer from the URL host if we can.
             return url ? nounFromUrl(url) : 'link';

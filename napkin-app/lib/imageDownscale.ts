@@ -2,7 +2,7 @@
  * imageDownscale.ts — client-side image normalization for multimodal import.
  * TICKET-060 R9/M1.
  *
- * Downscales an image to ≤768px long edge, normalizes to JPEG at fixed quality.
+ * Downscales an image to ≤1568px long edge, normalizes to JPEG at fixed quality.
  * Used before upload to the import-uploads Storage bucket.
  * Server also re-clamps server-side (defense-in-depth M1).
  *
@@ -13,7 +13,9 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 import { supabase } from '@/lib/supabase';
 
-export const IMPORT_MAX_DIMENSION = 768;  // ≤768px long edge per TICKET-060 spec
+// 768 (TICKET-060) shrank a phone screenshot to ~354px wide, too small to read a
+// chat of restaurant names. 1568 is the model's own resize ceiling.
+export const IMPORT_MAX_DIMENSION = 1568;
 const IMPORT_JPEG_QUALITY = 0.85;
 const IMPORT_BUCKET = 'import-uploads';
 
@@ -33,7 +35,7 @@ export interface UploadResult {
 // ── Downscale ─────────────────────────────────────────────────────────────────
 
 /**
- * Downscale and normalize an image to ≤768px long edge, JPEG output.
+ * Downscale and normalize an image to ≤IMPORT_MAX_DIMENSION long edge, JPEG output.
  * Returns uri + base64 for the normalized image.
  */
 export async function downscaleImage(uri: string): Promise<DownscaleResult> {

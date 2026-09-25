@@ -56,6 +56,7 @@ import {
   extractFromVision,
   extractFromVisionMulti,
   type ExtractionContext,
+  LIST_CANDIDATE_CAP,
   LISTICLE_CANDIDATE_CAP,
   type PhotoExtractionContext,
   validPhotoSlideCount,
@@ -95,6 +96,15 @@ import {
   parseMapsPlaceTarget,
 } from "./mapsList.ts";
 import { resizeImageToLimit } from "../_shared/imageResize.ts";
+
+// Pasted text and screenshot lists resolve up to LIST_CANDIDATE_CAP spots in
+// parallel; give Places more room than the 9s single-video budget.
+const LIST_PLACES_TIMEOUT_MS = 15000;
+// A long WhatsApp thread is fine; a pasted novel is not sent to the model whole.
+const LIST_TEXT_MAX_CHARS = 20000;
+// Writing 20 places takes the model longer than one video's worth; still well
+// inside the edge wall clock with the Places budget on top.
+const LIST_EXTRACTION_TIMEOUT_MS = 90000;
 // TICKET-187: acquireAndMirrorHeroPhotos is the deferred (post-response) hero-
 // photo job save_spots schedules via EdgeRuntime.waitUntil — the save critical
 // path carries ZERO Google calls and never reads client photo fields.
@@ -732,6 +742,7 @@ import {
   isV2ResolveSpotsProtocol,
   isV2SaveProtocolRequest,
   isWebExtractionSource,
+  isOwnImportUploadPath,
   keepTypeRejectedAsGhost,
   listOnlySaveKind,
   mapVerifiedRestaurantIds,
@@ -740,6 +751,7 @@ import {
   resolutionDecisionForCandidate,
   resolveImportPlaceSearch,
   resolveSpotsRateGate,
+  routesToListText,
   routesToVideoText,
   runAsyncImportExtraction,
   shouldEmitGhostCandidate,
@@ -1138,8 +1150,40 @@ async function writeExtractionCacheSingle(
 }
 
 /**
- * Handle inline vision extraction (not async — used when image_path is in body).
- * TICKET-063: upgrades to multi-candidate extractor; returns first as before.
+ * btoa over a spread of the whole buffer overflows the call stack on any real
+ * screenshot (hundreds of KB), which failed the import before the model ran.
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function emptyListResponse(
+  sourceType: SourceType,
+  notePrefill: string,
+): Response {
+  return jsonResponse({
+    data: {
+      source_type: sourceType,
+      best_query: null,
+      note_prefill: notePrefill,
+      candidates: [],
+      partial_source: null,
+      extracted_confidence: "low",
+      needs_confirm: true,
+      type_rejected: 0,
+    },
+  });
+}
+
+/**
+ * Inline screenshot import. A screenshot is usually a list: a WhatsApp message
+ * of recommendations, a notes page, a map. Until 2026-09-25 this read the first
+ * extracted name only and returned three Places guesses for it, so a chat of
+ * ten names imported one. Every extracted place now resolves, like video text.
  */
 async function handleVisionExtract(
   supabase: any,
@@ -1150,6 +1194,188 @@ async function handleVisionExtract(
   supabaseAnonKey: string,
   authHeader: string,
 ): Promise<Response> {
+  if (!isOwnImportUploadPath(imagePath, user.id)) {
+    return errorResponse("FORBIDDEN", "image_path does not belong to caller", 403);
+  }
+  const { data: imageData, error: imgError } = await supabase.storage
+    .from("import-uploads")
+    .download(imagePath);
+
+  if (imgError || !imageData) {
+    return errorResponse(
+      "IMAGE_NOT_FOUND",
+      "Could not read the uploaded image",
+      404,
+    );
+  }
+
+  const imageBytes = new Uint8Array(await (imageData as Blob).arrayBuffer());
+  const imageHash = await hashImage(imageBytes);
+  const notePrefill = caption ? captionToNote(caption) : "";
+  // Namespaced: rows under the bare image hash hold the old first-name-only,
+  // six-cap extraction and must not answer a list read.
+  const cacheKey = await sha256Hex(
+    `list:image:g1:cap${LIST_CANDIDATE_CAP}:${imageHash}:${caption ?? ""}`,
+  );
+  const modelId = getExtractionModel();
+
+  let extractedArr = await readExtractionCache(supabase, cacheKey);
+  if (!extractedArr) {
+    const extractAc = new AbortController();
+    const extractTimer = setTimeout(
+      () => extractAc.abort(),
+      LIST_EXTRACTION_TIMEOUT_MS,
+    );
+    try {
+      extractedArr = await extractFromVisionMulti(
+        bytesToBase64(imageBytes),
+        "image/jpeg",
+        caption ?? undefined,
+        extractAc.signal,
+        LIST_CANDIDATE_CAP,
+        { sourceKind: "list" },
+      );
+    } finally {
+      clearTimeout(extractTimer);
+    }
+    if (extractedArr.length > 0) {
+      await writeExtractionCache(
+        supabase,
+        cacheKey,
+        null,
+        extractedArr,
+        modelId,
+      ).catch(() => null);
+    }
+  }
+
+  const staged = dedupeAndRank(extractedArr ?? [], [], LIST_CANDIDATE_CAP);
+  if (staged.length === 0) return emptyListResponse("screenshot", notePrefill);
+
+  const { candidates, typeRejectedCount, bestQuery } =
+    await resolveStagedToCandidates(
+      supabase,
+      user,
+      staged,
+      imageHash,
+      LIST_CANDIDATE_CAP,
+      authHeader,
+      supabaseUrl,
+      supabaseAnonKey,
+      LIST_PLACES_TIMEOUT_MS,
+    );
+
+  return jsonResponse({
+    data: {
+      source_type: "screenshot" as SourceType,
+      best_query: bestQuery,
+      note_prefill: notePrefill,
+      candidates,
+      partial_source: null,
+      extracted_confidence: staged[0].extracted.confidence,
+      type_rejected: typeRejectedCount,
+    },
+  });
+}
+
+/**
+ * Pasted text: a friend's message, a notes list, a chat export. Same list
+ * extractor and resolution as screenshots. The text itself is never persisted
+ * (the cache row stores extractions only, rawText null): it can be a private
+ * conversation.
+ */
+async function handleListText(
+  supabase: any,
+  user: { id: string },
+  text: string,
+  authHeader: string,
+  supabaseUrl: string,
+  supabaseAnonKey: string,
+): Promise<Response> {
+  const clipped = text.slice(0, LIST_TEXT_MAX_CHARS);
+  const contentHash = await sha256Hex(
+    `list:text:g1:cap${LIST_CANDIDATE_CAP}:${clipped}`,
+  );
+  const modelId = getExtractionModel();
+
+  let extractedArr = await readExtractionCache(supabase, contentHash);
+  if (!extractedArr || extractedArr.length === 0) {
+    const extractAc = new AbortController();
+    const extractTimer = setTimeout(
+      () => extractAc.abort(),
+      LIST_EXTRACTION_TIMEOUT_MS,
+    );
+    try {
+      extractedArr = await extractFromTextMulti(
+        clipped,
+        extractAc.signal,
+        LIST_CANDIDATE_CAP,
+        { sourceKind: "list" },
+      );
+    } finally {
+      clearTimeout(extractTimer);
+    }
+    if (extractedArr.length > 0) {
+      writeExtractionCache(supabase, contentHash, null, extractedArr, modelId)
+        .catch(() => null);
+    }
+  }
+
+  const staged = dedupeAndRank(extractedArr ?? [], [], LIST_CANDIDATE_CAP);
+  if (staged.length === 0) return emptyListResponse("text", "");
+
+  const { candidates, typeRejectedCount, bestQuery } =
+    await resolveStagedToCandidates(
+      supabase,
+      user,
+      staged,
+      contentHash,
+      LIST_CANDIDATE_CAP,
+      authHeader,
+      supabaseUrl,
+      supabaseAnonKey,
+      LIST_PLACES_TIMEOUT_MS,
+    );
+
+  return jsonResponse({
+    data: {
+      source_type: "text" as SourceType,
+      best_query: bestQuery,
+      note_prefill: "",
+      candidates,
+      partial_source: null,
+      type_rejected: typeRejectedCount,
+    },
+  });
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input).buffer as ArrayBuffer,
+  );
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Installed builds (no `list_mode`): first extracted name, three Places guesses.
+ * Those builds discard the candidates and re-extract via create_import, so they
+ * must not pay for a full list read. Remove once no such build is in use.
+ */
+async function handleVisionExtractLegacy(
+  supabase: any,
+  user: { id: string },
+  imagePath: string,
+  caption: string | null,
+  supabaseUrl: string,
+  supabaseAnonKey: string,
+  authHeader: string,
+): Promise<Response> {
+  if (!isOwnImportUploadPath(imagePath, user.id)) {
+    return errorResponse("FORBIDDEN", "image_path does not belong to caller", 403);
+  }
   const { data: imageData, error: imgError } = await supabase.storage
     .from("import-uploads")
     .download(imagePath);
@@ -1169,7 +1395,7 @@ async function handleVisionExtract(
   const modelId = getExtractionModel();
 
   if (!extractedArr) {
-    const imageBase64 = btoa(String.fromCharCode(...imageBytes));
+    const imageBase64 = bytesToBase64(imageBytes);
     extractedArr = await extractFromVisionMulti(
       imageBase64,
       "image/jpeg",
@@ -1425,8 +1651,7 @@ async function handleAsyncExtract(
   const sourceUrl = (source?.["source_url"] as string) ?? null;
 
   if (imagePath) {
-    const firstSegment = imagePath.split("/")[0];
-    if (firstSegment !== jobOwnerId) {
+    if (!isOwnImportUploadPath(imagePath, jobOwnerId)) {
       await supabase.rpc("fn_complete_import_job", {
         p_job_id: jobId,
         p_status: "needs_confirm",
@@ -1472,7 +1697,7 @@ async function handleAsyncExtract(
 
   if (!extracted) {
     if (imageBytes) {
-      const imageBase64 = btoa(String.fromCharCode(...imageBytes));
+      const imageBase64 = bytesToBase64(imageBytes);
       extracted = await extractFromVision(
         imageBase64,
         "image/jpeg",
@@ -3667,6 +3892,180 @@ async function buildLegacyCandidateResponse(
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 /**
+ * Resolve deduped extractions to Places and build the picker candidates.
+ * Shared by the video-text, pasted-text and screenshot paths so all three
+ * return every spot with the same ghost/type-rejection/wishlist rules.
+ */
+async function resolveStagedToCandidates(
+  supabase: any,
+  user: { id: string },
+  staged: StagedCandidate[],
+  contentHash: string,
+  cap: number,
+  authHeader: string,
+  supabaseUrl: string,
+  supabaseAnonKey: string,
+  placeTimeoutMs = 9000,
+): Promise<{
+  candidates: ResolvedCandidate[];
+  typeRejectedCount: number;
+  bestQuery: string | null;
+}> {
+  // Resolve each candidate to a Place in parallel (bounded).
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), placeTimeoutMs);
+  let placeResults: (PlacesPayload | null)[] = [];
+  let typeRejectedByIndex: boolean[] = [];
+  let decisionsByIndex: ImportResolutionDecision[] = [];
+  let typeRejectedCount = 0;
+  try {
+    const resolution = await resolveStagedPlacesParallel(
+      supabase,
+      staged,
+      authHeader,
+      supabaseUrl,
+      supabaseAnonKey,
+      ac.signal,
+    );
+    placeResults = resolution.places;
+    typeRejectedByIndex = resolution.typeRejectedByIndex;
+    decisionsByIndex = resolution.decisionsByIndex;
+    typeRejectedCount = resolution.typeRejectedCount;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Post-Places dedupe by google_place_id.
+  const seenPlaceIds = new Set<string>();
+  const deduped: Array<{
+    s: StagedCandidate;
+    place: PlacesPayload | null;
+    decision: ImportResolutionDecision;
+  }> = [];
+  for (let i = 0; i < staged.length; i++) {
+    if (typeRejectedByIndex[i]) {
+      // Same rule as handleUrlResolve: trusted extracts ghost, the rest drop.
+      if (keepTypeRejectedAsGhost(staged[i].extracted.confidence)) {
+        deduped.push({
+          s: staged[i],
+          place: null,
+          decision: "no_result",
+        });
+      }
+      continue;
+    }
+    const place = placeResults[i];
+    const placeId = place?.id ?? staged[i].extracted.google_place_id;
+    if (placeId && seenPlaceIds.has(placeId)) continue;
+    if (placeId) seenPlaceIds.add(placeId);
+    deduped.push({
+      s: staged[i],
+      place,
+      decision: decisionsByIndex[i] ?? "transient",
+    });
+  }
+
+  // Map verified restaurants + wishlist dedupe.
+  const allPlaceIds = deduped.map((d) => d.place?.id).filter(
+    Boolean,
+  ) as string[];
+  const { data: restaurantRows } = allPlaceIds.length > 0
+    ? await supabase.from("restaurants").select("id, external_id, verification")
+      .in("external_id", allPlaceIds)
+    : { data: [] };
+  const placeIdToRestaurantId = mapVerifiedRestaurantIds(restaurantRows ?? []);
+
+  const knownRestaurantIds = [...placeIdToRestaurantId.values()];
+  const wishlistedSet = new Set<string>();
+  if (knownRestaurantIds.length > 0) {
+    const { data: wishlistRows } = await supabase
+      .from("wishlist_items")
+      .select("restaurant_id")
+      .eq("user_id", user.id)
+      .in("restaurant_id", knownRestaurantIds);
+    for (const row of (wishlistRows ?? [])) {
+      if (row.restaurant_id) wishlistedSet.add(row.restaurant_id);
+    }
+  }
+
+  const candidates: ResolvedCandidate[] = await Promise.all(
+    deduped.slice(0, cap).map(async ({ s, place, decision }, idx) => {
+      const restaurantId = place
+        ? (placeIdToRestaurantId.get(place.id) ?? null)
+        : null;
+      const alreadyWishlisted = restaurantId
+        ? wishlistedSet.has(restaurantId)
+        : false;
+      // 086c: 'exact' was being demoted to 'low' here for no reason.
+      const confidence: Confidence =
+        s.extracted.confidence === "high" || s.extracted.confidence === "exact"
+          ? "high"
+          : "low";
+      const candidateId = await computeCandidateId(
+        contentHash,
+        normalizeName(s.extracted.name),
+        idx,
+      );
+      const restaurant: PlacesPayload = place
+        ? {
+          ...place,
+          external_id: place.id,
+          location: {
+            address: place.formattedAddress ?? undefined,
+            locality: place.city ?? undefined,
+            country: place.country ?? undefined,
+          },
+        }
+        : {
+          id: "",
+          name: s.extracted.name,
+          formattedAddress: s.extracted.address,
+          city: s.extracted.city,
+          country: null,
+          latitude: null,
+          longitude: null,
+          categories: [],
+          cuisine: s.extracted.cuisine,
+          googleRating: null,
+          googleRatingCount: null,
+          priceLevel: null,
+          photoReference: null,
+          website: null,
+          link: null,
+          external_id: null,
+          location: {
+            address: s.extracted.address ?? undefined,
+            locality: s.extracted.city ?? undefined,
+          },
+        };
+      return {
+        candidate_id: candidateId,
+        restaurant,
+        confidence,
+        google_place_id: place?.id ?? null,
+        restaurant_id: restaurantId,
+        already_wishlisted: alreadyWishlisted,
+        city_inferred: s.extracted.city_inferred,
+        area: s.extracted.area ?? null,
+        stance: s.extracted.stance ?? null,
+        resolution_decision: decision,
+        attempted_external_id:
+          decision === "transient" || decision === "unattempted_budget"
+            ? s.extracted.google_place_id ?? null
+            : null,
+      };
+    }),
+  );
+
+  const top = deduped[0]?.s.extracted;
+  const bestQuery = top?.name
+    ? [top.name, top.city].filter(Boolean).join(", ")
+    : null;
+
+  return { candidates, typeRejectedCount, bestQuery };
+}
+
+/**
  * TICKET-082 — resolve restaurants from on-device-extracted video text.
  *
  * The client runs Vision OCR (frame overlays) + Speech transcription (voiceover)
@@ -3796,156 +4195,17 @@ async function handleVideoText(
     });
   }
 
-  // Resolve each candidate to a Place in parallel (bounded).
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 9000);
-  let placeResults: (PlacesPayload | null)[] = [];
-  let typeRejectedByIndex: boolean[] = [];
-  let decisionsByIndex: ImportResolutionDecision[] = [];
-  let typeRejectedCount = 0;
-  try {
-    const resolution = await resolveStagedPlacesParallel(
+  const { candidates, typeRejectedCount, bestQuery } =
+    await resolveStagedToCandidates(
       supabase,
+      user,
       staged,
+      contentHash,
+      effectiveCap,
       authHeader,
       supabaseUrl,
       supabaseAnonKey,
-      ac.signal,
     );
-    placeResults = resolution.places;
-    typeRejectedByIndex = resolution.typeRejectedByIndex;
-    decisionsByIndex = resolution.decisionsByIndex;
-    typeRejectedCount = resolution.typeRejectedCount;
-  } finally {
-    clearTimeout(timer);
-  }
-
-  // Post-Places dedupe by google_place_id.
-  const seenPlaceIds = new Set<string>();
-  const deduped: Array<{
-    s: StagedCandidate;
-    place: PlacesPayload | null;
-    decision: ImportResolutionDecision;
-  }> = [];
-  for (let i = 0; i < staged.length; i++) {
-    if (typeRejectedByIndex[i]) {
-      // Same rule as handleUrlResolve: trusted extracts ghost, the rest drop.
-      if (keepTypeRejectedAsGhost(staged[i].extracted.confidence)) {
-        deduped.push({
-          s: staged[i],
-          place: null,
-          decision: "no_result",
-        });
-      }
-      continue;
-    }
-    const place = placeResults[i];
-    const placeId = place?.id ?? staged[i].extracted.google_place_id;
-    if (placeId && seenPlaceIds.has(placeId)) continue;
-    if (placeId) seenPlaceIds.add(placeId);
-    deduped.push({
-      s: staged[i],
-      place,
-      decision: decisionsByIndex[i] ?? "transient",
-    });
-  }
-
-  // Map verified restaurants + wishlist dedupe.
-  const allPlaceIds = deduped.map((d) => d.place?.id).filter(
-    Boolean,
-  ) as string[];
-  const { data: restaurantRows } = allPlaceIds.length > 0
-    ? await supabase.from("restaurants").select("id, external_id, verification")
-      .in("external_id", allPlaceIds)
-    : { data: [] };
-  const placeIdToRestaurantId = mapVerifiedRestaurantIds(restaurantRows ?? []);
-
-  const knownRestaurantIds = [...placeIdToRestaurantId.values()];
-  const wishlistedSet = new Set<string>();
-  if (knownRestaurantIds.length > 0) {
-    const { data: wishlistRows } = await supabase
-      .from("wishlist_items")
-      .select("restaurant_id")
-      .eq("user_id", user.id)
-      .in("restaurant_id", knownRestaurantIds);
-    for (const row of (wishlistRows ?? [])) {
-      if (row.restaurant_id) wishlistedSet.add(row.restaurant_id);
-    }
-  }
-
-  const candidates: ResolvedCandidate[] = await Promise.all(
-    deduped.slice(0, effectiveCap).map(async ({ s, place, decision }, idx) => {
-      const restaurantId = place
-        ? (placeIdToRestaurantId.get(place.id) ?? null)
-        : null;
-      const alreadyWishlisted = restaurantId
-        ? wishlistedSet.has(restaurantId)
-        : false;
-      // 086c: 'exact' was being demoted to 'low' here for no reason.
-      const confidence: Confidence =
-        s.extracted.confidence === "high" || s.extracted.confidence === "exact"
-          ? "high"
-          : "low";
-      const candidateId = await computeCandidateId(
-        contentHash,
-        normalizeName(s.extracted.name),
-        idx,
-      );
-      const restaurant: PlacesPayload = place
-        ? {
-          ...place,
-          external_id: place.id,
-          location: {
-            address: place.formattedAddress ?? undefined,
-            locality: place.city ?? undefined,
-            country: place.country ?? undefined,
-          },
-        }
-        : {
-          id: "",
-          name: s.extracted.name,
-          formattedAddress: s.extracted.address,
-          city: s.extracted.city,
-          country: null,
-          latitude: null,
-          longitude: null,
-          categories: [],
-          cuisine: s.extracted.cuisine,
-          googleRating: null,
-          googleRatingCount: null,
-          priceLevel: null,
-          photoReference: null,
-          website: null,
-          link: null,
-          external_id: null,
-          location: {
-            address: s.extracted.address ?? undefined,
-            locality: s.extracted.city ?? undefined,
-          },
-        };
-      return {
-        candidate_id: candidateId,
-        restaurant,
-        confidence,
-        google_place_id: place?.id ?? null,
-        restaurant_id: restaurantId,
-        already_wishlisted: alreadyWishlisted,
-        city_inferred: s.extracted.city_inferred,
-        area: s.extracted.area ?? null,
-        stance: s.extracted.stance ?? null,
-        resolution_decision: decision,
-        attempted_external_id:
-          decision === "transient" || decision === "unattempted_budget"
-            ? s.extracted.google_place_id ?? null
-            : null,
-      };
-    }),
-  );
-
-  const top = deduped[0]?.s.extracted;
-  const bestQuery = top?.name
-    ? [top.name, top.city].filter(Boolean).join(", ")
-    : null;
 
   return jsonResponse({
     data: {
@@ -4004,6 +4264,8 @@ serve(async (req) => {
     expected_owner_id?: unknown;
     /** Consent version the app enforces before model-bound imports (Guideline 5.1.2(i)). */
     ai_consent_version?: unknown;
+    /** Screenshot: read every place (clients that show them all in the picker). */
+    list_mode?: boolean;
   };
   try {
     body = await req.json();
@@ -4147,6 +4409,59 @@ serve(async (req) => {
   const extractedText = typeof body?.extracted_text === "string"
     ? body.extracted_text.trim()
     : "";
+
+  // ── Pasted text (clip tray / paste field): a message or list of places ────
+  // Opt-in by source_kind so no installed client's body changes route.
+  if (routesToListText(body)) {
+    if (aiConsentRefused(body?.ai_consent_version)) return aiConsentOutdatedResponse();
+    const { data: rlRows, error: rlErr } = await supabase.rpc(
+      "check_and_increment_rate_limit",
+      {
+        p_user_id: user.id,
+        p_bucket_key: "resolve_url",
+        p_max: 30,
+        p_window_seconds: 3600,
+      },
+    );
+    const rlRow = rlRows?.[0];
+    if (rlErr || !rlRow || !rlRow.allowed) {
+      if (rlErr) console.error("resolve-url list-text rate check failed:", rlErr);
+      return jsonResponse(
+        {
+          error: {
+            code: "RATE_LIMITED",
+            message: "Too many requests",
+            details: { retry_after_seconds: rlRow?.retry_after_seconds ?? 60 },
+          },
+        },
+        429,
+      );
+    }
+    try {
+      const resolved = await handleListText(
+        supabase,
+        user,
+        extractedText,
+        authHeader,
+        supabaseUrl,
+        supabaseAnonKey,
+      );
+      return await attachImportResolutionIds(
+        supabase,
+        user.id,
+        resolved,
+        body.import_nonce,
+        "list_text",
+      );
+    } catch (e: any) {
+      const extractionFailure = extractionFailureResponse(e);
+      if (extractionFailure) return extractionFailure;
+      console.error("resolve-url list-text error:", e);
+      reportError(e, { fn: "resolve-url", action: "list_text" });
+      return errorResponse("INTERNAL", "Internal server error", 500);
+    }
+  }
+
   if (routesToVideoText(body)) {
     // Always model-bound. Refused before the rate limit spends a slot.
     if (aiConsentRefused(body?.ai_consent_version)) return aiConsentOutdatedResponse();
@@ -4291,7 +4606,10 @@ serve(async (req) => {
 
   // ── Vision/screenshot path: image_path supplied ───────────────────────────
   if (hasImage && body?.image_path) {
-    const resolved = await handleVisionExtract(
+    const handler = body?.list_mode === true
+      ? handleVisionExtract
+      : handleVisionExtractLegacy;
+    const resolved = await handler(
       supabase,
       user,
       body.image_path,
