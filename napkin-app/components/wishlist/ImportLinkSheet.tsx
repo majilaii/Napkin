@@ -790,6 +790,7 @@ export function ImportLinkSheet({
             return;
         }
         if (videoReqRef.current !== myId) return; // dismissed while asking
+        setLastAttempt({ kind: 'url' });
         // Defensive guard for stale/deferred iOS deep links opened on another
         // platform. The normal Android UI cannot reach this function because the
         // video row is absent, but a crafted route must not touch the missing module.

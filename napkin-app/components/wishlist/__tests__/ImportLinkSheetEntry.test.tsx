@@ -450,7 +450,7 @@ describe('pasted text and screenshot lists (2026-09-25)', () => {
         expect(mockResolve).toHaveBeenCalledWith('', undefined, undefined, list, 'text');
     });
 
-    it('retries a failed screenshot read on the same upload, not an old link', async () => {
+    it('reads an uploaded screenshot as a screenshot', async () => {
         mockPick.mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///chat.png' }] });
         mockUpload.mockResolvedValue({ storagePath: 'owner-1/chat.jpg' });
         await act(async () => {

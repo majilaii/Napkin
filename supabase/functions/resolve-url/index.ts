@@ -1373,6 +1373,9 @@ async function handleVisionExtractLegacy(
   supabaseAnonKey: string,
   authHeader: string,
 ): Promise<Response> {
+  if (!isOwnImportUploadPath(imagePath, user.id)) {
+    return errorResponse("FORBIDDEN", "image_path does not belong to caller", 403);
+  }
   const { data: imageData, error: imgError } = await supabase.storage
     .from("import-uploads")
     .download(imagePath);
